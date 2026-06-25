@@ -1,0 +1,10 @@
+<library path="rascl_hardware_interface">
+  <class
+    name="rascl_hardware_interface/RASCLHardwareInterface"
+    type="rascl_hardware_interface::RASCLHardwareInterface"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control SystemInterface for the RASCL robot. The C++ plugin talks to a local pysoem EtherCAT bridge.
+    </description>
+  </class>
+</library>

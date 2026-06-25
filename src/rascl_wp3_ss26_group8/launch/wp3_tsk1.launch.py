@@ -1,0 +1,112 @@
+"""Launch WP3 Task 1 single-target minimum-jerk executor.
+
+By default this launch file starts only the WP3 node.  Set start_robot:=true to
+also launch the existing rascl_description ros2_control stack.  The same WP3
+node works with fake hardware and real hardware because it only publishes ROS
+joint position commands; the selected lower layer is controlled by
+use_fake_hardware in rascl_description.
+"""
+
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    start_robot = LaunchConfiguration("start_robot")
+    use_fake_hardware = LaunchConfiguration("use_fake_hardware")
+    interface = LaunchConfiguration("interface")
+
+    target_x = LaunchConfiguration("target_x")
+    target_y = LaunchConfiguration("target_y")
+    target_z = LaunchConfiguration("target_z")
+    duration = LaunchConfiguration("duration")
+    rate_hz = LaunchConfiguration("rate_hz")
+    execute = LaunchConfiguration("execute")
+    save_csv = LaunchConfiguration("save_csv")
+    output_csv = LaunchConfiguration("output_csv")
+    start_delay_s = LaunchConfiguration("start_delay_s")
+
+    robot_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare("rascl_description"),
+                "launch",
+                "ros2_control.launch.py",
+            ])
+        ),
+        condition=IfCondition(start_robot),
+        launch_arguments={
+            "use_fake_hardware": use_fake_hardware,
+            "interface": interface,
+        }.items(),
+    )
+
+    wp3_node = Node(
+        package="rascl_wp3_ss26_group8",
+        executable="wp3_tsk1",
+        name="wp3_tsk1",
+        output="screen",
+        parameters=[
+            {
+                "target_x": target_x,
+                "target_y": target_y,
+                "target_z": target_z,
+                "duration": duration,
+                "rate_hz": rate_hz,
+                "execute": execute,
+                "save_csv": save_csv,
+                "output_csv": output_csv,
+            }
+        ],
+    )
+
+    delayed_wp3_node = TimerAction(
+        period=start_delay_s,
+        actions=[wp3_node],
+    )
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            "start_robot",
+            default_value="false",
+            description="If true, also launch rascl_description ros2_control stack.",
+        ),
+        DeclareLaunchArgument(
+            "use_fake_hardware",
+            default_value="true",
+            description="Passed to rascl_description when start_robot is true.",
+        ),
+        DeclareLaunchArgument(
+            "interface",
+            default_value="robot_interface",
+            description="EtherCAT network interface for real hardware.",
+        ),
+        DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),
+        DeclareLaunchArgument("target_y", default_value="0.00", description="TCP target y in base_link [m]."),
+        DeclareLaunchArgument("target_z", default_value="0.08", description="TCP target z in base_link [m]."),
+        DeclareLaunchArgument("duration", default_value="4.0", description="Minimum-jerk duration [s]."),
+        DeclareLaunchArgument("rate_hz", default_value="10.0", description="Command sample rate [Hz]."),
+        DeclareLaunchArgument(
+            "execute",
+            default_value="false",
+            description="If false, only plan and save CSV. Set true to publish commands.",
+        ),
+        DeclareLaunchArgument("save_csv", default_value="true", description="Save generated trajectory CSV."),
+        DeclareLaunchArgument(
+            "output_csv",
+            default_value="/tmp/rascl_wp3_tsk1_last_trajectory.csv",
+            description="Path for generated trajectory CSV.",
+        ),
+        DeclareLaunchArgument(
+            "start_delay_s",
+            default_value="6.0",
+            description="Delay before starting the WP3 node when launching robot stack together.",
+        ),
+        robot_launch,
+        delayed_wp3_node,
+    ])

@@ -1,0 +1,240 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rascl_bot">
+  <xacro:arg name="use_fake_hardware" default="false"/>
+  <xacro:arg name="host" default="127.0.0.1"/>
+  <xacro:arg name="port" default="15001"/>
+  <xacro:arg name="interface" default="robot_interface"/>
+  <xacro:arg name="axis_counts_per_revolution" default="3211264"/>
+  <xacro:arg name="gripper_counts_per_revolution" default="1323008"/>
+  <xacro:arg name="shoulder_direction" default="1"/>
+  <xacro:arg name="upperarm_direction" default="1"/>
+  <xacro:arg name="lowerarm_direction" default="1"/>
+  <xacro:arg name="gripper_direction" default="1"/>
+
+  <link name="world"/>
+
+  <joint name="base_link_joint" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/base_link.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/base_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="shoulder_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="shoulder"/>
+    <origin xyz="0 0 0.057441" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
+  </joint>
+
+  <link name="shoulder">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/shoulder.dae"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="upperarm_joint" type="revolute">
+    <parent link="shoulder"/>
+    <child link="upperarm"/>
+    <origin xyz="-0.0116 -0.0057 0.06556" rpy="-1.570796327 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
+  </joint>
+
+  <link name="upperarm">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/upperarm.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/upperarm.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lowerarm_joint" type="revolute">
+    <parent link="upperarm"/>
+    <child link="lowerarm"/>
+    <origin xyz="0.17 0.08 0.02183" rpy="-3.141592654 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
+  </joint>
+
+  <link name="lowerarm">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/lowerarm.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/lowerarm.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="spur_gear_joint" type="revolute">
+    <parent link="lowerarm"/>
+    <child link="spur_gear"/>
+    <origin xyz="0.13916 0 0.0179" rpy="0 -1.570796327 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.1415" upper="3.1415" effort="100" velocity="1.0"/>
+  </joint>
+
+  <link name="spur_gear">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/spur_gear.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/spur_gear.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="left_jaw_joint" type="prismatic">
+    <parent link="lowerarm"/>
+    <child link="left_jaw"/>
+    <origin xyz="0.11958 0 0.0179" rpy="-1.570796327 -1.570796327 0"/>
+    <axis xyz="1 0 0"/>
+    <mimic joint="spur_gear_joint" multiplier="0.013" offset="0.0"/>
+    <limit lower="-0.035" upper="-0.0229" effort="100" velocity="1.0"/>
+  </joint>
+
+  <link name="left_jaw">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/left_jaw.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/left_jaw.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="right_jaw_joint" type="prismatic">
+    <parent link="lowerarm"/>
+    <child link="right_jaw"/>
+    <origin xyz="0.11958 0 0.0179" rpy="1.570796327 1.570796327 0"/>
+    <axis xyz="1 0 0"/>
+    <mimic joint="left_jaw_joint" multiplier="1.0" offset="0.0"/>
+    <limit lower="-0.035" upper="-0.0229" effort="100" velocity="1.0"/>
+  </joint>
+
+  <link name="right_jaw">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/right_jaw.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rascl_description/meshes/right_jaw.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <ros2_control name="RasclBotHardware" type="system">
+    <hardware>
+      <plugin>rascl_hardware_interface/RASCLHardwareInterface</plugin>
+      <param name="use_fake_hardware">$(arg use_fake_hardware)</param>
+      <param name="host">$(arg host)</param>
+      <param name="port">$(arg port)</param>
+      <param name="interface">$(arg interface)</param>
+      <param name="connect_retries">80</param>
+      <param name="connect_retry_delay_s">0.25</param>
+      <param name="command_deadband_counts">4.0</param>
+    </hardware>
+
+    <joint name="shoulder_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <param name="slave_index">0</param>
+      <param name="counts_per_revolution">$(arg axis_counts_per_revolution)</param>
+      <param name="gear_ratio">196.0</param>
+      <param name="encoder_cpr">4096</param>
+      <param name="direction">$(arg shoulder_direction)</param>
+      <param name="min_position">-1.570796327</param>
+      <param name="max_position">1.570796327</param>
+      <param name="initial_position">0.0</param>
+    </joint>
+
+    <joint name="upperarm_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <param name="slave_index">1</param>
+      <param name="counts_per_revolution">$(arg axis_counts_per_revolution)</param>
+      <param name="gear_ratio">196.0</param>
+      <param name="encoder_cpr">4096</param>
+      <param name="direction">$(arg upperarm_direction)</param>
+      <param name="min_position">-1.570796327</param>
+      <param name="max_position">1.570796327</param>
+      <param name="initial_position">0.0</param>
+    </joint>
+
+    <joint name="lowerarm_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <param name="slave_index">2</param>
+      <param name="counts_per_revolution">$(arg axis_counts_per_revolution)</param>
+      <param name="gear_ratio">196.0</param>
+      <param name="encoder_cpr">4096</param>
+      <param name="direction">$(arg lowerarm_direction)</param>
+      <param name="min_position">-1.570796327</param>
+      <param name="max_position">1.570796327</param>
+      <param name="initial_position">0.0</param>
+    </joint>
+
+    <joint name="spur_gear_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <param name="slave_index">3</param>
+      <param name="counts_per_revolution">$(arg gripper_counts_per_revolution)</param>
+      <param name="gear_ratio">323.0</param>
+      <param name="encoder_cpr">4096</param>
+      <param name="direction">$(arg gripper_direction)</param>
+      <param name="min_position">-3.1415</param>
+      <param name="max_position">3.1415</param>
+      <param name="initial_position">0</param>
+      <param name="calibrate_on_activate">true</param>
+    </joint>
+  </ros2_control>
+</robot>
