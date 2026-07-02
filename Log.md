@@ -18,6 +18,11 @@ time_from_start,shoulder_joint,upperarm_joint,lowerarm_joint,spur_gear_joint
 之后 shoulder_joint、upperarm_joint 和 lowerarm_joint 的数值逐渐变化，说明程序确实生成了一条连续平滑的轨迹。
 
 因为 execute:=false，所以这一步没有让真实机器人运动，只验证了规划、IK 和 CSV 文件生成是否正常。
+x轴是机械臂延申方向 正方向沿机械臂朝外
+y轴是水平方向 正方向是左边
+z轴是垂直方向 正方向朝上
+
+
 ## 6.2在 RViz 中应该看到机械臂平滑运动。
 
 今天我继续在真实 RASCL 机器人上测试 wp3_tsk1 minimum-jerk 轨迹程序。 
@@ -38,7 +43,7 @@ IK 结果变成：
 
 q_arm = [-0.00608, -0.06696, -0.19718] 
 
-其中 lowerarm_joint 需要运动约 -0.197 rad，大约是 -11.3°。执行这种较大的轨迹时，真实硬件的 ros2_control interface 会报错： 
+其中 lowerarm_joint 需要运动约 -0.197 rad，大约是 -11.3°。执行这种较大的轨迹时，真实硬件的 ros2_control interface 会报错：  
 
 之后 /joint_states 也收不到，需要停止 launch、清理进程并重新启动硬件。 
 
