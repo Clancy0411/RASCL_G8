@@ -70,3 +70,284 @@ solution:change controllers.yaml ---update_rate to 50 or 100
 >> TO DO
 change original state in RVIZ 
 automatical homing with green light sensor
+
+
+
+
+
+
+2026-07-07
+
+
+## Error ：pysoem WkcError during SDO write
+
+### 错误信息
+
+```text
+pysoem.pysoem.WkcError
+```
+
+完整上下文：
+
+```text
+[rascl_faulhaber_bridge]: Connecting EtherCAT on interface: enx3c18a0264863
+[EtherCAT] Opening interface: enx3c18a0264863
+[EtherCAT] Found 4 slave(s)
+[EtherCAT] Configuring CSP PDO mapping for slave 0
+[EtherCAT] Configuring CSP PDO mapping for slave 1
+Traceback (most recent call last):
+  File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 465, in __init__
+    self.bus.connect()
+  File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 256, in connect
+    self.configure_csp_pdo_mapping(self.master.slaves[slave_index], slave_index)
+  File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 293, in configure_csp_pdo_mapping
+    self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
+  File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 284, in _sdo_write_int_raw
+    slave.sdo_write(index, subindex, int(value).to_bytes(size, "little", signed=signed))
+  File "src/pysoem/pysoem.pyx", line 972, in pysoem.pysoem.CdefSlave.sdo_write
+pysoem.pysoem.WkcError
+```
+
+### 原因判断
+
+这不是找不到 slave。因为已经有：
+
+```text
+Found 4 slave(s)
+```
+
+真正问题是：程序在配置 CSP PDO mapping 时，对 slave 执行 SDO write 失败。
+
+失败位置是：
+
+```python
+self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
+```
+
+这个操作的含义是：尝试清空 RxPDO mapping 的 subindex 0，为后续重新映射做准备。
+
+可能原因：
+
+1. drive 当前状态不允许改 PDO mapping。
+2. drive 需要处于 PRE-OP 才能 remap PDO。
+3. 某些 Faulhaber drive 不支持当前 object dictionary 的写法。
+4. slave 1 状态异常，因为 log 显示 slave 0 似乎通过，slave 1 崩。
+5. CSP PDO mapping 不应该在 profile 回归测试中执行。
+
+---
+
+## 8. 和 Error 3 相关的代码总结
+
+### 8.1 connect() 中的关键代码
+
+文件：
+
+```text
+src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
+```
+
+今天看到的代码：
+
+```python
+def connect(self) -> None:
+    # Create and configure the EtherCAT master before constructing drive wrappers.
+    self.master = pysoem.Master()
+    print(f"[EtherCAT] Opening interface: {self.interface}")
+    self.master.open(self.interface)
+
+    if self.master.config_init() <= 0:
+        raise RuntimeError("No EtherCAT slaves found")
+
+    print(f"[EtherCAT] Found {len(self.master.slaves)} slave(s)")
+
+    if self.configure_pdo_mapping:
+        for slave_index in self.slave_indices:
+            if slave_index >= len(self.master.slaves):
+                raise RuntimeError(
+                    f"slave index {slave_index} requested, but only {len(self.master.slaves)} slave(s) found"
+                )
+            self.configure_csp_pdo_mapping(self.master.slaves[slave_index], slave_index)
+
+    self.master.config_map()
+    print("[EtherCAT] PDO mapping configured")
+```
+
+### 8.2 问题点
+
+这里的关键判断是：
+
+```python
+if self.configure_pdo_mapping:
+```
+
+只要 `self.configure_pdo_mapping` 是 `True`，就会执行：
+
+```python
+self.configure_csp_pdo_mapping(...)
+```
+
+而今天的错误正是发生在 `configure_csp_pdo_mapping()` 里面。
+
+### 8.3 configure_csp_pdo_mapping() 中失败位置
+
+今天看到的代码：
+
+```python
+def configure_csp_pdo_mapping(self, slave, slave_index: int) -> None:
+    # Mapping is done in PRE-OP before config_map().  If a lab drive rejects
+    # remapping, launch with configure_pdo_mapping:=false and inspect the default
+    # PDO layout before retrying.
+    print(f"[EtherCAT] Configuring CSP PDO mapping for slave {slave_index}")
+
+    # RxPDO 0x1600
+    self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
+    self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 1, 0x60400010, size=4)
+    self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 2, 0x607A0020, size=4)
+    self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 3, 0x60600008, size=4)
+    self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 3, size=1)
+
+    # TxPDO 0x1A00
+    self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 0, 0, size=1)
+    self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 1, 0x60410010, size=4)
+    self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 2, 0x60640020, size=4)
+    self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 3, 0x60610008, size=4)
+    self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 0, 3, size=1)
+
+    # Assign the single RxPDO and TxPDO.
+    self._sdo_write_int_raw(slave, PDO_RX_ASSIGNMENT, 0, 0, size=1)
+    self._sdo_write_int_raw(slave, PDO_RX_ASSIGNMENT, 1, PDO_RX_MAPPING, size=2)
+    self._sdo_write_int_raw(slave, PDO_RX_ASSIGNMENT, 0, 1, size=1)
+
+    self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 0, 0, size=1)
+    self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 1, PDO_TX_MAPPING, size=2)
+    self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 0, 1, size=1)
+```
+
+今天实际失败在第一行 SDO write：
+
+```python
+self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
+```
+
+---
+
+## 9. 当前最重要结论
+
+### 结论 1
+
+fake hardware 和 WP3 Task 1 上层 minimum-jerk node 是成功的。
+
+### 结论 2
+
+真实 EtherCAT 网卡应该使用：
+
+```text
+enx3c18a0264863
+```
+
+因为该网卡能找到：
+
+```text
+Found 4 slave(s)
+```
+
+### 结论 3
+
+真实硬件 Profile Position 回归测试失败，不是因为找不到 slave，而是因为 bridge 在 profile 模式启动时仍然尝试配置 CSP PDO mapping。
+
+### 结论 4
+
+`configure_pdo_mapping:=false` 当前没有生效。因为 launch 后仍然出现：
+
+```text
+Configuring CSP PDO mapping for slave 0
+Configuring CSP PDO mapping for slave 1
+```
+
+这说明：
+
+1. launch argument 可能没有正确传给 bridge；或
+2. bridge 里面 `configure_pdo_mapping` 默认值还是 True；或
+3. install 目录还是旧代码；或
+4. launch 文件虽然接受参数，但没有把参数写入 bridge node 的 parameters。
+
+---
+
+## 10. 下次继续调试建议顺序
+
+## Step 1：确认 configure_pdo_mapping 参数在哪里定义和传递
+
+```bash
+cd /root/ws
+grep -R -n "configure_pdo_mapping" src/rascl_description src/rascl_hardware_interface
+```
+
+重点检查：
+
+```text
+src/rascl_description/launch/ros2_control.launch.py
+src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
+```
+
+---
+
+## Step 2：检查 launch 文件是否声明并传参
+
+```bash
+nl -ba src/rascl_description/launch/ros2_control.launch.py | sed -n '1,220p'
+```
+
+需要确认 launch 文件中有类似：
+
+```python
+DeclareLaunchArgument(
+    "configure_pdo_mapping",
+    default_value="true",
+)
+```
+
+并且 bridge node 的 parameters 里面有：
+
+```python
+"configure_pdo_mapping": LaunchConfiguration("configure_pdo_mapping"),
+```
+
+如果只有 DeclareLaunchArgument，但没有传给 Node，则命令行参数不会进入 bridge。
+
+---
+
+## Step 3：临时粗暴修复方案
+
+如果只是为了先完成 Profile Position 回归测试，可以临时把 bridge 默认值改为 False。
+
+搜索：
+
+```bash
+grep -n "configure_pdo_mapping" src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
+```
+
+找到类似：
+
+```python
+self.declare_parameter("configure_pdo_mapping", True)
+```
+
+临时改成：
+
+```python
+self.declare_parameter("configure_pdo_mapping", False)
+```
+
+或者如果是：
+
+```python
+self.configure_pdo_mapping = True
+```
+
+临时改成：
+
+```python
+self.configure_pdo_mapping = False
+```
+
+然后重新 build。
