@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -80,6 +81,15 @@ hardware_interface::CallbackReturn RASCLHardwareInterface::on_init(
       std::stod(GetParameterOr(info_.hardware_parameters, "command_deadband_counts", "4.0"));
   use_fake_hardware_ =
       ParseBool(GetParameterOr(info_.hardware_parameters, "use_fake_hardware", "false"));
+  control_mode_ = GetParameterOr(info_.hardware_parameters, "control_mode", "profile");
+  std::transform(control_mode_.begin(), control_mode_.end(), control_mode_.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (control_mode_ != "profile" && control_mode_ != "csp") {
+    RCLCPP_FATAL(rclcpp::get_logger("RASCLHardwareInterface"),
+                 "Unsupported control_mode='%s'. Use 'profile' or 'csp'.", control_mode_.c_str());
+    return hardware_interface::CallbackReturn::ERROR;
+  }
+  use_csp_mode_ = control_mode_ == "csp";
 
   // Each ros2_control joint maps to one Faulhaber drive selected by slave_index.
   joint_configs_.clear();
@@ -148,8 +158,9 @@ hardware_interface::CallbackReturn RASCLHardwareInterface::on_init(
   }
 
   RCLCPP_INFO(rclcpp::get_logger("RASCLHardwareInterface"),
-              "Initialized %zu RASCL joints. fake_hardware=%s bridge=%s:%d", joint_count,
-              use_fake_hardware_ ? "true" : "false", host_.c_str(), port_);
+              "Initialized %zu RASCL joints. fake_hardware=%s control_mode=%s bridge=%s:%d",
+              joint_count, use_fake_hardware_ ? "true" : "false", control_mode_.c_str(),
+              host_.c_str(), port_);
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -198,9 +209,10 @@ hardware_interface::CallbackReturn RASCLHardwareInterface::on_activate(
 
   std::string response;
   // The bridge performs the CiA 402 state transitions for all physical drives.
-  if (!send_command("ENABLE_ALL", response) || response.rfind("OK", 0) != 0) {
-    RCLCPP_ERROR(rclcpp::get_logger("RASCLHardwareInterface"), "ENABLE_ALL failed. response='%s'",
-                 response.c_str());
+  const std::string activation_command = use_csp_mode_ ? "ENTER_CSP_ALL" : "ENABLE_ALL";
+  if (!send_command(activation_command, response) || response.rfind("OK", 0) != 0) {
+    RCLCPP_ERROR(rclcpp::get_logger("RASCLHardwareInterface"), "%s failed. response='%s'",
+                 activation_command.c_str(), response.c_str());
     return hardware_interface::CallbackReturn::ERROR;
   }
 
@@ -218,7 +230,21 @@ hardware_interface::CallbackReturn RASCLHardwareInterface::on_activate(
   }
   command_initialized_ = true;
 
-  RCLCPP_INFO(rclcpp::get_logger("RASCLHardwareInterface"), "Activated real RASCL hardware.");
+  if (use_csp_mode_) {
+    std::ostringstream lock_command;
+    lock_command << "CSP_SETPOINT_ALL";
+    for (const int64_t count : actual_counts_) {
+      lock_command << " " << count;
+    }
+    if (!send_command(lock_command.str(), response) || response.rfind("OK", 0) != 0) {
+      RCLCPP_ERROR(rclcpp::get_logger("RASCLHardwareInterface"),
+                   "Initial CSP hold command failed. response='%s'", response.c_str());
+      return hardware_interface::CallbackReturn::ERROR;
+    }
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("RASCLHardwareInterface"),
+              "Activated real RASCL hardware in %s mode.", control_mode_.c_str());
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -227,9 +253,10 @@ hardware_interface::CallbackReturn RASCLHardwareInterface::on_deactivate(
   if (!use_fake_hardware_) {
     // Disable drives on shutdown so the hardware does not keep holding commands.
     std::string response;
-    if (!send_command("DISABLE_ALL", response)) {
+    const std::string disable_command = use_csp_mode_ ? "EXIT_CSP_ALL" : "DISABLE_ALL";
+    if (!send_command(disable_command, response)) {
       RCLCPP_WARN(rclcpp::get_logger("RASCLHardwareInterface"),
-                  "DISABLE_ALL command could not be sent.");
+                  "%s command could not be sent.", disable_command.c_str());
     }
   }
   close_socket();
@@ -358,14 +385,16 @@ hardware_interface::return_type RASCLHardwareInterface::write(const rclcpp::Time
     return hardware_interface::return_type::OK;
   }
 
-  if (!changed) {
+  if (!changed && !use_csp_mode_) {
     // Avoid repeated SDO writes when the controller keeps publishing the same target.
+    // In CSP mode, keep sending PDO set-points every write cycle so EtherCAT traffic
+    // remains cyclic even when the target is temporarily constant.
     return hardware_interface::return_type::OK;
   }
 
   std::ostringstream command;
   // The bridge command order is the same as the joint order parsed from the URDF.
-  command << "MOVE_ALL";
+  command << (use_csp_mode_ ? "CSP_SETPOINT_ALL" : "MOVE_ALL");
   for (const int64_t target : target_counts) {
     command << " " << target;
   }
@@ -373,7 +402,8 @@ hardware_interface::return_type RASCLHardwareInterface::write(const rclcpp::Time
   std::string response;
   if (!send_command(command.str(), response) || response.rfind("OK", 0) != 0) {
     RCLCPP_ERROR(rclcpp::get_logger("RASCLHardwareInterface"),
-                 "MOVE_ALL failed. command='%s' response='%s'", command.str().c_str(),
+                 "%s failed. command='%s' response='%s'",
+                 use_csp_mode_ ? "CSP_SETPOINT_ALL" : "MOVE_ALL", command.str().c_str(),
                  response.c_str());
     return hardware_interface::return_type::ERROR;
   }

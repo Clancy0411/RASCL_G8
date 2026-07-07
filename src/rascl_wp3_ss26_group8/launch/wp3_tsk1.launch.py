@@ -20,6 +20,8 @@ def generate_launch_description():
     start_robot = LaunchConfiguration("start_robot")
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
     interface = LaunchConfiguration("interface")
+    control_mode = LaunchConfiguration("control_mode")
+    controller_config = LaunchConfiguration("controller_config")
 
     target_x = LaunchConfiguration("target_x")
     target_y = LaunchConfiguration("target_y")
@@ -43,6 +45,8 @@ def generate_launch_description():
         launch_arguments={
             "use_fake_hardware": use_fake_hardware,
             "interface": interface,
+            "control_mode": control_mode,
+            "controller_config": controller_config,
         }.items(),
     )
 
@@ -85,6 +89,16 @@ def generate_launch_description():
             "interface",
             default_value="robot_interface",
             description="EtherCAT network interface for real hardware.",
+        ),
+        DeclareLaunchArgument(
+            "control_mode",
+            default_value="profile",
+            description="Lower-level control mode passed to rascl_description: profile or csp.",
+        ),
+        DeclareLaunchArgument(
+            "controller_config",
+            default_value="controllers.yaml",
+            description="Controller YAML passed to rascl_description. Use controllers_csp.yaml for CSP tests.",
         ),
         DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),
         DeclareLaunchArgument("target_y", default_value="0.00", description="TCP target y in base_link [m]."),

@@ -1,0 +1,24 @@
+controller_manager:
+  ros__parameters:
+    # WP3 CSP/PDO needs a cyclic set-point stream.  50 Hz is a conservative
+    # first hardware-debug value for the Python/pysoem bridge; increase only
+    # after confirming stable PDO traffic.
+    update_rate: 50
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    rascl_position_controller:
+      type: forward_command_controller/ForwardCommandController
+
+joint_state_broadcaster:
+  ros__parameters: {}
+
+rascl_position_controller:
+  ros__parameters:
+    joints:
+      - shoulder_joint
+      - upperarm_joint
+      - lowerarm_joint
+      - spur_gear_joint
+    interface_name: position

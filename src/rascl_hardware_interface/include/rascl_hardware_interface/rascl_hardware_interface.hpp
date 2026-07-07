@@ -131,6 +131,12 @@ class RASCLHardwareInterface : public hardware_interface::SystemInterface {
   /** @brief Selects deterministic fake state updates instead of EtherCAT access. */
   bool use_fake_hardware_{false};
 
+  /** @brief Selects CSP/PDO setpoint streaming instead of Profile Position MOVE_ALL. */
+  bool use_csp_mode_{false};
+
+  /** @brief Human-readable lower-level control mode parsed from the URDF. */
+  std::string control_mode_{"profile"};
+
   /** @brief True after the first command has been synchronized with current state. */
   bool command_initialized_{false};
 

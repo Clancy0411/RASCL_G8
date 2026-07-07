@@ -4,6 +4,7 @@
   <xacro:arg name="host" default="127.0.0.1"/>
   <xacro:arg name="port" default="15001"/>
   <xacro:arg name="interface" default="robot_interface"/>
+  <xacro:arg name="control_mode" default="profile"/>
   <xacro:arg name="axis_counts_per_revolution" default="3211264"/>
   <xacro:arg name="gripper_counts_per_revolution" default="1323008"/>
   <xacro:arg name="shoulder_direction" default="1"/>
@@ -175,6 +176,7 @@
       <param name="host">$(arg host)</param>
       <param name="port">$(arg port)</param>
       <param name="interface">$(arg interface)</param>
+      <param name="control_mode">$(arg control_mode)</param>
       <param name="connect_retries">80</param>
       <param name="connect_retry_delay_s">0.25</param>
       <param name="command_deadband_counts">4.0</param>

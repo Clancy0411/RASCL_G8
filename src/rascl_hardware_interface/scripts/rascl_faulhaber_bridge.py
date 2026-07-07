@@ -7,9 +7,10 @@ all configured Faulhaber MC 5004 P ET drives.
 """
 
 import socket
+import struct
 import threading
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pysoem
 import rclpy
@@ -40,6 +41,19 @@ DIGOUT1_TOGGLE = 0x00FE
 # CiA 402 modes.
 MODE_PROFILE_POSITION = 1
 MODE_HOMING = 6
+MODE_CYCLIC_SYNC_POSITION = 8
+
+# Minimal CSP PDO layout used by WP3.  The bridge maps one RxPDO and one TxPDO
+# per drive before config_map():
+#   RxPDO 0x1600: 0x6040 controlword, 0x607A target position, 0x6060 operation mode
+#   TxPDO 0x1A00: 0x6041 statusword, 0x6064 actual position, 0x6061 mode display
+# The byte order in slave.output / slave.input is therefore <H i b>.
+PDO_RX_MAPPING = 0x1600
+PDO_TX_MAPPING = 0x1A00
+PDO_RX_ASSIGNMENT = 0x1C12
+PDO_TX_ASSIGNMENT = 0x1C13
+PDO_RX_SIZE_BYTES = 7
+PDO_TX_SIZE_BYTES = 7
 
 # CiA 402 control words.
 CMD_SHUTDOWN = 0x0006
@@ -62,9 +76,8 @@ STATUS_HOMING_ERROR = 1 << 13
 class FaulhaberDrive:
     """Convenience wrapper around one Faulhaber EtherCAT slave."""
 
-    # The wrapper intentionally uses blocking SDO calls. The ros2_control update
-    # rate is low, and keeping the command sequence explicit makes the CiA 402
-    # state transitions easier to inspect during lab debugging.
+    # SDO is kept for configuration, homing and Profile Position fallback.  WP3 CSP
+    # set-points are exchanged via PDO in FaulhaberBus.process_csp_setpoints().
 
     def __init__(self, slave, drive_id: int, sdo_delay_s: float, verbose: bool) -> None:
         self.slave = slave
@@ -114,9 +127,10 @@ class FaulhaberDrive:
         if deceleration > 0:
             self.sdo_write_int(PROFILE_DECELERATION, 0, deceleration, size=4, signed=False)
 
-    def enable_operation(self) -> int:
+    def enable_operation(self, mode: int = MODE_PROFILE_POSITION) -> int:
         # Standard CiA 402 transition: Shutdown -> Switch On -> Enable Operation.
         self.reset_fault_if_needed()
+        self.set_operation_mode(mode)
         self.write_controlword(CMD_SHUTDOWN)
         self.write_controlword(CMD_SWITCH_ON)
         status = self.write_controlword(CMD_ENABLE_OPERATION)
@@ -124,7 +138,6 @@ class FaulhaberDrive:
             raise RuntimeError(
                 f"Drive {self.drive_id} did not enter Operation Enabled. Statusword=0x{status:04X}"
             )
-        self.set_operation_mode(MODE_PROFILE_POSITION)
         return status
 
     def disable_operation(self) -> int:
@@ -134,6 +147,9 @@ class FaulhaberDrive:
 
     def read_actual_position_counts(self) -> int:
         return self.sdo_read_int(ACTUAL_POSITION, 0, signed=True)
+
+    def read_mode_display(self) -> int:
+        return self.sdo_read_int(MODE_DISPLAY, 0, signed=True)
 
     def move_absolute_counts(self, target_counts: int) -> None:
         # Commands are absolute raw counts; ROS radians are converted in the C++ layer.
@@ -197,13 +213,28 @@ class FaulhaberBus:
     # The bridge may see more EtherCAT slaves than the four joints. slave_indices
     # selects which slaves are presented to the hardware interface, in joint order.
 
-    def __init__(self, interface: str, slave_indices: List[int], sdo_delay_s: float, verbose: bool) -> None:
+    def __init__(
+        self,
+        interface: str,
+        slave_indices: List[int],
+        sdo_delay_s: float,
+        verbose: bool,
+        configure_pdo_mapping: bool,
+        enable_dc_sync: bool,
+        dc_cycle_ns: int,
+        pdo_timeout_us: int,
+    ) -> None:
         self.interface = interface
         self.slave_indices = slave_indices
         self.sdo_delay_s = sdo_delay_s
         self.verbose = verbose
+        self.configure_pdo_mapping = configure_pdo_mapping
+        self.enable_dc_sync = enable_dc_sync
+        self.dc_cycle_ns = dc_cycle_ns
+        self.pdo_timeout_us = pdo_timeout_us
         self.master: Optional[pysoem.Master] = None
         self.drives: List[FaulhaberDrive] = []
+        self.csp_active = False
 
     def connect(self) -> None:
         # Create and configure the EtherCAT master before constructing drive wrappers.
@@ -215,8 +246,27 @@ class FaulhaberBus:
             raise RuntimeError("No EtherCAT slaves found")
 
         print(f"[EtherCAT] Found {len(self.master.slaves)} slave(s)")
+
+        if self.configure_pdo_mapping:
+            for slave_index in self.slave_indices:
+                if slave_index >= len(self.master.slaves):
+                    raise RuntimeError(
+                        f"slave index {slave_index} requested, but only {len(self.master.slaves)} slave(s) found"
+                    )
+                self.configure_csp_pdo_mapping(self.master.slaves[slave_index], slave_index)
+
         self.master.config_map()
         print("[EtherCAT] PDO mapping configured")
+
+        if self.enable_dc_sync:
+            for slave_index in self.slave_indices:
+                try:
+                    self.master.slaves[slave_index].dc_sync(True, self.dc_cycle_ns, 0)
+                    print(f"[EtherCAT] DC sync enabled on slave {slave_index} with cycle {self.dc_cycle_ns} ns")
+                except Exception as exc:
+                    print(f"[EtherCAT] WARNING: could not enable DC sync on slave {slave_index}: {exc}")
+
+        self.request_op_state()
 
         self.drives.clear()
         # drive_id is the logical joint index used by ROS; slave_index is EtherCAT order.
@@ -229,6 +279,123 @@ class FaulhaberBus:
             print(f"[EtherCAT] Drive {drive_id} uses slave {slave_index}: {slave.name}")
             self.drives.append(FaulhaberDrive(slave, drive_id, self.sdo_delay_s, self.verbose))
 
+    @staticmethod
+    def _sdo_write_int_raw(slave, index: int, subindex: int, value: int, size: int, signed: bool = False) -> None:
+        slave.sdo_write(index, subindex, int(value).to_bytes(size, "little", signed=signed))
+
+    def configure_csp_pdo_mapping(self, slave, slave_index: int) -> None:
+        # Mapping is done in PRE-OP before config_map().  If a lab drive rejects
+        # remapping, launch with configure_pdo_mapping:=false and inspect the default
+        # PDO layout before retrying.
+        print(f"[EtherCAT] Configuring CSP PDO mapping for slave {slave_index}")
+
+        # RxPDO 0x1600
+        self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
+        self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 1, 0x60400010, size=4)
+        self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 2, 0x607A0020, size=4)
+        self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 3, 0x60600008, size=4)
+        self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 3, size=1)
+
+        # TxPDO 0x1A00
+        self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 0, 0, size=1)
+        self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 1, 0x60410010, size=4)
+        self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 2, 0x60640020, size=4)
+        self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 3, 0x60610008, size=4)
+        self._sdo_write_int_raw(slave, PDO_TX_MAPPING, 0, 3, size=1)
+
+        # Assign the single RxPDO and TxPDO.
+        self._sdo_write_int_raw(slave, PDO_RX_ASSIGNMENT, 0, 0, size=1)
+        self._sdo_write_int_raw(slave, PDO_RX_ASSIGNMENT, 1, PDO_RX_MAPPING, size=2)
+        self._sdo_write_int_raw(slave, PDO_RX_ASSIGNMENT, 0, 1, size=1)
+
+        self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 0, 0, size=1)
+        self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 1, PDO_TX_MAPPING, size=2)
+        self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 0, 1, size=1)
+
+    def request_op_state(self) -> None:
+        if self.master is None:
+            return
+        self.master.state = pysoem.OP_STATE
+        self.master.write_state()
+        checked_state = self.master.state_check(pysoem.OP_STATE, 50000)
+        if checked_state != pysoem.OP_STATE:
+            raise RuntimeError(f"EtherCAT master did not reach OP state. state=0x{checked_state:02X}")
+        print("[EtherCAT] Master reached OP state")
+
+    @staticmethod
+    def _pack_rxpdo(controlword: int, target_position: int, mode: int) -> bytes:
+        return struct.pack("<Hib", int(controlword) & 0xFFFF, int(target_position), int(mode))
+
+    @staticmethod
+    def _unpack_txpdo(data: bytes) -> Tuple[int, int, int]:
+        if len(data) < PDO_TX_SIZE_BYTES:
+            raise RuntimeError(f"TxPDO too short: expected {PDO_TX_SIZE_BYTES} bytes, got {len(data)}")
+        statusword, actual_position, mode_display = struct.unpack("<Hib", bytes(data[:PDO_TX_SIZE_BYTES]))
+        return int(statusword), int(actual_position), int(mode_display)
+
+    def process_csp_setpoints(self, target_counts: List[int], controlword: int = CMD_ENABLE_OPERATION) -> List[Tuple[int, int, int]]:
+        if self.master is None:
+            raise RuntimeError("EtherCAT master is not connected")
+        if len(target_counts) != len(self.drives):
+            raise RuntimeError(f"Expected {len(self.drives)} CSP targets, got {len(target_counts)}")
+
+        for drive, target in zip(self.drives, target_counts):
+            slave = drive.slave
+            payload = self._pack_rxpdo(controlword, int(target), MODE_CYCLIC_SYNC_POSITION)
+            if len(payload) != PDO_RX_SIZE_BYTES:
+                raise RuntimeError(f"Internal RxPDO packing error: {len(payload)} bytes")
+            slave.output = payload
+
+        self.master.send_processdata()
+        self.master.receive_processdata(self.pdo_timeout_us)
+
+        states = []
+        for drive in self.drives:
+            statusword, actual_position, mode_display = self._unpack_txpdo(drive.slave.input)
+            states.append((actual_position, statusword, mode_display))
+        return states
+
+    def enter_csp(self, target_counts: Optional[List[int]] = None) -> List[Tuple[int, int, int]]:
+        if target_counts is None:
+            target_counts = [drive.read_actual_position_counts() for drive in self.drives]
+        if len(target_counts) != len(self.drives):
+            raise RuntimeError(f"Expected {len(self.drives)} CSP targets, got {len(target_counts)}")
+
+        for drive in self.drives:
+            drive.reset_fault_if_needed()
+            drive.set_operation_mode(MODE_CYCLIC_SYNC_POSITION)
+
+        # CiA 402 state transition via PDO, with current targets already present.
+        states = self.process_csp_setpoints(target_counts, CMD_SHUTDOWN)
+        time.sleep(self.sdo_delay_s)
+        states = self.process_csp_setpoints(target_counts, CMD_SWITCH_ON)
+        time.sleep(self.sdo_delay_s)
+        states = self.process_csp_setpoints(target_counts, CMD_ENABLE_OPERATION)
+        time.sleep(self.sdo_delay_s)
+
+        # Run a few extra cycles to let mode display and statusword settle.
+        for _ in range(3):
+            states = self.process_csp_setpoints(target_counts, CMD_ENABLE_OPERATION)
+            time.sleep(self.sdo_delay_s)
+
+        for drive_id, (_, statusword, mode_display) in enumerate(states):
+            if not (statusword & STATUS_OPERATION_ENABLED):
+                raise RuntimeError(
+                    f"Drive {drive_id} did not enter Operation Enabled in CSP. Statusword=0x{statusword:04X}"
+                )
+            if mode_display != MODE_CYCLIC_SYNC_POSITION:
+                raise RuntimeError(
+                    f"Drive {drive_id} mode display is {mode_display}, expected {MODE_CYCLIC_SYNC_POSITION}"
+                )
+
+        self.csp_active = True
+        return states
+
+    def exit_csp(self) -> List[int]:
+        statuses = [drive.disable_operation() for drive in self.drives]
+        self.csp_active = False
+        return statuses
+
     def close(self) -> None:
         if self.master is not None:
             try:
@@ -236,6 +403,7 @@ class FaulhaberBus:
             except Exception:
                 pass
         self.drives.clear()
+        self.csp_active = False
 
 
 class RASCLFaulhaberBridge(Node):
@@ -259,6 +427,10 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("profile_velocity", 0)
         self.declare_parameter("profile_acceleration", 0)
         self.declare_parameter("profile_deceleration", 0)
+        self.declare_parameter("configure_pdo_mapping", True)
+        self.declare_parameter("enable_dc_sync", False)
+        self.declare_parameter("dc_cycle_ns", 20000000)
+        self.declare_parameter("pdo_timeout_us", 20000)
 
         self.interface = str(self.get_parameter("interface").value)
         self.slave_indices = [int(v) for v in self.get_parameter("slave_indices").value]
@@ -270,11 +442,24 @@ class RASCLFaulhaberBridge(Node):
         self.profile_velocity = int(self.get_parameter("profile_velocity").value)
         self.profile_acceleration = int(self.get_parameter("profile_acceleration").value)
         self.profile_deceleration = int(self.get_parameter("profile_deceleration").value)
+        self.configure_pdo_mapping = bool(self.get_parameter("configure_pdo_mapping").value)
+        self.enable_dc_sync = bool(self.get_parameter("enable_dc_sync").value)
+        self.dc_cycle_ns = int(self.get_parameter("dc_cycle_ns").value)
+        self.pdo_timeout_us = int(self.get_parameter("pdo_timeout_us").value)
 
         # The lock serializes service callbacks and TCP commands on the same bus.
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
-        self.bus = FaulhaberBus(self.interface, self.slave_indices, self.sdo_delay_s, self.verbose)
+        self.bus = FaulhaberBus(
+            self.interface,
+            self.slave_indices,
+            self.sdo_delay_s,
+            self.verbose,
+            self.configure_pdo_mapping,
+            self.enable_dc_sync,
+            self.dc_cycle_ns,
+            self.pdo_timeout_us,
+        )
 
         self.get_logger().info(f"Connecting EtherCAT on interface: {self.interface}")
         self.bus.connect()
@@ -422,21 +607,74 @@ class RASCLFaulhaberBridge(Node):
                     return "OK " + " ".join(f"0x{s:04X}" for s in statuses)
 
                 if op == "DISABLE_ALL":
-                    statuses = [drive.disable_operation() for drive in self.bus.drives]
+                    statuses = self.bus.exit_csp() if self.bus.csp_active else [drive.disable_operation() for drive in self.bus.drives]
                     return "OK " + " ".join(f"0x{s:04X}" for s in statuses)
 
                 if op == "GET_ALL":
                     # Return count/status pairs for each drive in logical joint order.
                     response = ["OK"]
+                    if self.bus.csp_active:
+                        # Send one PDO cycle with the last output values so actual positions
+                        # and statuswords are sampled through the same CSP/PDO path.
+                        states = []
+                        if self.bus.master is not None:
+                            self.bus.master.send_processdata()
+                            self.bus.master.receive_processdata(self.bus.pdo_timeout_us)
+                            for drive in self.bus.drives:
+                                status, actual, _mode = self.bus._unpack_txpdo(drive.slave.input)
+                                states.append((actual, status))
+                        for actual, status in states:
+                            response.append(str(actual))
+                            response.append(f"0x{status:04X}")
+                    else:
+                        for drive in self.bus.drives:
+                            response.append(str(drive.read_actual_position_counts()))
+                            response.append(f"0x{drive.read_status():04X}")
+                    return " ".join(response)
+
+
+                if op == "GET_MODE_ALL":
+                    response = ["OK"]
                     for drive in self.bus.drives:
-                        response.append(str(drive.read_actual_position_counts()))
-                        response.append(f"0x{drive.read_status():04X}")
+                        response.append(str(drive.read_mode_display()))
+                    return " ".join(response)
+
+                if op == "ENTER_CSP_ALL":
+                    if len(parts) not in (1, len(self.bus.drives) + 1):
+                        return f"ERR usage ENTER_CSP_ALL [<{len(self.bus.drives)} counts>]"
+                    targets = [int(value) for value in parts[1:]] if len(parts) > 1 else None
+                    states = self.bus.enter_csp(targets)
+                    response = ["OK"]
+                    for actual, status, mode in states:
+                        response.append(str(actual))
+                        response.append(f"0x{status:04X}")
+                        response.append(str(mode))
+                    return " ".join(response)
+
+                if op == "EXIT_CSP_ALL":
+                    statuses = self.bus.exit_csp()
+                    return "OK " + " ".join(f"0x{s:04X}" for s in statuses)
+
+                if op == "CSP_SETPOINT_ALL":
+                    if len(parts) != len(self.bus.drives) + 1:
+                        return f"ERR usage CSP_SETPOINT_ALL <{len(self.bus.drives)} counts>"
+                    if not self.bus.csp_active:
+                        return "ERR CSP mode is not active. Call ENTER_CSP_ALL first."
+                    targets = [int(value) for value in parts[1:]]
+                    states = self.bus.process_csp_setpoints(targets)
+                    response = ["OK"]
+                    for actual, status, mode in states:
+                        response.append(str(actual))
+                        response.append(f"0x{status:04X}")
+                        response.append(str(mode))
                     return " ".join(response)
 
                 if op == "MOVE_ALL":
                     # MOVE_ALL is used by the hardware interface write() method.
                     if len(parts) != len(self.bus.drives) + 1:
                         return f"ERR usage MOVE_ALL <{len(self.bus.drives)} counts>"
+                    if self.bus.csp_active:
+                        self.bus.exit_csp()
                     targets = [int(value) for value in parts[1:]]
                     for drive, target in zip(self.bus.drives, targets):
                         drive.move_absolute_counts(target)

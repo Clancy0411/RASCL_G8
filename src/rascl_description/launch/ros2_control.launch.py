@@ -31,6 +31,16 @@ def generate_launch_description():
         default_value="15001",
         description="Local TCP port used between the C++ hardware plugin and the pysoem bridge.",
     )
+    control_mode_arg = DeclareLaunchArgument(
+        "control_mode",
+        default_value="profile",
+        description="Lower-level drive command mode: profile or csp.",
+    )
+    controller_config_arg = DeclareLaunchArgument(
+        "controller_config",
+        default_value="controllers.yaml",
+        description="Controller YAML file, e.g. controllers.yaml or controllers_csp.yaml.",
+    )
 
     axis_counts_arg = DeclareLaunchArgument(
         "axis_counts_per_revolution",
@@ -55,6 +65,7 @@ def generate_launch_description():
             " host:=", LaunchConfiguration("host"),
             " port:=", LaunchConfiguration("port"),
             " interface:=", LaunchConfiguration("interface"),
+            " control_mode:=", LaunchConfiguration("control_mode"),
             " axis_counts_per_revolution:=", LaunchConfiguration("axis_counts_per_revolution"),
             " gripper_counts_per_revolution:=", LaunchConfiguration("gripper_counts_per_revolution"),
         ]
@@ -80,6 +91,10 @@ def generate_launch_description():
                 "profile_velocity": 0,
                 "profile_acceleration": 0,
                 "profile_deceleration": 0,
+                "configure_pdo_mapping": True,
+                "enable_dc_sync": False,
+                "dc_cycle_ns": 20000000,
+                "pdo_timeout_us": 20000,
             }
         ],
     )
@@ -94,7 +109,7 @@ def generate_launch_description():
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, PathJoinSubstitution([pkg_share, "config", "controllers.yaml"])],
+        parameters=[robot_description, PathJoinSubstitution([pkg_share, "config", LaunchConfiguration("controller_config")])],
         output="screen",
     )
 
@@ -120,6 +135,8 @@ def generate_launch_description():
             use_fake_hardware_arg,
             host_arg,
             port_arg,
+            control_mode_arg,
+            controller_config_arg,
             axis_counts_arg,
             gripper_counts_arg,
             bridge_node,

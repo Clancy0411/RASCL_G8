@@ -1,505 +1,543 @@
-# RASCL-Bot ROS 2 Control Workspace
+# RASCL Group 8 — WP3 CSP/PDO 调试说明
 
-This repository contains the ROS 2 workspace for controlling the RASCL-Bot with `ros2_control`. It includes the robot description package, the hardware interface package, and the EtherCAT/Faulhaber bridge used to communicate with the real robot.
-
-The workspace is intended to be used inside the provided Docker environment.
+本文档记录当前包在 WP2.2 + WP3 Task 1 基础上的 CSP/PDO 修改和调试流程。当前目标是：保留原有 Profile Position 功能，同时新增 `control_mode:=csp`，让 WP3 的 minimum-jerk 轨迹通过 motion controller 的 Cyclic Synchronous Position mode 和 PDO 周期 setpoint 执行。
 
 ---
 
-## 1. Package Overview
+## 1. 当前版本改了什么
+
+这次只围绕 CSP/PDO 做修改，不改变 IK、minimum-jerk 轨迹生成、URDF 几何、joint 名字和原来的 Profile Position 路径。
+
+主要修改文件：
 
 ```text
-.
-├── Dockerfile
-├── rosws.sh
-├── README.md
-└── src
-    ├── rascl_description
-    │   ├── config/controllers.yaml
-    │   ├── launch/ros2_control.launch.py
-    │   ├── rviz/urdf.rviz
-    │   └── urdf/rascl.urdf
-    └── rascl_hardware_interface
-        ├── include/rascl_hardware_interface/
-        ├── scripts/rascl_faulhaber_bridge.py
-        └── src/rascl_hardware_interface.cpp
+src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
+src/rascl_hardware_interface/src/rascl_hardware_interface.cpp
+src/rascl_hardware_interface/include/rascl_hardware_interface/rascl_hardware_interface.hpp
+src/rascl_description/urdf/rascl.urdf
+src/rascl_description/launch/ros2_control.launch.py
+src/rascl_description/config/controllers_csp.yaml
+src/rascl_wp3_ss26_group8/launch/wp3_tsk1.launch.py
+README_RASCL_Group8.md
 ```
 
-Main components:
-
-- `rascl_description`: URDF, meshes, controller configuration, launch files, and RViz configuration.
-- `rascl_hardware_interface`: ROS 2 hardware interface plugin and Python Faulhaber/EtherCAT bridge.
-- `rosws.sh`: helper script for starting the Docker container.
-- `Dockerfile`: Docker environment for ROS 2 Jazzy development and execution.
-
----
-
-## 2. Starting the Docker Environment
-
-Open a terminal in the root directory of this repository.
-
-First make the workspace script executable:
-
-```bash
-chmod +x rosws.sh
-```
-
-Then start the container:
-
-```bash
-./rosws.sh
-```
-
-If the Docker image does not exist yet, `rosws.sh` will build it automatically. If the Dockerfile or the container dependencies were changed, the image can be rebuilt manually with:
-
-```bash
-REBUILD=true ./rosws.sh
-```
-
-A rebuild can take several minutes. If the image already exists and no Dockerfile changes were made, it is usually not necessary to rebuild.
-
-The default Docker image/container name is:
+新增/保留两种底层控制模式：
 
 ```text
-ros2-irs-rascl-wp22
+control_mode:=profile   原来的 Profile Position / MOVE_ALL 路径
+control_mode:=csp       新增的 CSP + PDO / CSP_SETPOINT_ALL 路径
 ```
+
+Profile 模式仍然保留，用于回退和对照测试。
 
 ---
 
-## 3. Building the ROS 2 Workspace
+## 2. CSP/PDO 实现逻辑
 
-Inside the container, build the workspace with:
+### 2.1 旧链路
+
+原来的 WP2.2 链路是：
+
+```text
+ROS position command
+→ rascl_hardware_interface::write()
+→ TCP: MOVE_ALL count0 count1 count2 count3
+→ rascl_faulhaber_bridge.py
+→ Profile Position Mode, mode = 1
+→ SDO 写 0x607A Target Position
+→ Controlword bit 4 触发 motion
+```
+
+这能动，但不是 WP3 要求的 CSP trajectory streaming。
+
+### 2.2 新链路
+
+现在新增 CSP 链路：
+
+```text
+ROS position command / minimum-jerk samples
+→ rascl_hardware_interface::write()
+→ TCP: CSP_SETPOINT_ALL count0 count1 count2 count3
+→ rascl_faulhaber_bridge.py
+→ PDO 写 RxPDO
+→ Faulhaber drive 处于 CSP mode, mode = 8
+```
+
+硬件接口在 `control_mode:=csp` 下每个 write cycle 都发送一次 PDO setpoint，即使目标暂时不变，也继续保持周期通信。
+
+### 2.3 PDO mapping
+
+bridge 启动时会在 `config_map()` 之前尝试配置每个选中 slave 的 PDO mapping：
+
+RxPDO `0x1600`：
+
+```text
+0x6040:00 Controlword       16 bit
+0x607A:00 Target position   32 bit
+0x6060:00 Mode of operation  8 bit
+```
+
+TxPDO `0x1A00`：
+
+```text
+0x6041:00 Statusword                16 bit
+0x6064:00 Position actual value     32 bit
+0x6061:00 Mode of operation display  8 bit
+```
+
+也就是说，代码假定 PDO 字节布局是：
+
+```text
+RxPDO: <uint16 controlword, int32 target_position, int8 mode>
+TxPDO: <uint16 statusword, int32 actual_position, int8 mode_display>
+```
+
+这一步是 CSP/PDO 能否工作的关键。如果某台机器上的驱动器拒绝 PDO remapping，需要先单独排查 PDO mapping，而不是直接运行 WP3 运动。
+
+---
+
+## 3. build
+
+进入 container 后：
 
 ```bash
 cd /root/ws
 source /opt/ros/jazzy/setup.bash
-
 rm -rf build install log
 colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF
-
 source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
-The `ROS_DOMAIN_ID=88` setting is used to isolate this ROS 2 session from old or unrelated ROS 2 processes that may still be running on the lab computers. All terminals used for this robot session must use the same `ROS_DOMAIN_ID`.
-
-A successful build should show the RASCL packages when running:
-
-```bash
-ros2 pkg list | grep rascl
-```
-
-Expected packages:
-
-```text
-rascl_description
-rascl_hardware_interface
-```
+如果 build 失败，先不要上实机。把完整 build log 保存下来。
 
 ---
 
-## 4. Launching the Real Robot
+## 4. fake hardware 回归测试
 
-After building and sourcing the workspace, launch the real robot with:
+CSP 是实机 EtherCAT/PDO 相关功能，fake hardware 不会真的走 PDO，但要先确认本次修改没有破坏原来的 fake hardware 和 WP3 node。
+
+启动 fake hardware：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+
+ros2 launch rascl_description ros2_control.launch.py use_fake_hardware:=true
+```
+
+第二个 terminal 运行 WP3 规划但不运动：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+
+ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
+  -p target_x:=0.25 \
+  -p target_y:=0.00 \
+  -p target_z:=0.08 \
+  -p duration:=4.0 \
+  -p rate_hz:=50.0 \
+  -p execute:=false
+```
+
+确认 IK 成功后再执行：
+
+```bash
+ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
+  -p target_x:=0.25 \
+  -p target_y:=0.00 \
+  -p target_z:=0.08 \
+  -p duration:=4.0 \
+  -p rate_hz:=50.0 \
+  -p execute:=true
+```
+
+如果 fake hardware/RViz 不正常，不要继续实机 CSP。
+
+---
+
+## 5. 原 Profile Position 模式回归测试
+
+实机前建议确认旧功能仍然可用。启动 profile 模式：
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
   interface:=robot_interface \
-  use_fake_hardware:=false
+  use_fake_hardware:=false \
+  control_mode:=profile \
+  controller_config:=controllers.yaml
 ```
 
-### Network Interface
+如果网卡不是 `robot_interface`，换成实际网卡名，例如：
 
-If the EtherCAT network interface is not called `robot_interface`, replace it with the actual interface name.
+```bash
+interface:=enx3c18a0256e51
+```
 
-Check available interfaces with:
+另一个 terminal 检查 joint states：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+
+ros2 topic echo --once /joint_states
+```
+
+小幅命令测试，例如保持或轻微移动一个 joint：
+
+```bash
+ros2 topic pub --once /rascl_position_controller/commands std_msgs/msg/Float64MultiArray \
+"{data: [0.0, 0.0, 0.0, 0.0]}"
+```
+
+确认旧模式没坏后，再测 CSP。
+
+---
+
+## 6. CSP/PDO 低层调试：只启动 bridge
+
+这一步用于验证 EtherCAT、PDO mapping、OP state、CSP mode，不经过 ros2_control。
+
+先不要启动 `ros2_control.launch.py`。只启动 bridge：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+
+ros2 run rascl_hardware_interface rascl_faulhaber_bridge.py --ros-args \
+  -p interface:=robot_interface \
+  -p configure_pdo_mapping:=true \
+  -p enable_dc_sync:=false \
+  -p dc_cycle_ns:=20000000 \
+  -p pdo_timeout_us:=20000
+```
+
+正常日志应该包括类似：
+
+```text
+[EtherCAT] Opening interface: ...
+[EtherCAT] Found ... slave(s)
+[EtherCAT] Configuring CSP PDO mapping for slave ...
+[EtherCAT] PDO mapping configured
+[EtherCAT] Master reached OP state
+TCP bridge listening on 127.0.0.1:15001
+```
+
+如果这里报错，先不要继续。常见问题见本文档第 11 节。
+
+---
+
+## 7. TCP 命令验证 CSP
+
+保持 bridge 运行，另开 terminal：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+```
+
+测试 PING / GET_ALL：
+
+```bash
+python3 - <<'PY'
+import socket
+s = socket.create_connection(("127.0.0.1", 15001), timeout=5)
+for cmd in ["PING", "GET_ALL", "GET_MODE_ALL"]:
+    s.sendall((cmd + "\n").encode())
+    print(cmd, "=>", s.recv(4096).decode().strip())
+s.close()
+PY
+```
+
+进入 CSP，但不要求运动：
+
+```bash
+python3 - <<'PY'
+import socket, time
+s = socket.create_connection(("127.0.0.1", 15001), timeout=5)
+for cmd in ["GET_ALL", "ENTER_CSP_ALL", "GET_ALL", "GET_MODE_ALL"]:
+    s.sendall((cmd + "\n").encode())
+    print(cmd, "=>", s.recv(4096).decode().strip())
+    time.sleep(0.2)
+s.close()
+PY
+```
+
+成功时，`ENTER_CSP_ALL` 的响应应该形如：
+
+```text
+OK actual0 status0 mode0 actual1 status1 mode1 actual2 status2 mode2 actual3 status3 mode3
+```
+
+其中每个 mode 应该是：
+
+```text
+8
+```
+
+statusword 中应该包含 Operation Enabled。常见状态可能是 `0x0027` 或带有其它状态位的 `0x0427` / `0x1427`，只要没有 fault bit，一般不是故障。
+
+退出 CSP：
+
+```bash
+python3 - <<'PY'
+import socket
+s = socket.create_connection(("127.0.0.1", 15001), timeout=5)
+s.sendall(b"EXIT_CSP_ALL\n")
+print(s.recv(4096).decode().strip())
+s.close()
+PY
+```
+
+---
+
+## 8. CSP 下保持当前位置
+
+这个脚本读取当前 counts，然后用 `CSP_SETPOINT_ALL` 反复发送当前位置。理论上机器人不应明显运动。
+
+```bash
+python3 - <<'PY'
+import socket, time
+
+s = socket.create_connection(("127.0.0.1", 15001), timeout=5)
+
+def cmd(c):
+    s.sendall((c + "\n").encode())
+    return s.recv(4096).decode().strip()
+
+print("ENTER", cmd("ENTER_CSP_ALL"))
+reply = cmd("GET_ALL")
+print("GET", reply)
+parts = reply.split()
+counts = [int(parts[i]) for i in range(1, len(parts), 2)]
+print("counts", counts)
+
+for i in range(50):
+    reply = cmd("CSP_SETPOINT_ALL " + " ".join(str(c) for c in counts))
+    if i % 10 == 0:
+        print(i, reply)
+    time.sleep(0.02)
+
+print("EXIT", cmd("EXIT_CSP_ALL"))
+s.close()
+PY
+```
+
+这一步若出现突然运动，立刻停止，不要继续。
+
+---
+
+## 9. ros2_control CSP 模式启动
+
+低层 bridge 验证没问题后，再启动完整 ros2_control CSP 模式。
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+
+ros2 launch rascl_description ros2_control.launch.py \
+  interface:=robot_interface \
+  use_fake_hardware:=false \
+  control_mode:=csp \
+  controller_config:=controllers_csp.yaml
+```
+
+这里的关键参数是：
+
+```text
+control_mode:=csp
+controller_config:=controllers_csp.yaml
+```
+
+`controllers_csp.yaml` 把 controller manager 的 update rate 设为 50 Hz。不要一开始就追求 100 Hz 或更高。
+
+另一个 terminal 检查：
+
+```bash
+ros2 topic echo --once /joint_states
+ros2 control list_controllers
+```
+
+如果 controller 都 active，并且 `/joint_states` 正常刷新，说明 ros2_control 和 CSP/PDO 桥接至少已经进入闭环。
+
+---
+
+## 10. WP3 minimum-jerk 通过 CSP 执行
+
+先只规划，不运动：
+
+```bash
+ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
+  -p target_x:=0.29 \
+  -p target_y:=0.00 \
+  -p target_z:=0.05 \
+  -p duration:=5.0 \
+  -p rate_hz:=50.0 \
+  -p execute:=false
+```
+
+确认 IK 成功、目标很近、CSV 生成正常后，再执行：
+
+```bash
+ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
+  -p target_x:=0.29 \
+  -p target_y:=0.00 \
+  -p target_z:=0.05 \
+  -p duration:=5.0 \
+  -p rate_hz:=50.0 \
+  -p execute:=true
+```
+
+实机第一次测试建议：
+
+```text
+目标点离当前 TCP 很近
+rate_hz = 50
+运动时间 duration >= 5 s
+不要同时大幅改变多个 joint
+手靠近急停
+```
+
+---
+
+## 11. 常见问题排查
+
+### 11.1 PDO mapping 报错
+
+如果 bridge 启动时在 `Configuring CSP PDO mapping` 附近报错，说明驱动器可能拒绝修改 `0x1600/0x1A00/0x1C12/0x1C13`。
+
+先不要运行 WP3。可以试着启动 bridge 时关闭自动 remap 做诊断：
+
+```bash
+ros2 run rascl_hardware_interface rascl_faulhaber_bridge.py --ros-args \
+  -p interface:=robot_interface \
+  -p configure_pdo_mapping:=false
+```
+
+但注意：当前 CSP 代码假定 PDO layout 是本文第 2.3 节的 7-byte layout。若关闭 remap 但默认 PDO layout 不一致，`ENTER_CSP_ALL` / `CSP_SETPOINT_ALL` 可能无法正常工作。此时需要读取实际 PDO mapping 后再改代码。
+
+### 11.2 EtherCAT 进不了 OP
+
+如果出现：
+
+```text
+EtherCAT master did not reach OP state
+```
+
+检查：
 
 ```bash
 ip link
 ```
 
-Example:
-
-```bash
-ros2 launch rascl_description ros2_control.launch.py \
-  interface:=enx3c18a0256dec \
-  use_fake_hardware:=false
-```
-
-The encoder conversion parameters are already set as defaults in the launch/URDF files:
-
-```text
-axis_counts_per_revolution    = 3211264
-gripper_counts_per_revolution = 1323008
-```
-
-Therefore they do not have to be passed manually during launch.
-
----
-
-## 5. Bridge Script Permission Troubleshooting
-
-If the launch fails with an error similar to:
-
-```text
-executable 'rascl_faulhaber_bridge.py' not found
-```
-
-or if the bridge script cannot be executed, ensure that the Python bridge has executable permission:
-
-```bash
-chmod +x src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
-```
-
-Then rebuild and source again:
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-rm -rf build install log
-colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-```
-
-This is important because the launch file starts `rascl_faulhaber_bridge.py` as a ROS 2 executable.
-
----
-
-## 6. Opening a Second Terminal in the Same Container
-
-After the main launch is running, open a second terminal on the host machine and enter the same container:
-
-```bash
-docker exec -it ros2-irs-rascl-wp22 bash
-```
-
-If another container name is used, check it with:
-
-```bash
-docker ps
-```
-
-Inside the second container terminal, source the workspace and set the same domain ID:
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-
-ros2 daemon stop
-ros2 daemon start
-```
-
-Make sure that `ROS_DOMAIN_ID=88` is set in every terminal that communicates with the running ROS 2 system.
-
----
-
-## 7. Reading the Current Joint Positions
-
-The command topic uses the following joint order:
-
-```text
-[shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
-```
-
-The `upperarm_joint` is the joint close to the shoulder.
-
-All joint positions are expressed in radians.
-
-To print the current joint positions in the correct command order, run:
-
-```bash
-python3 - <<'PY'
-import rclpy
-from sensor_msgs.msg import JointState
-
-order = ["shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint"]
-
-rclpy.init()
-node = rclpy.create_node("print_current_order")
-
-def cb(msg):
-    d = dict(zip(msg.name, msg.position))
-    print([d[j] for j in order])
-    rclpy.shutdown()
-
-node.create_subscription(JointState, "/joint_states", cb, 10)
-rclpy.spin(node)
-PY
-```
-
-The order printed by `/joint_states` itself may differ. Always use the joint names, not the line order, when interpreting `/joint_states`.
-
----
-
-## 8. Moving the Robot
-
-The position controller listens on:
-
-```text
-/rascl_position_controller/commands
-```
-
-The command type is:
-
-```text
-std_msgs/msg/Float64MultiArray
-```
-
-Command format:
-
-```bash
-ros2 topic pub --once /rascl_position_controller/commands std_msgs/msg/Float64MultiArray \
-  "{data: [shoulder, upperarm, lowerarm, spur_gear]}"
-```
-
-Example:
-
-```bash
-ros2 topic pub --once /rascl_position_controller/commands std_msgs/msg/Float64MultiArray \
-  "{data: [0.0, 0.0, 0.0, 0.0]}"
-```
-
-The values are absolute target positions in radians, not relative increments. Use the current joint positions as reference and command only reasonable, safe values. Avoid large jumps, especially when the robot is close to the table or other obstacles.
-
-Recommended workflow:
-
-1. Read the current joint positions.
-2. Change only one joint by a small amount.
-3. Observe the real robot and RViz.
-4. Continue with small, safe changes.
-
----
-
-## 9. Setting and Returning to Home
-
-Move the robot carefully to the desired home pose using the position command topic.
-
-Then set the current pose as the home position:
-
-```bash
-ros2 service call /rascl_faulhaber_bridge/home_all \
-  std_srvs/srv/Trigger "{}"
-```
-
-This uses the Faulhaber homing function to define the current motor positions as zero. After this service call, the current joint position should correspond to:
-
-```text
-[0, 0, 0, 0]
-```
-
-You can verify this with the joint-state printing command from Section 7.
-
-To return to the home position later, publish:
-
-```bash
-ros2 topic pub --once /rascl_position_controller/commands std_msgs/msg/Float64MultiArray \
-  "{data: [0, 0, 0, 0]}"
-```
-
-Important: this home is a software/controller home defined during the current setup. It is not an absolute mechanical home unless the robot has been referenced with suitable hardware reference sensors.
-
----
-
-## 10. Fault Recovery and Emergency Cleanup
-
-If the robot collides with an obstacle or the drive enters a fault state, ROS 2 processes may stop or the launch may exit.
-
-In this case:
-
-1. Stop the running launch if it is still active.
-2. Turn off the robot power.
-3. Wait at least 10 seconds.
-4. Clean up old ROS 2 processes.
-5. Start again from the normal launch procedure.
-
-Emergency cleanup commands:
+确认网卡名正确。然后清理旧进程：
 
 ```bash
 pkill -9 -f rascl_faulhaber_bridge.py
 pkill -9 -f ros2_control_node
 pkill -9 -f controller_manager
 pkill -9 -f spawner
-pkill -9 -f robot_state_publisher
-
 ros2 daemon stop
 ros2 daemon start
 ```
 
-Then power the robot on again and repeat the build/source/launch steps if necessary.
+再重新插电/上电，让 EtherCAT 从干净状态启动。
 
-Do not manually backdrive the motors unless instructed by the lab supervisors.
+### 11.3 mode display 不是 8
 
----
+`ENTER_CSP_ALL` 后如果 mode 不是 8，说明驱动器没有进入 CSP。不要继续发送轨迹。先确认 `0x6060` 是否支持 mode 8，以及驱动器状态机是否已经 Operation Enabled。
 
-## 11. RViz Visualization
+### 11.4 statusword 有 fault
 
-The RViz model can be used to visualize the robot state in real time. The model follows the ROS 2 `/joint_states` topic and the URDF published on `/robot_description`.
+如果 statusword fault bit 置位，停止测试，重启驱动/电源。不要在 fault 状态反复发送 CSP setpoints。
 
-### Host-Side X11 Permission
+### 11.5 ROS topic 发了但机器人不动
 
-Before starting RViz from inside Docker, run the following commands on the host machine:
-
-```bash
-xhost +local:root
-xhost +local:docker
-```
-
-The Docker script already forwards the display and sets `QT_X11_NO_MITSHM=1`. If RViz still cannot open, also run inside the container:
-
-```bash
-export QT_X11_NO_MITSHM=1
-```
-
-### Start RViz
-
-In a container terminal with the same `ROS_DOMAIN_ID`, run:
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-
-rviz2 -d src/rascl_description/rviz/urdf.rviz
-```
-
-If the model does not appear, check the `RobotModel` display settings in RViz:
-
-```text
-Description Source: Topic
-Description Topic: /robot_description
-```
-
-The fixed frame should normally be:
-
-```text
-world
-```
-
-or, if needed:
-
-```text
-base_link
-```
-
-The initial RViz pose is defined by the URDF zero pose and the current `/joint_states`. Use the homing procedure to align the real robot and the RViz model as closely as possible.
-
----
-
-## 12. Fake Hardware Mode
-
-For testing the URDF, controllers, and RViz without the real robot, launch fake hardware:
-
-```bash
-ros2 launch rascl_description ros2_control.launch.py \
-  use_fake_hardware:=true
-```
-
-In fake hardware mode, the EtherCAT bridge is not started.
-
----
-
-## 13. Useful Debug Commands
-
-List controllers:
+检查 controller：
 
 ```bash
 ros2 control list_controllers
+ros2 topic echo --once /rascl_position_controller/commands
+ros2 topic echo --once /joint_states
 ```
 
-List hardware interfaces:
+检查是否使用了 CSP 模式：
 
 ```bash
-ros2 control list_hardware_interfaces
+ros2 launch rascl_description ros2_control.launch.py ... control_mode:=csp controller_config:=controllers_csp.yaml
 ```
 
-Echo joint states:
+### 11.6 机器人方向反了
 
-```bash
-ros2 topic echo /joint_states
-```
+不要先改 CSP。方向问题仍然由 URDF 中每个 joint 的 `direction` 参数和运动学坐标约定决定。先回到 fake hardware / profile mode 确认：
 
-Check running ROS nodes:
-
-```bash
-ros2 node list
-```
-
-Check available topics:
-
-```bash
-ros2 topic list
-```
-
-Check whether the bridge service exists:
-
-```bash
-ros2 service list | grep rascl_faulhaber_bridge
+```text
+shoulder_direction
+upperarm_direction
+lowerarm_direction
+gripper_direction
 ```
 
 ---
 
-## 14. Optional Automated Hardware Interface Test
+## 12. 回退到旧模式
 
-This repository contains an optional automated test for the `rascl_hardware_interface` package:
-
-```text
-test/test_generic_system.cpp
-```
-
-The test is intended for software-side validation only. It does not connect to EtherCAT, does not start the Faulhaber bridge, does not enable the motors, and does not move the real robot. It checks the basic `ros2_control` hardware interface behavior in fake-hardware mode, including initialization, lifecycle transitions, exported state/command interfaces, and selected invalid-configuration cases.
-
-Normal operation and submission builds can still be performed with testing disabled:
+任何时候需要回退到旧 Profile Position 路径，用：
 
 ```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-
-rm -rf build install log
-colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF
-
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
+ros2 launch rascl_description ros2_control.launch.py \
+  interface:=robot_interface \
+  use_fake_hardware:=false \
+  control_mode:=profile \
+  controller_config:=controllers.yaml
 ```
 
-To build and run the optional automated test, enable `BUILD_TESTING` for the hardware interface package:
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-
-rm -rf build install log
-colcon build --symlink-install \
-  --packages-select rascl_hardware_interface \
-  --cmake-args -DBUILD_TESTING=ON
-
-source install/local_setup.bash
-
-colcon test --packages-select rascl_hardware_interface \
-  --ctest-args -R test_generic_system --output-on-failure
-
-colcon test-result --verbose
-```
-
-A successful run should report no errors or failures, for example:
+此时 C++ hardware interface 重新发送：
 
 ```text
-Summary: x tests, 0 errors, 0 failures, 0 skipped
+MOVE_ALL count0 count1 count2 count3
 ```
 
-If the test dependency is missing in a clean container, check whether `ament_cmake_gtest` is installed:
-
-```bash
-dpkg -l | grep ros-jazzy-ament-cmake-gtest
-```
-
-If there is no output, install the package inside the Docker image or add it to the Dockerfile dependency list:
+bridge 重新使用：
 
 ```text
-ros-jazzy-ament-cmake-gtest
+Profile Position Mode, mode = 1
 ```
 
-The automated test is not a replacement for real-hardware validation. It only verifies that the hardware interface can be built and exercised in a controlled fake-hardware setup. Real EtherCAT communication, motor direction, joint calibration, homing behavior, and mechanical safety still have to be validated on the physical RASCL robot.
+---
+
+## 13. 本版本的边界
+
+当前代码已经实现：
+
+```text
+CSP mode = 8
+PDO remapping
+EtherCAT OP request
+RxPDO target position / controlword / mode
+TxPDO actual position / statusword / mode display
+C++ control_mode 参数切换
+CSP_SETPOINT_ALL 周期 setpoint 命令
+controllers_csp.yaml 50 Hz 调试配置
+```
+
+当前代码没有强制启用 distributed clocks，`enable_dc_sync` 默认是 false。需要更严格同步时，可以在 bridge 参数里打开：
+
+```bash
+-p enable_dc_sync:=true -p dc_cycle_ns:=20000000
+```
+
+但建议先在 `enable_dc_sync:=false` 下完成基本 CSP/PDO 调试，再打开 DC sync。
