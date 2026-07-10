@@ -37,7 +37,7 @@ DIGOUT1_ON = 0x00FD
 DIGOUT1_OFF = 0x00FC
 DIGOUT1_TOGGLE = 0x00FE
 #add on 7/10
-DIGITAL_INPUT_SETTIN = 0x2310
+DIGITAL_INPUT_SETTINGS = 0x2310
 
 DIGITAL_INPUT_LOGICAL = 0x01
 DIGITAL_INPUT_PHYSICAL = 0x02
@@ -45,7 +45,8 @@ REFERENCE_SWITCH_INPUT = 0x04
 INPUT_POLARITY = 0x10
 
 HOMING_SPEED = 0x6099
-
+HOMING_SEARCH_SPEED = 0x01
+HOMING_ZERO_SPEED = 0x02
 HOMING_ACCELERATION = 0x609A
 
 # CiA 402 modes.
@@ -168,27 +169,131 @@ class FaulhaberDrive:
             time.sleep(0.05)
         return self.read_actual_position_counts()
 
-    def set_current_position_as_home(self, timeout_s: float) -> int:
-        # Homing method 37 tells the drive to treat the current position as home.
-        # This does not search for a physical switch; it only resets the reference.
-        self.set_operation_mode(MODE_HOMING)
-        self.sdo_write_int(HOMING_METHOD, 0, 37, size=1, signed=True)
-        self.sdo_write_int(HOMING_OFFSET, 0, 0, size=4, signed=True)
+    def home_to_reference_switch(
+        self,
+        method: int,
+        reference_input: int,
+        offset_counts: int,
+        search_speed: int,
+        zero_speed: int,
+        acceleration: int,
+        timeout_s: float,
+    ) -> int:
+        # Home one drive against its configured reference switch.
+        if method not in (24, 28):
+            raise ValueError(
+            f"Drive {self.drive_id}: unsupported test homing method {method}"
+        )
+
+        if not 1 <= reference_input <= 8:
+            raise ValueError(f"Drive {self.drive_id}: invalid reference input "
+            f"{reference_input}"
+        )
+
+        if search_speed <= 0:
+            raise ValueError("Homing search speed must be positive")
+
+        if zero_speed <= 0:
+            raise ValueError("Homing zero speed must be positive")
+
+        if acceleration <= 0:
+            raise ValueError("Homing acceleration must be positive")
+            
+        self.reset_fault_if_needed()
+
+        # Select the digital input used as the homing reference switch.
+        self.sdo_write_int( DIGITAL_INPUT_SETTINGS,
+        REFERENCE_SWITCH_INPUT,
+        reference_input,
+        size=1,
+        signed=False,)
+
+        # Configure the selected homing procedure.
+        self.sdo_write_int( HOMING_METHOD,
+        0,
+        method,
+        size=1,
+        signed=True,)
+
+        self.sdo_write_int( HOMING_OFFSET,
+        0,
+        offset_counts,
+        size=4,
+        signed=True,)
+
+        self.sdo_write_int( HOMING_SPEED,
+        HOMING_SEARCH_SPEED,
+        search_speed,
+        size=4,
+        signed=False,)
+
+        self.sdo_write_int( HOMING_SPEED,
+        HOMING_ZERO_SPEED,
+        zero_speed,
+        size=4,
+        signed=False, )
+
+        self.sdo_write_int( HOMING_ACCELERATION,
+        0,
+        acceleration,
+        size=4,
+        signed=False,)
+
+        # Enter the CiA 402 Operation Enabled state.
+        self.write_controlword(CMD_SHUTDOWN)
+        self.write_controlword(CMD_SWITCH_ON)
+
+        displayed_mode = self.set_operation_mode(MODE_HOMING)
+        if displayed_mode != MODE_HOMING:
+            raise RuntimeError(
+            f"Drive {self.drive_id} did not enter Homing mode; "
+            f"display={displayed_mode}")
+
+        status = self.write_controlword(CMD_ENABLE_OPERATION)
+        if not (status & STATUS_OPERATION_ENABLED):
+            raise RuntimeError(
+            f"Drive {self.drive_id} is not Operation Enabled; "
+            f"statusword=0x{status:04X}")
+
+        # Ensure bit 4 is initially zero, then generate its rising edge.
         self.write_controlword(CMD_ENABLE_OPERATION)
         self.write_controlword(CMD_START_HOMING)
 
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout_s
+
+        while time.monotonic() < deadline:
             status = self.read_status()
+            
+            if status & STATUS_FAULT:
+                self.write_controlword(CMD_DISABLE_VOLTAGE)
+                raise RuntimeError( f"Drive {self.drive_id}: fault during homing; "
+                f"statusword=0x{status:04X}")
+
             if status & STATUS_HOMING_ERROR:
-                raise RuntimeError(f"Homing error. Statusword=0x{status:04X}")
-            if (status & STATUS_TARGET_REACHED) and (status & STATUS_HOMING_ATTAINED):
-                break
+                self.write_controlword(CMD_DISABLE_VOLTAGE)
+                raise RuntimeError(f"Drive {self.drive_id}: homing error; "
+                f"statusword=0x{status:04X}")
+
+            homing_finished = ( bool(status & STATUS_HOMING_ATTAINED)
+            and bool(status & STATUS_TARGET_REACHED) )
+
+            if homing_finished:
+                # Clear the homing-start bit before leaving Homing mode.
+                self.write_controlword(CMD_ENABLE_OPERATION)
+                self.set_operation_mode(MODE_PROFILE_POSITION)
+                
+                return self.read_actual_position_counts()
+                
             time.sleep(0.05)
 
-        self.write_controlword(CMD_ENABLE_OPERATION)
-        self.set_operation_mode(MODE_PROFILE_POSITION)
-        return self.read_actual_position_counts()
+        # Stop the drive if the sensor was not found before timeout.
+        self.write_controlword(CMD_DISABLE_OPERATION)
+        self.write_controlword(CMD_DISABLE_VOLTAGE)
+
+        raise TimeoutError(f"Drive {self.drive_id}: homing timed out "
+        f"after {timeout_s:.1f} seconds")
+
+
 
     def set_digout1(self, on: bool) -> None:
         value = DIGOUT1_ON if on else DIGOUT1_OFF
@@ -285,12 +390,13 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("profile_velocity", 0)
         self.declare_parameter("profile_acceleration", 0)
         self.declare_parameter("profile_deceleration", 0)
-        self.declare_parameter("homing_methods", [29, 29, 29, 29])
+        self.declare_parameter("homing_methods", [28, 28, 24, 24])
         self.declare_parameter("homing_offsets", [0, 0, 0, 0])
-        self.declare_parameter("reference_inputs", [1, 1, 1, 1])
+        self.declare_parameter("reference_inputs", [2, 2, 2, 1])
         self.declare_parameter("homing_search_speeds", [1000, 1000, 1000, 1000])
-        self.declare_parameter("homing_zero_speeds", [200, 200, 200, 200])
-        self.declare_parameter("homing_accelerations", [1000, 1000, 1000, 1000])
+        self.declare_parameter("homing_zero_speeds", [20, 20, 20, 20])
+        self.declare_parameter("homing_accelerations", [20, 20, 20, 20])
+        self.declare_parameter("test_drive_index", 0)  # Used for manual testing of one drive at a time.
 
         self.interface = str(self.get_parameter("interface").value)
         self.slave_indices = [int(v) for v in self.get_parameter("slave_indices").value]
@@ -302,6 +408,13 @@ class RASCLFaulhaberBridge(Node):
         self.profile_velocity = int(self.get_parameter("profile_velocity").value)
         self.profile_acceleration = int(self.get_parameter("profile_acceleration").value)
         self.profile_deceleration = int(self.get_parameter("profile_deceleration").value)
+        self.homing_methods = [int(value) for value in self.get_parameter("homing_methods").value]
+        self.reference_inputs = [int(value) for value in self.get_parameter("reference_inputs").value]
+        self.homing_offsets = [int(value) for value in self.get_parameter("homing_offsets").value]
+        self.homing_search_speeds = [int(value) for value in self.get_parameter("homing_search_speeds").value]
+        self.homing_zero_speeds = [int(value) for value in self.get_parameter("homing_zero_speeds").value]
+        self.homing_accelerations = [int(value) for value in self.get_parameter("homing_accelerations").value]
+        self.home_one_srv = self.create_service(Trigger, "~/home_one", self.on_home_one)
 
         # The lock serializes service callbacks and TCP commands on the same bus.
         self.lock = threading.RLock()
@@ -426,17 +539,11 @@ class RASCLFaulhaberBridge(Node):
             with self.lock:
                 for drive in self.bus.drives:
                     logical, physical, polarity = drive.read_digital_inputs()
-                    number, threshold, reference = (
-                        drive.read_digital_input_configuration()
-                    )
                     results.append(
                         f"Drive {drive.drive_id}: "
                         f"physical=0x{physical:02X}/{physical:08b}, "
                         f"logical=0x{logical:02X}/{logical:08b}, "
                         f"polarity=0x{polarity:02X}, "
-                        f"inputs={number}, "
-                        f"threshold={threshold}, "
-                        f"reference_input={reference}"
                         )
 
             response.success = True
@@ -447,7 +554,31 @@ class RASCLFaulhaberBridge(Node):
            response.message = f"Read digital inputs failed: {exc}"
 
         return response
-    
+
+    def on_home_one(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        # Home one drive for manual testing of the homing procedure.
+        try:
+            drive_index = int(self.get_parameter("test_drive_index").value)
+            if drive_index < 0 or drive_index >= len(self.bus.drives):
+                raise ValueError(f"test_drive_index={drive_index}")
+            with self.lock:
+                drive = self.bus.drives[drive_index]
+                position = drive.home_to_reference_switch(
+                    method=self.homing_methods[drive_index],
+                    reference_input=self.reference_inputs[drive_index],
+                    offset_counts=self.homing_offsets[drive_index],
+                    search_speed=self.homing_search_speeds[drive_index],
+                    zero_speed=self.homing_zero_speeds[drive_index],
+                    acceleration=self.homing_accelerations[drive_index],
+                    timeout_s=self.motion_timeout_s,
+                )
+            response.success = True
+            response.message = f"Drive {drive_index} homed to position {position}"
+        except Exception as exc:
+            response.success = False
+            response.message = f"Home one failed: {exc}"
+        return response 
+
     def tcp_server_loop(self) -> None:
         # The line-based protocol is intentionally small and deterministic:
         # one command line in, one response line out.
