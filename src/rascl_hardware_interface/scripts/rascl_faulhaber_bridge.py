@@ -36,6 +36,17 @@ DIGOUT_WRITE = 0x04
 DIGOUT1_ON = 0x00FD
 DIGOUT1_OFF = 0x00FC
 DIGOUT1_TOGGLE = 0x00FE
+#add on 7/10
+DIGITAL_INPUT_SETTIN = 0x2310
+
+DIGITAL_INPUT_LOGICAL = 0x01
+DIGITAL_INPUT_PHYSICAL = 0x02
+REFERENCE_SWITCH_INPUT = 0x04
+INPUT_POLARITY = 0x10
+
+HOMING_SPEED = 0x6099
+
+HOMING_ACCELERATION = 0x609A
 
 # CiA 402 modes.
 MODE_PROFILE_POSITION = 1
@@ -190,6 +201,21 @@ class FaulhaberDrive:
             print(f"[Drive {self.drive_id}] DigOut1 TOGGLE")
         self.sdo_write_int(DIGITAL_IO_STATUS, DIGOUT_WRITE, DIGOUT1_TOGGLE, size=2, signed=False)
 
+    def read_digital_inputs(self) -> tuple[int, int, int]:
+
+        logical = self.sdo_read_int(DIGITAL_IO_STATUS,DIGITAL_INPUT_LOGICAL,
+        signed=False,)
+        physical = self.sdo_read_int(
+        DIGITAL_IO_STATUS,
+        DIGITAL_INPUT_PHYSICAL,
+        signed=False,
+       )
+        polarity = self.sdo_read_int(
+        DIGITAL_INPUT_SETTINGS,
+        INPUT_POLARITY,
+        signed=False,
+       )
+        return logical, physical, polarity
 
 class FaulhaberBus:
     """Owns the pysoem Master and exposes the selected drive objects."""
@@ -259,6 +285,12 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("profile_velocity", 0)
         self.declare_parameter("profile_acceleration", 0)
         self.declare_parameter("profile_deceleration", 0)
+        self.declare_parameter("homing_methods", [29, 29, 29, 29])
+        self.declare_parameter("homing_offsets", [0, 0, 0, 0])
+        self.declare_parameter("reference_inputs", [1, 1, 1, 1])
+        self.declare_parameter("homing_search_speeds", [1000, 1000, 1000, 1000])
+        self.declare_parameter("homing_zero_speeds", [200, 200, 200, 200])
+        self.declare_parameter("homing_accelerations", [1000, 1000, 1000, 1000])
 
         self.interface = str(self.get_parameter("interface").value)
         self.slave_indices = [int(v) for v in self.get_parameter("slave_indices").value]
@@ -290,6 +322,7 @@ class RASCLFaulhaberBridge(Node):
         self.enable_all_srv = self.create_service(Trigger, "~/enable_all", self.on_enable_all)
         self.disable_all_srv = self.create_service(Trigger, "~/disable_all", self.on_disable_all)
         self.home_all_srv = self.create_service(Trigger, "~/home_all", self.on_home_all)
+        self.read_digital_inputs_srv = self.create_service(Trigger, "~/read_digital_inputs", self.on_read_digital_inputs, )
         self.goto_home_all_srv = self.create_service(Trigger, "~/goto_home_all", self.on_goto_home_all)
         self.blink_digout1_srv = self.create_service(Trigger, "~/blink_digout1", self.on_blink_digout1)
         self.digout1_sub = self.create_subscription(Bool, "~/digout1", self.on_digout1, 10)
@@ -332,7 +365,18 @@ class RASCLFaulhaberBridge(Node):
         # Set every drive's current raw count as its zero position.
         try:
             with self.lock:
-                positions = [drive.set_current_position_as_home(self.motion_timeout_s) for drive in self.bus.drives]
+                positions = []
+                for index, drive in enumerate(self.bus.drives):
+                    position = drive.home_to_reference_switch(
+                    method=self.homing_methods[index],
+                    reference_input=self.reference_inputs[index],
+                    offset_counts=self.homing_offsets[index],
+                    search_speed=self.homing_search_speeds[index],
+                    zero_speed=self.homing_zero_speeds[index],
+                    acceleration=self.homing_accelerations[index],
+                    timeout_s=self.motion_timeout_s,
+                    )
+                    positions.append(position)
             self.publish_home_done()
             response.success = True
             response.message = "Home set for all drives: " + " ".join(str(p) for p in positions)
@@ -373,7 +417,37 @@ class RASCLFaulhaberBridge(Node):
             response.success = False
             response.message = f"DigOut1 blink failed: {exc}"
         return response
+    
+    # add on 7/10     
+    def on_read_digital_inputs(self, request: Trigger.Request, response: Trigger.Response, ) -> Trigger.Response:
+        try:
+            results = []
 
+            with self.lock:
+                for drive in self.bus.drives:
+                    logical, physical, polarity = drive.read_digital_inputs()
+                    number, threshold, reference = (
+                        drive.read_digital_input_configuration()
+                    )
+                    results.append(
+                        f"Drive {drive.drive_id}: "
+                        f"physical=0x{physical:02X}/{physical:08b}, "
+                        f"logical=0x{logical:02X}/{logical:08b}, "
+                        f"polarity=0x{polarity:02X}, "
+                        f"inputs={number}, "
+                        f"threshold={threshold}, "
+                        f"reference_input={reference}"
+                        )
+
+            response.success = True
+            response.message = " | ".join(results)
+
+        except Exception as exc:
+           response.success = False
+           response.message = f"Read digital inputs failed: {exc}"
+
+        return response
+    
     def tcp_server_loop(self) -> None:
         # The line-based protocol is intentionally small and deterministic:
         # one command line in, one response line out.
@@ -449,14 +523,6 @@ class RASCLFaulhaberBridge(Node):
                     target = int(parts[2])
                     self.bus.drives[drive_index].move_absolute_counts(target)
                     return "OK"
-
-                if op == "HOME":
-                    if len(parts) != 2:
-                        return "ERR usage HOME <drive_index>"
-                    drive_index = int(parts[1])
-                    pos = self.bus.drives[drive_index].set_current_position_as_home(self.motion_timeout_s)
-                    self.publish_home_done()
-                    return f"OK {pos}"
 
                 if op == "GOTO_HOME":
                     if len(parts) == 1:

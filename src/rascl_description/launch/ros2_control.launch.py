@@ -75,11 +75,18 @@ def generate_launch_description():
                 "port": LaunchConfiguration("port"),
                 "slave_indices": [0, 1, 2, 3],
                 "sdo_delay_s": 0.05,
-                "motion_timeout_s": 8.0,
                 "verbose": True,
                 "profile_velocity": 0,
                 "profile_acceleration": 0,
                 "profile_deceleration": 0,
+                "homing_methods": [29, 29, 29, 29],
+                #根据实际情况修改
+                "reference_inputs": [1, 1, 1, 1],
+                "homing_offsets": [0, 0, 0, 0],
+                "homing_search_speeds": [1000, 1000, 1000, 1000],
+                "homing_zero_speeds": [200, 200, 200, 200],
+                "homing_accelerations": [1000, 1000, 1000, 1000],
+                "motion_timeout_s": 8.0,
             }
         ],
     )
