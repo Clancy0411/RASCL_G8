@@ -17,8 +17,12 @@
 
 ```bash
 cd ~/RASCL_G8  # 实际目录不同时替换这一行
+ip link show enx94bdbe9565bc
+sudo ip link set enx94bdbe9565bc up
 bash ./rosws.sh
 ```
+
+前两条 `ip` 命令在 Ubuntu 主机执行，用于确认并启用实机 EtherCAT 网卡。运行 `rosws.sh` 进入 Docker 后，不再执行 `ip link`。
 
 进入容器、看到 `rascl-container:/root/ws$` 后执行：
 
@@ -31,15 +35,6 @@ colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF
 
 source install/local_setup.bash
 export ROS_DOMAIN_ID=88
-export ETHERCAT_IF=enx94bdbe9565bc
-```
-
-实验室电脑已经确认 EtherCAT 网卡名为 `enx94bdbe9565bc`。用以下命令确认并启用：
-
-```bash
-ip -br link
-ip link show "$ETHERCAT_IF"
-ip link set "$ETHERCAT_IF" up
 ```
 
 保持这个窗口打开，后面称为 `Terminal 1`。
@@ -74,7 +69,7 @@ export ROS_DOMAIN_ID=88
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:="$ETHERCAT_IF"
+  interface:=enx94bdbe9565bc
 ```
 
 期望看到：
@@ -136,7 +131,7 @@ ss -ltnp | grep 15001
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:="$ETHERCAT_IF" \
+  interface:=enx94bdbe9565bc \
   use_fake_hardware:=false
 ```
 

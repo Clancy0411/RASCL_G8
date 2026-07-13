@@ -429,18 +429,9 @@ rascl-container:/root/ws$
 4. 第一次 CSP 轨迹只允许几毫米位移；
 5. 不要同时运行 Homing 和 CSP。
 
-### 5.2 在 Terminal 1 查找网卡名
+### 5.2 在 Ubuntu 主机启用 EtherCAT 网卡
 
-操作位置：`Container-T1`。`Container-T2` 保持空闲。
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-
-ip -br link
-```
+`ip link` 是 Ubuntu 主机命令，不在 Docker 容器内执行。保持 `Container-T1` 和 `Container-T2` 开着，另外新开一个普通 Ubuntu 主机 Terminal；不要在这个新窗口运行 `rosws.sh`。
 
 实验室电脑上连接 EtherCAT 驱动链的专用网卡已经确认为：
 
@@ -448,17 +439,15 @@ ip -br link
 enx94bdbe9565bc
 ```
 
-在 `Container-T1` 中保存并启用该网卡：
+在这个 Ubuntu 主机 Terminal 执行：
 
 ```bash
-export ETHERCAT_IF=enx94bdbe9565bc
-ip link show "$ETHERCAT_IF"
-ip link set "$ETHERCAT_IF" up
+ip link show enx94bdbe9565bc
+sudo ip link set enx94bdbe9565bc up
+ip link show enx94bdbe9565bc
 ```
 
-`ip link show` 失败表示名字不正确。不要继续 Homing。
-
-注意：这个变量只存在于 `Container-T1`，但后续只有 `Container-T1` 的 launch 需要它。
+最后一次输出应显示网卡为 `UP`。如果提示 `Device does not exist`，不要继续 Homing。检查完成后可以关闭这个额外的 Ubuntu 主机 Terminal；两个 Docker Terminal 继续保留。
 
 ### 5.3 清理 ROS graph 缓存
 
@@ -502,23 +491,11 @@ motion_timeout_s     = 8.0
 
 ### 6.1 Terminal 1 启动 Homing bridge
 
-操作位置：`Container-T1`。确认 `$ETHERCAT_IF` 仍然有值：
-
-```bash
-echo "$ETHERCAT_IF"
-```
-
-如果输出为空，重新执行：
-
-```bash
-export ETHERCAT_IF=enx94bdbe9565bc
-```
-
-然后启动：
+操作位置：`Container-T1`。直接使用已经确认的实机网卡名启动：
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:="$ETHERCAT_IF"
+  interface:=enx94bdbe9565bc
 ```
 
 保持 `Container-T1` 运行。期望看到：
@@ -638,18 +615,6 @@ ss -ltnp | grep 15001
 
 操作位置：刚刚停止 Homing 的同一个 `Container-T1`。
 
-确认网卡变量：
-
-```bash
-echo "$ETHERCAT_IF"
-```
-
-若为空，重新设置已经确认的 EtherCAT 网卡：
-
-```bash
-export ETHERCAT_IF=enx94bdbe9565bc
-```
-
 启动 CSP：
 
 ```bash
@@ -659,7 +624,7 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:="$ETHERCAT_IF" \
+  interface:=enx94bdbe9565bc \
   use_fake_hardware:=false
 ```
 
@@ -860,10 +825,8 @@ ss -ltnp | grep 15001
 在 `Container-T1`：
 
 ```bash
-export ETHERCAT_IF=enx94bdbe9565bc
-
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:="$ETHERCAT_IF" \
+  interface:=enx94bdbe9565bc \
   use_fake_hardware:=false \
   control_mode:=profile \
   controller_config:=controllers.yaml
@@ -901,10 +864,8 @@ ros2 topic echo --once /joint_states
 在 `Container-T1`：
 
 ```bash
-export ETHERCAT_IF=enx94bdbe9565bc
-
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:="$ETHERCAT_IF" \
+  interface:=enx94bdbe9565bc \
   use_fake_hardware:=false \
   enable_dc_sync:=true \
   pdo_cycle_ns:=20000000
@@ -1047,10 +1008,10 @@ TxPDO2 0x1A01 = 0x6041:16 + 0x6064:32
 
 错误显示在 `Container-T1`。此时 `Container-T2` 不要发送运动目标。
 
-在 `Container-T1` 按 Ctrl-C，回到 shell 后检查：
+在 `Container-T1` 按 Ctrl-C。然后新开一个 Ubuntu 主机 Terminal（不要进入 Docker）检查：
 
 ```bash
-ip link show "$ETHERCAT_IF"
+ip link show enx94bdbe9565bc
 ```
 
 然后重新检查：
