@@ -32,14 +32,14 @@ Task Sheet 要求 Task 1 的运动控制器使用 CSP，并向驱动器发送位
 
 | 名称 | 是什么 | 用途 |
 |---|---|---|
-| `Host-A` | 第一个 Windows Terminal / WSL 窗口 | 启动 Docker；进入容器后变成 `Container-T1` |
+| `Ubuntu-A` | 实验室电脑上的第一个 Ubuntu Terminal | 启动 Docker；进入容器后变成 `Container-T1` |
 | `Container-T1` | 容器的主终端 | 编译；启动 fake、Homing、CSP 等需要持续运行的 launch |
-| `Host-B` | 第二个 Windows Terminal / WSL 窗口 | 连接已经运行的容器；进入后变成 `Container-T2` |
+| `Ubuntu-B` | 实验室电脑上的第二个 Ubuntu Terminal | 连接已经运行的容器；进入后变成 `Container-T2` |
 | `Container-T2` | 容器的第二终端 | 调 service、检查 topic/controller、运行 WP3 轨迹节点 |
 
 必须遵守：
 
-1. `rosws.sh` 在 Windows 的 WSL/Linux 终端中运行，不在 PowerShell 中运行，也不在容器内部运行。
+1. `rosws.sh` 在实验室电脑的 Ubuntu 主机 Terminal 中运行，不在容器内部运行。
 2. `Container-T1` 是容器主终端。整个调试结束前不要在这里输入 `exit`。
 3. launch 正在 `Container-T1` 运行时，该窗口不能输入其他命令；检查命令全部在 `Container-T2` 运行。
 4. 停止 launch 时，在 `Container-T1` 按一次 `Ctrl-C`。看到 shell 提示符重新出现，表示 launch 已停止，但容器仍在。
@@ -54,46 +54,58 @@ pwd
 ```
 
 - 输出 `/root/ws`：当前在容器内。
-- 输出 `/mnt/c/...`：当前还在 WSL 主机。
-- PowerShell 显示 `PS C:\...>`：当前不是 WSL，不能直接运行 `rosws.sh`。
+- 输出 `/home/.../RASCL_G8`：当前在 Ubuntu 主机的仓库目录。
 
 ---
 
-## 1. 从 Windows/WSL 使用 rosws.sh 启动 Docker
+## 1. 在实验室 Ubuntu 电脑上使用 rosws.sh 启动 Docker
 
-### 1.1 准备 Docker Desktop
+### 1.1 检查 Ubuntu Docker Engine
 
-操作位置：`Host-A`。
+操作位置：`Ubuntu-A`。
 
-先启动 Windows 上的 Docker Desktop，并确认 Docker Desktop 已启用 WSL integration。然后打开一个 WSL Ubuntu Terminal，执行：
+打开实验室电脑上的第一个 Ubuntu Terminal，执行：
 
 ```bash
 docker version
 ```
 
-期望同时看到 `Client` 和 `Server` 信息。如果出现 `Cannot connect to the Docker daemon`，不要继续编译；先启动 Docker Desktop并检查 WSL integration。
+期望同时看到 `Client` 和 `Server` 信息。如果出现 `Cannot connect to the Docker daemon`，执行：
+
+```bash
+sudo systemctl start docker
+docker version
+```
+
+如果出现 Docker socket 的 `Permission denied`，执行：
+
+```bash
+sudo usermod -aG docker "$USER"
+```
+
+然后注销当前 Ubuntu 用户并重新登录。不要用 `sudo bash ./rosws.sh` 长期绕过权限，否则仓库中的 build 文件可能变成主机 root 所有。
 
 ### 1.2 进入仓库目录
 
-仍在 `Host-A`。本机仓库路径为：
-
-```text
-C:\Users\Xin\Desktop\第三学期\RASCL\WP3\RASCL_G8
-```
-
-它在 WSL 中对应：
+仍在 `Ubuntu-A`。进入实验室电脑上的仓库目录。例如仓库位于 home 下时：
 
 ```bash
-cd "/mnt/c/Users/Xin/Desktop/第三学期/RASCL/WP3/RASCL_G8"
+cd ~/RASCL_G8
 pwd
 ls rosws.sh Dockerfile
 ```
 
-如果仓库被移动过，请把 `cd` 后面的路径替换为实际路径。最后一条命令必须能看到 `rosws.sh` 和 `Dockerfile`。
+如果实际目录不同，只替换 `cd ~/RASCL_G8` 这一行。也可以先查找：
+
+```bash
+find "$HOME" -name rosws.sh -type f 2>/dev/null
+```
+
+最后一条 `ls` 命令必须能看到 `rosws.sh` 和 `Dockerfile`。
 
 ### 1.3 第一次启动或 Dockerfile 更新后启动
 
-操作位置：`Host-A`。
+操作位置：`Ubuntu-A`。
 
 本版本修改了 Dockerfile，因此第一次必须执行普通重新构建：
 
@@ -133,12 +145,12 @@ REBUILD=true bash ./rosws.sh
 
 ### 1.4 打开第二个容器 Terminal
 
-先保持 `Container-T1` 开着。新开第二个 WSL Ubuntu 窗口，这个新窗口叫 `Host-B`。
+先保持 `Container-T1` 开着。新开实验室电脑上的第二个 Ubuntu Terminal，这个窗口叫 `Ubuntu-B`。
 
-在 `Host-B` 执行：
+在 `Ubuntu-B` 进入同一个仓库目录并执行：
 
 ```bash
-cd "/mnt/c/Users/Xin/Desktop/第三学期/RASCL/WP3/RASCL_G8"
+cd ~/RASCL_G8  # 实际目录不同时替换这一行
 bash ./rosws.sh
 ```
 
@@ -917,7 +929,7 @@ Python 用户态调度不是硬实时环境，因此 DC-Sync 不稳定时不要�
 
 ### 11.1 rosws.sh 无法启动 Docker
 
-操作位置：WSL 主机窗口，不是容器。
+操作位置：Ubuntu 主机 Terminal，不是容器。
 
 ```bash
 docker version
@@ -926,8 +938,13 @@ docker ps -a --filter name=ros2-irs-rascl-wp22
 
 处理顺序：
 
-1. 启动 Docker Desktop；
-2. 检查 Docker Desktop WSL integration；
+1. 启动 Ubuntu Docker service：
+
+```bash
+sudo systemctl start docker
+```
+
+2. 确认当前用户有 Docker 权限；
 3. 若存在已经停止但未删除的同名容器：
 
 ```bash
@@ -944,10 +961,10 @@ bash ./rosws.sh
 
 ### 11.2 修改 Dockerfile 后容器仍使用旧依赖
 
-先在所有容器 Terminal 停止 launch。`Container-T2` 输入 `exit`，最后在 `Container-T1` 输入 `exit`。回到 WSL 主机后：
+先在所有容器 Terminal 停止 launch。`Container-T2` 输入 `exit`，最后在 `Container-T1` 输入 `exit`。回到 Ubuntu 主机 Terminal 后：
 
 ```bash
-cd "/mnt/c/Users/Xin/Desktop/第三学期/RASCL/WP3/RASCL_G8"
+cd ~/RASCL_G8  # 实际目录不同时替换这一行
 SOFT_REBUILD=true bash ./rosws.sh
 ```
 
@@ -1137,7 +1154,7 @@ exit
 
 主 shell 退出后，容器停止并因 `--rm` 自动删除。仓库、build、install 和 log 都在挂载目录 `/root/ws`，不会随容器删除；Docker 镜像也会保留。
 
-回到 WSL 主机检查：
+回到 Ubuntu 主机 Terminal 检查：
 
 ```bash
 docker ps --filter name=ros2-irs-rascl-wp22
