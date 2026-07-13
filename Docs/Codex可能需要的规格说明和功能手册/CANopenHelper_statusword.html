@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>CANopen 402 Statusword</title>
+	<style>
+		span {
+			color: firebrick;
+		}
+	</style>
+</head>
+
+<body style="font-family: consolas">
+	<h2 style="color: firebrick;">CANopen cia 402 Statusword Converter</h2>
+
+	<p>
+		<b>Statusword 16 bit</b>
+	<p>
+
+		<label>dec</label>
+		<input id="Statusword_dec" type="number" placeholder="sw dec" min="0" max="65536" oninput="upd_dec(this.value)"
+			onchange="if(stopRecursion == false) {upd_dec(this.value)}" />
+	</p>
+
+	<p>
+		<label>hex</label>
+		<input id="Statusword_hex" type="text" placeholder="sw hex" min="0" max="65536"
+			pattern="#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?" oninput="upd_hex(this.value)"
+			onchange="if(stopRecursion == false){upd_hex(this.value)}" />
+	</p>
+
+	<!-- // Output fields -->
+	<p><span id="Ready_to_Switch_On"></span> _00_Ready_to_Switch_On</p>
+	<p><span id="Switched_On"></span> _01_Switched_On</p>
+	<p><span id="Operation_Enabled"></span> _02_Operation_Enabled</p>
+	<p><span id="Fault"></span> _03_Fault</p>
+	<p><span id="Voltage_Disabled"></span> _04_Voltage_Disabled</p>
+	<p><span id="Quick_Stop"></span> _05_Quick_Stop</p>
+	<p><span id="Switch_On_Disabled"></span> _06_Switch_On_Disabled</p>
+	<p><span id="Warning"></span> _07_Warning</p>
+	<p><span id="Manufacturer_Specific"></span> _08_Manufacturer_Specific</p>
+	<p><span id="Remote"></span> _09_Remote</p>
+	<p><span id="Target_Reached"></span> _10_Target_Reached</p>
+	<p><span id="Internal_Limit_Active"></span> _11_Internal_Limit_Active</p>
+	<p><span id="bit12"></span> _12_bit12</p>
+	<p><span id="bit13"></span> _13_bit13</p>
+	<p><span id="bit14"></span> _14_bit14</p>
+	<p><span id="bit15"></span> _15_bit15</p>
+	<p><b>State(s)</b></p>
+	<p> <span id="state402"></span></p>
+
+	<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="13 4 760 400">
+		<defs>
+			<symbol id="a" data-bx-pinned="true" viewBox="0 0 11 22">
+				<path fill="#0" stroke="#ccc" stroke-width="2" d="M105 157H94l-24-37-10 7 40 59 39-59-10-7-24 37Z"
+					transform="matrix(.14 0 0 .125 -8.5 -1.76)" />
+			</symbol>
+		</defs>
+		<rect width="210" height="255" x="14" y="5" style="fill:#d8d8d8;stroke:#000" />
+		<rect width="385" height="130" x="14" y="268" style="fill:#d8d8d8;stroke:#000" />
+		<rect width="167" height="255" x="231.293" y="5" style="fill:#d8d8d8;stroke:#000" />
+		<g transform="translate(-27 -389)">
+			<rect width="120" height="40" x="85" y="414" style="stroke:#000;fill:#fff" />
+			<text x="129" y="438"
+				style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px">Start</text>
+		</g>
+		<rect width="120" height="40" x="60" y="85" style="stroke:#000;fill:#fff" />
+		<text x="129" y="438" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px"
+			transform="translate(-53 -336)">Not ready to<tspan x="129" dy="1em"> </tspan>switch on</text>
+		<rect width="120" height="40" x="60" y="207" style="stroke:#000;fill:#fff" />
+		<text x="102" y="232" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px"
+			transform="translate(-16 -8)">Ready to<tspan x="102" dy="1em"> </tspan>switch on</text>
+		<rect width="120" height="40" x="60" y="287" style="stroke:#000;fill:#fff" />
+		<text x="76" y="312" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px">Switched on</text>
+		<rect width="120" height="40" x="60" y="347" style="stroke:#000;fill:#fff" />
+		<text x="102" y="372" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px"
+			transform="translate(-18 -8)">Operation<tspan x="102" dy="1em"> </tspan>enable</text>
+		<rect width="120" height="40" x="60" y="146" style="stroke:#000;fill:#fff" />
+		<text x="102" y="171" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px"
+			transform="translate(-17 -8)">Switch on<tspan x="102" dy="1em"> </tspan>disabled</text>
+		<rect width="120" height="40" x="253" y="85" style="stroke:#000;fill:#fff" />
+		<text x="298" y="49" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px"
+			transform="translate(-34 52)">Fault Reaction<tspan x="298" dy="1em"> </tspan>Active</text>
+		<rect width="120" height="40" x="253" y="145" style="stroke:#000;fill:#fff" />
+		<text x="297" y="170"
+			style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:15.7px">Fault</text>
+		<rect width="120" height="40" x="253" y="347" style="stroke:#000;fill:#fff" />
+		<text x="298" y="372" style="white-space:pre;fill:#333;font-family:Arial,sans-serif;font-size:16px"
+			transform="translate(-22 -8)">Quick Stop<tspan x="298" dy="1em"> </tspan>active</text>
+		<use xlink:href="#a" width="11" height="22" transform="translate(113 64)" />
+		<use xlink:href="#a" width="11" height="22" transform="translate(113 125)" />
+		<use xlink:href="#a" width="11" height="22" transform="translate(74 185)" />
+		<use xlink:href="#a" width="11" height="22" transform="translate(74 325)" />
+		<use xlink:href="#a" width="11" height="22" transform="translate(309 124)" />
+		<use xlink:href="#a" width="11" height="22" transform="translate(309 62)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(90 28 176)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(90 22 182)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(90 15 188)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(90 -83 286)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(-90 298 65)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(-90 104 68)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(-90 134 98)" />
+		<use xlink:href="#a" width="11" height="22" transform="translate(75 266)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(180 81 134)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(180 81 104)" />
+		<use xlink:href="#a" width="11" height="22" transform="rotate(180 81 174)" />
+		<polyline points="184 375 253 376" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="180 357 250 357" style="fill:none;stroke:#000;stroke-width:2px" />
+		<path d="M184 166h33v142h83v39" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="184 154 253 154" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="315 82 315 38" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="315 144 315 124" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="119 83 119 64" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="119 144 119 125" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="80 204 80 185" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="156 207 156 188" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="156 287 156 249" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="81 284 81 246" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="80 344 80 326" style="fill:none;stroke:#000;stroke-width:2px" />
+		<polyline points="156 347 156 329" style="fill:none;stroke:#000;stroke-width:2px" />
+		<path d="M184 179h19v129h-23" style="fill:none;stroke:#000;stroke-width:2px" />
+		<path d="M39 355h19V226H36" style="fill:none;stroke:#000;stroke-width:2px" transform="rotate(180 47 291)" />
+		<path d="M16 444h31V241H14" style="fill:none;stroke:#000;stroke-width:2px" transform="rotate(180 36 305)" />
+	</svg>
+
+	<script>
+
+		const STATUSWORD = {
+			_00_Ready_to_Switch_On: 1,
+			_01_Switched_On: 2,
+			_02_Operation_Enabled: 4,
+			_03_Fault: 8,
+			_04_Voltage_Disabled: 0x10,
+			_05_Quick_Stop: 0x20,
+			_06_Switch_On_Disabled: 0x40,
+			_07_Warning: 0x80,
+			_08_Manufacturer_Specific: 256,
+			_09_Remote: 512,
+			_10_Target_Reached: 1024,
+			_11_Internal_Limit_Active: 2048,
+			_12_bit12: 4096,
+			_13_bit13: 8192,
+			_14_bit14: 16384,
+			_15_bit15: 32768
+		}
+
+		var stopRecursion = false
+
+		function updateBoxes(value) {
+			document.getElementById("Ready_to_Switch_On").innerHTML = (value & STATUSWORD._00_Ready_to_Switch_On ? '[X]' : '[_]');
+			document.getElementById("Switched_On").innerHTML = (value & STATUSWORD._01_Switched_On ? '[X]' : '[_]');
+			document.getElementById("Operation_Enabled").innerHTML = (value & STATUSWORD._02_Operation_Enabled ? '[X]' : '[_]');
+			document.getElementById("Fault").innerHTML = (value & STATUSWORD._03_Fault ? '[X]' : '[_]');
+			document.getElementById("Voltage_Disabled").innerHTML = (value & STATUSWORD._04_Voltage_Disabled ? '[X]' : '[_]');
+			document.getElementById("Quick_Stop").innerHTML = (value & STATUSWORD._05_Quick_Stop ? '[X]' : '[_]');
+			document.getElementById("Switch_On_Disabled").innerHTML = (value & STATUSWORD._06_Switch_On_Disabled ? '[X]' : '[_]');
+			document.getElementById("Warning").innerHTML = (value & STATUSWORD._07_Warning ? '[X]' : '[_]');
+			document.getElementById("Manufacturer_Specific").innerHTML = (value & STATUSWORD._08_Manufacturer_Specific ? '[X]' : '[_]');
+			document.getElementById("Remote").innerHTML = (value & STATUSWORD._09_Remote ? '[X]' : '[_]');
+			document.getElementById("Target_Reached").innerHTML = (value & STATUSWORD._10_Target_Reached ? '[X]' : '[_]');
+			document.getElementById("Internal_Limit_Active").innerHTML = (value & STATUSWORD._11_Internal_Limit_Active ? '[X]' : '[_]');
+			document.getElementById("bit12").innerHTML = (value & STATUSWORD._12_bit12 ? '[X]' : '[_]');
+			document.getElementById("bit13").innerHTML = (value & STATUSWORD._13_bit13 ? '[X]' : '[_]');
+			document.getElementById("bit14").innerHTML = (value & STATUSWORD._14_bit14 ? '[X]' : '[_]');
+			document.getElementById("bit15").innerHTML = (value & STATUSWORD._15_bit15 ? '[X]' : '[_]');
+			document.getElementById("state402").innerHTML = getStateString(value);
+
+		}
+
+		function upd_hex(hexval) {
+			if (stopRecursion == false) {
+				stopRecursion = true;
+				newval = parseInt(hexval, 16);
+				document.getElementById("Statusword_dec").value = newval
+				updateBoxes(newval)
+				stopRecursion = false;
+			}
+		}
+
+		function upd_dec(decval) {
+			if (stopRecursion == false) {
+				stopRecursion = true;
+				newhex = parseInt(decval, 10).toString(16)
+				document.getElementById("Statusword_hex").value = newhex
+				updateBoxes(decval)
+				stopRecursion = false;
+			}
+		}
+
+
+		function is_Not_Ready_To_Switch_On(sw) {
+			const mask = 0x4f
+			const bitvalue = 0x0
+			return ((sw & mask) == bitvalue) ? "[Not_Ready_To_Switch_On] " : ""
+		};
+
+		function is_Switch_On_Disabled(sw) {
+			const mask = 0x4f
+			const bitvalue = 0x40
+			return ((sw & mask) == bitvalue) ? "[Switch_On_Disabled]" : ""
+		};
+
+		function is_Ready_To_Switch_On(sw) {
+			const mask = 0x6f
+			const bitvalue = 0x21
+			return ((sw & mask) == bitvalue) ? "[Ready_To_Switch_On]" : ""
+		};
+
+		function is_Switched_On(sw) {
+			const mask = 0x6f
+			const bitvalue = 0x23
+			return ((sw & mask) == bitvalue) ? "[Switched_On]" : ""
+		};
+
+		function is_Operation_Enable(sw) {
+			const mask = 0x6f
+			const bitvalue = 0x27
+			return ((sw & mask) == bitvalue) ? "[Operation_Enable]" : ""
+		};
+
+		function is_Quick_Stop_Active(sw) {
+			const mask = 0x6f
+			const bitvalue = 0x07
+			return ((sw & mask) == bitvalue) ? "[Quick_Stop_Active]" : ""
+		};
+
+		function is_Fault_Reaction_Active(sw) {
+			const mask = 0x4f
+			const bitvalue = 0x0f
+			return ((sw & mask) == bitvalue) ? "[Fault_Reaction_Active]" : ""
+		}
+
+		// FESTO pdf Documentation is not 100% clear nor 100% following cia 402.
+		// The primary check is for bit 03 (Fault).
+		// What is not clear: If bits 0,1,2 should be checked or not.
+		function is_Fault(sw) {
+			const mask = 0x08
+			const bitvalue = 0x08
+			return ((sw & mask) == bitvalue) ? "[Fault]" : ""
+		};
+
+
+
+		function getStateString(sw) {
+			return is_Not_Ready_To_Switch_On(sw) +
+				is_Switch_On_Disabled(sw) +
+				is_Ready_To_Switch_On(sw) +
+				is_Switched_On(sw) +
+				is_Operation_Enable(sw) +
+				is_Quick_Stop_Active(sw) +
+				is_Fault_Reaction_Active(sw) +
+				is_Fault(sw)
+		}
+
+		updateBoxes(0)
+
+	</script>
+	<p>
+	 <a href="https://github.com/schoeggel/CANopenHelper/tree/main">https://github.com/schoeggel/CANopenHelper/tree/main</a> 
+	</p>
+</body>
+
+</html>
