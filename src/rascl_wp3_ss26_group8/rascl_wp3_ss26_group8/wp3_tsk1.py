@@ -40,11 +40,11 @@ class WP3Task1SingleTarget(Node):
         self.declare_parameter("target_y", NOMINAL_ZERO_TCP_IN_BASE_LINK[1])
         self.declare_parameter("target_z", NOMINAL_ZERO_TCP_IN_BASE_LINK[2])
 
-        # With the current WP2.2 controller update rate, 10 Hz is a conservative
-        # default.  Higher rates are useful later when the lower layer is moved
-        # to a true CSP implementation.
+        # Match the default 20 ms ros2_control/CSP cycle so each offline sample
+        # can become one cyclic position target without Profile Position motion
+        # generation in the drive.
         self.declare_parameter("duration", 4.0)
-        self.declare_parameter("rate_hz", 10.0)
+        self.declare_parameter("rate_hz", 50.0)
         self.declare_parameter("position_tolerance", 0.002)
 
         # Safety/debug parameters.  execute=false performs IK and trajectory
@@ -73,8 +73,8 @@ class WP3Task1SingleTarget(Node):
         self.get_logger().info("Target frame: base_link, unit: meter.")
         self.get_logger().info("TCP definition: spur_gear_joint origin.")
         self.get_logger().info(
-            "Calibration convention: after placing the real robot in the URDF zero pose and calling home_all, "
-            "all four joints must read 0 rad.  In that pose, the nominal TCP is "
+            "Calibration convention: after the validated reference-switch home_all procedure, "
+            "all four joints must read 0 rad at the URDF zero pose. In that pose, the nominal TCP is "
             f"{NOMINAL_ZERO_TCP_IN_BASE_LINK} m in base_link."
         )
 

@@ -5,6 +5,7 @@ from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import UnlessCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -33,13 +34,28 @@ def generate_launch_description():
     )
     control_mode_arg = DeclareLaunchArgument(
         "control_mode",
-        default_value="profile",
+        default_value="csp",
         description="Lower-level drive command mode: profile or csp.",
     )
     controller_config_arg = DeclareLaunchArgument(
         "controller_config",
-        default_value="controllers.yaml",
+        default_value="controllers_csp.yaml",
         description="Controller YAML file, e.g. controllers.yaml or controllers_csp.yaml.",
+    )
+    pdo_cycle_ns_arg = DeclareLaunchArgument(
+        "pdo_cycle_ns",
+        default_value="20000000",
+        description="CSP PDO cycle in nanoseconds (20 ms = 50 Hz).",
+    )
+    pdo_timeout_us_arg = DeclareLaunchArgument(
+        "pdo_timeout_us",
+        default_value="5000",
+        description="Timeout for one EtherCAT process-data receive call in microseconds.",
+    )
+    enable_dc_sync_arg = DeclareLaunchArgument(
+        "enable_dc_sync",
+        default_value="false",
+        description="Use EtherCAT DC-Sync. The conservative default is SM-Sync.",
     )
 
     axis_counts_arg = DeclareLaunchArgument(
@@ -83,7 +99,8 @@ def generate_launch_description():
             {
                 "interface": LaunchConfiguration("interface"),
                 "host": LaunchConfiguration("host"),
-                "port": LaunchConfiguration("port"),
+                "port": ParameterValue(LaunchConfiguration("port"), value_type=int),
+                "control_mode": LaunchConfiguration("control_mode"),
                 "slave_indices": [0, 1, 2, 3],
                 "sdo_delay_s": 0.05,
                 "motion_timeout_s": 8.0,
@@ -91,10 +108,22 @@ def generate_launch_description():
                 "profile_velocity": 0,
                 "profile_acceleration": 0,
                 "profile_deceleration": 0,
-                "configure_pdo_mapping": True,
-                "enable_dc_sync": False,
-                "dc_cycle_ns": 20000000,
-                "pdo_timeout_us": 20000,
+                "pdo_cycle_ns": ParameterValue(
+                    LaunchConfiguration("pdo_cycle_ns"), value_type=int
+                ),
+                "pdo_timeout_us": ParameterValue(
+                    LaunchConfiguration("pdo_timeout_us"), value_type=int
+                ),
+                "enable_dc_sync": ParameterValue(
+                    LaunchConfiguration("enable_dc_sync"), value_type=bool
+                ),
+                "homing_methods": [28, 28, 24, 24],
+                "reference_inputs": [2, 2, 2, 1],
+                "homing_offsets": [0, 0, 0, 0],
+                "homing_search_speeds": [1000, 1000, 1000, 1000],
+                "homing_zero_speeds": [200, 200, 200, 200],
+                "homing_accelerations": [1000, 1000, 1000, 1000],
+                "test_drive_index": 0,
             }
         ],
     )
@@ -109,7 +138,12 @@ def generate_launch_description():
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, PathJoinSubstitution([pkg_share, "config", LaunchConfiguration("controller_config")])],
+        parameters=[
+            robot_description,
+            PathJoinSubstitution(
+                [pkg_share, "config", LaunchConfiguration("controller_config")]
+            ),
+        ],
         output="screen",
     )
 
@@ -137,6 +171,9 @@ def generate_launch_description():
             port_arg,
             control_mode_arg,
             controller_config_arg,
+            pdo_cycle_ns_arg,
+            pdo_timeout_us_arg,
+            enable_dc_sync_arg,
             axis_counts_arg,
             gripper_counts_arg,
             bridge_node,

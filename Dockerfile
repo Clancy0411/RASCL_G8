@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-ament-cmake-cppcheck \
     ros-jazzy-ament-cmake-cpplint \
     ros-jazzy-ament-cmake-gtest \
+    ros-jazzy-ament-cmake-pytest \
     ros-jazzy-controller-manager \
     ros-jazzy-forward-command-controller \
     ros-jazzy-hardware-interface \

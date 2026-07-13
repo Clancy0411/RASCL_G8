@@ -81,7 +81,7 @@ hardware_interface::CallbackReturn RASCLHardwareInterface::on_init(
       std::stod(GetParameterOr(info_.hardware_parameters, "command_deadband_counts", "4.0"));
   use_fake_hardware_ =
       ParseBool(GetParameterOr(info_.hardware_parameters, "use_fake_hardware", "false"));
-  control_mode_ = GetParameterOr(info_.hardware_parameters, "control_mode", "profile");
+  control_mode_ = GetParameterOr(info_.hardware_parameters, "control_mode", "csp");
   std::transform(control_mode_.begin(), control_mode_.end(), control_mode_.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   if (control_mode_ != "profile" && control_mode_ != "csp") {
@@ -387,8 +387,8 @@ hardware_interface::return_type RASCLHardwareInterface::write(const rclcpp::Time
 
   if (!changed && !use_csp_mode_) {
     // Avoid repeated SDO writes when the controller keeps publishing the same target.
-    // In CSP mode, keep sending PDO set-points every write cycle so EtherCAT traffic
-    // remains cyclic even when the target is temporarily constant.
+    // In CSP mode every ros2_control write updates the bridge's target cache.  The
+    // bridge owns the independent fixed-period PDO loop and repeats unchanged targets.
     return hardware_interface::return_type::OK;
   }
 

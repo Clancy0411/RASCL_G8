@@ -50,6 +50,7 @@ hardware_interface::HardwareInfo MakeFakeHardwareInfo() {
   info.hardware_parameters["connect_retries"] = "1";
   info.hardware_parameters["connect_retry_delay_s"] = "0.0";
   info.hardware_parameters["command_deadband_counts"] = "4.0";
+  info.hardware_parameters["control_mode"] = "csp";
 
   info.joints.push_back(MakeJoint("shoulder_joint", 0, 3211264.0, 0.0));
   info.joints.push_back(MakeJoint("upperarm_joint", 1, 3211264.0, 0.1));
@@ -95,6 +96,14 @@ TEST(RASCLHardwareInterfaceTest, RejectsJointWithoutVelocityStateInterface) {
   auto info = MakeFakeHardwareInfo();
   info.joints[0].state_interfaces.clear();
   info.joints[0].state_interfaces.push_back(MakeInterface(hardware_interface::HW_IF_POSITION));
+
+  rascl_hardware_interface::RASCLHardwareInterface hardware;
+  EXPECT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::ERROR);
+}
+
+TEST(RASCLHardwareInterfaceTest, RejectsUnsupportedControlMode) {
+  auto info = MakeFakeHardwareInfo();
+  info.hardware_parameters["control_mode"] = "torque";
 
   rascl_hardware_interface::RASCLHardwareInterface hardware;
   EXPECT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::ERROR);

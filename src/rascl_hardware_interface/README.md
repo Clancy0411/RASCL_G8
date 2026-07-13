@@ -77,7 +77,8 @@ The bridge is responsible for:
 * enabling the Faulhaber drives,
 * reading actual motor positions and status words,
 * sending target positions,
-* setting the current pose as the software home position.
+* automatic reference-switch homing,
+* CSP mode with cyclic EtherCAT Position PDO exchange.
 
 Make sure the script is executable:
 
@@ -116,7 +117,18 @@ ros2 launch rascl_description ros2_control.launch.py use_fake_hardware:=true
 
 This mode is useful for checking the ROS 2 control stack without connecting to the physical robot.
 
-## Running with Real Hardware
+## Reference-switch homing
+
+Homing must run without an active CSP/PDO loop. Start the dedicated bridge:
+
+```bash
+ros2 launch rascl_description homing.launch.py interface:=robot_interface
+```
+
+Validate each drive with `home_one`, then call `home_all`. Stop the homing launch
+before starting ros2_control.
+
+## Running with Real Hardware (CSP/PDO)
 
 Real hardware mode requires the correct EtherCAT network interface:
 
@@ -126,24 +138,29 @@ ros2 launch rascl_description ros2_control.launch.py \
   use_fake_hardware:=false
 ```
 
+The defaults select `control_mode:=csp`, `controllers_csp.yaml`, a 20 ms PDO
+cycle, and SM-Sync. Profile Position remains available only as a regression
+fallback by explicitly selecting both the profile mode and controller config.
+
 If the network interface has a different name, replace `robot_interface` with the actual interface name.
 
 ## Home Service
 
-The bridge provides a service for defining the current robot pose as the software home position:
+The bridge provides reference-switch homing services:
 
 ```bash
 ros2 service call /rascl_faulhaber_bridge/home_all \
   std_srvs/srv/Trigger "{}"
 ```
 
-After calling this service, the current joint positions are treated as:
+After successful homing, the current joint positions should be:
 
 ```text
 [0.0, 0.0, 0.0, 0.0]
 ```
 
-To move back to this software home position:
+Do not call homing services while the CSP ros2_control stack is active. To move
+back to the established zero position after CSP startup, publish a zero command:
 
 ```bash
 ros2 topic pub --once /rascl_position_controller/commands \

@@ -135,7 +135,7 @@ class RASCLHardwareInterface : public hardware_interface::SystemInterface {
   bool use_csp_mode_{false};
 
   /** @brief Human-readable lower-level control mode parsed from the URDF. */
-  std::string control_mode_{"profile"};
+  std::string control_mode_{"csp"};
 
   /** @brief True after the first command has been synchronized with current state. */
   bool command_initialized_{false};
@@ -152,7 +152,7 @@ class RASCLHardwareInterface : public hardware_interface::SystemInterface {
   /** @brief Delay between bridge connection attempts in seconds. */
   double connect_retry_delay_s_{0.25};
 
-  /** @brief Minimum target-count change required before sending MOVE_ALL. */
+  /** @brief Minimum target-count change required before sending Profile MOVE_ALL. */
   double command_deadband_counts_{4.0};
 
   /** @brief Per-joint conversion and limit parameters parsed from ros2_control. */

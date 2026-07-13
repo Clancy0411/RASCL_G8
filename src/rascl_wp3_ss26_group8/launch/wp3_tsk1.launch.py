@@ -92,19 +92,19 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "control_mode",
-            default_value="profile",
+            default_value="csp",
             description="Lower-level control mode passed to rascl_description: profile or csp.",
         ),
         DeclareLaunchArgument(
             "controller_config",
-            default_value="controllers.yaml",
+            default_value="controllers_csp.yaml",
             description="Controller YAML passed to rascl_description. Use controllers_csp.yaml for CSP tests.",
         ),
         DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),
         DeclareLaunchArgument("target_y", default_value="0.00", description="TCP target y in base_link [m]."),
         DeclareLaunchArgument("target_z", default_value="0.08", description="TCP target z in base_link [m]."),
         DeclareLaunchArgument("duration", default_value="4.0", description="Minimum-jerk duration [s]."),
-        DeclareLaunchArgument("rate_hz", default_value="10.0", description="Command sample rate [Hz]."),
+        DeclareLaunchArgument("rate_hz", default_value="50.0", description="Command sample rate [Hz]."),
         DeclareLaunchArgument(
             "execute",
             default_value="false",

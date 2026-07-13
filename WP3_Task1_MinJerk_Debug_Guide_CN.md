@@ -1,64 +1,98 @@
-# WP3 Task 1 Minimum-Jerk 调试指南（Group 8）
+# WP3 Task 1 Minimum-Jerk + CSP/PDO 调试指南（Group 8）
 
-本文档用于调试当前版本的 `rascl_wp3_ss26_group8` 包。  
-这一版的目标是先完成一个最小闭环：
+本文档对应当前仓库代码，用于按安全顺序验证：
 
 ```text
-给定一个 base_link 坐标系下的空间目标点 x/y/z
-→ 计算 IK
-→ 生成 joint-space minimum-jerk 轨迹
-→ 连续发送到 /rascl_position_controller/commands
-→ 在 fake hardware / RViz 中验证
-→ 再进行实机小幅测试
+base_link 目标坐标 x/y/z
+-> IK
+-> joint-space minimum-jerk 离线采样
+-> /rascl_position_controller/commands
+-> ros2_control position interface
+-> FAULHABER CSP mode = 8
+-> EtherCAT cyclic Position PDO
 ```
 
-当前版本**暂时不控制 gripper**，也**暂时不改 CSP**。  
-底层仍然沿用 WP2.2 已经调通的 position command 通道。
+Task sheet 和 WP3 Intro 的关键要求是：运动控制器必须使用 CSP，并由位置轨迹驱动；顶层不实现 effort interface。当前实现仍然只向 ROS position interface 发送关节位置。
 
 ---
 
-## 1. 当前版本功能范围
+## 1. 当前功能范围
 
-当前版本支持：
+已实现：
 
-```text
-1. 新增 ROS2 package: rascl_wp3_ss26_group8
-2. 新增 node: wp3_tsk1
-3. 支持命令行输入目标空间坐标 target_x / target_y / target_z
-4. TCP 暂时定义为 spur_gear_joint 的原点
-5. 只控制 TCP 的空间位置 x/y/z
-6. 不控制任意末端方向
-7. 根据当前 joint state 计算 IK
-8. 从当前 joint position 到目标 joint position 生成 minimum-jerk 轨迹
-9. 将轨迹连续发布到 /rascl_position_controller/commands
-10. 可用 execute:=false 只规划不运动
-11. 可用 execute:=true 执行轨迹
-12. 自动保存最近一次生成的轨迹 CSV
-```
+1. `wp3_tsk1` 接受 `base_link` 下的 `target_x/y/z`。
+2. 根据 `/joint_states` 计算 IK。
+3. 生成并保存 joint-space minimum-jerk CSV。
+4. 以 50 Hz 默认采样率发送位置轨迹。
+5. fake hardware / RViz 验证。
+6. 四轴 reference-switch 自动 Homing，保留 `home_one` 与 `home_all`。
+7. FAULHABER CSP（`0x6060 = 8`）。
+8. RxPDO2/TxPDO2 周期过程数据交换。
+9. 进入 CSP 前用 actual position 初始化 target，防止激活跳变。
+10. CSP 状态、mode display、following error 和 PDO working counter 检查。
+11. Profile Position 回归模式仍可显式启用，但不属于 WP3 最终执行模式。
 
-当前版本不支持：
+尚未实现：
 
-```text
-1. gripper 开合控制
-2. 完整 pick-and-place sequence
-3. cube stacking
-4. 完整末端姿态控制
-5. 真正的 CSP mode
-6. PDO cyclic process data streaming
-```
+1. 完整抓取/堆叠 sequence。
+2. gripper 开合动作编排。
+3. 任意末端姿态约束。
+4. Task 2 在线规划。
 
 ---
 
-## 2. 坐标系规定
+## 2. CSP/PDO 实现说明
 
-当前版本使用的目标坐标系为：
+当前真实硬件链路为：
+
+```text
+wp3_tsk1 minimum-jerk samples
+  -> ForwardCommandController (position)
+  -> C++ hardware_interface 更新目标 count 缓存
+  -> Python bridge 固定 20 ms PDO 线程
+  -> RxPDO2: 0x6040 Controlword + 0x607A Target Position
+  <- TxPDO2: 0x6041 Statusword + 0x6064 Position Actual Value
+```
+
+使用 FAULHABER 出厂 Position PDO：
+
+| 方向 | PDO | Mapping object | 内容 | 长度 |
+|---|---|---:|---|---:|
+| Master -> Drive | RxPDO2 | `0x1601` | `0x6040:16 + 0x607A:32` | 6 bytes |
+| Drive -> Master | TxPDO2 | `0x1A01` | `0x6041:16 + 0x6064:32` | 6 bytes |
+
+代码只把 `0x1601` / `0x1A01` 分配到 SyncManager `0x1C12` / `0x1C13`，不再写 `0x1600:00`。FAULHABER EtherCAT 手册中 `0x1600:00`、`0x1601:00` 等 mapping count 是只读项；旧实现写这些对象会产生 `pysoem.WkcError`。
+
+默认同步方式：
+
+```text
+SM-Sync
+pdo_cycle_ns = 20000000 ns
+cycle = 20 ms = 50 Hz
+0x1C32:02 = 20000000  # PRE-OP 写入并读回校验
+```
+
+SM-Sync 也是 EtherCAT 支持的同步过程数据方式，满足 CSP 周期位置更新。bridge 会在 `config_map()` 之前配置驱动端的 SM2 到达时间监控，使其与主站实际周期一致。DC-Sync 的周期由 ESC/SYNC0 配置，不使用该对象；可在 SM-Sync 实机稳定后单独测试，不应作为第一步。
+
+重要：PDO 周期由 bridge 的独立线程维持。`GET_ALL` 只读取缓存，`CSP_SETPOINT_ALL` 只更新目标缓存，不会额外发送 EtherCAT frame，因此 ros2_control 的 read/write 不会把一个周期拆成两个不规则 PDO 周期。
+
+---
+
+## 3. 坐标系和 TCP
 
 ```text
 frame_id = base_link
 unit = meter
+TCP = spur_gear_joint 原点
 ```
 
-也就是说，输入：
+URDF 零位姿态下：
+
+```text
+TCP in base_link ~= [0.29756, -0.00177, 0.043001] m
+```
+
+输入示例：
 
 ```text
 target_x = 0.25
@@ -66,161 +100,11 @@ target_y = 0.00
 target_z = 0.08
 ```
 
-表示：
-
-```text
-目标 TCP 位置在 base_link 坐标系下为：
-x = 0.25 m
-y = 0.00 m
-z = 0.08 m
-```
-
-注意：这里的 x/y/z 方向完全按照 URDF / RViz 中 `base_link` 的坐标轴定义，不一定等同于你肉眼看到的“左/右/前/后”。
-
-调试时一定要先在 RViz 里确认 `base_link` 坐标轴方向。
+方向以 RViz 中 `base_link` 坐标轴为准：Red=X，Green=Y，Blue=Z。
 
 ---
 
-## 3. TCP 定义
-
-当前版本将 TCP 暂时定义为：
-
-```text
-spur_gear_joint 的原点
-```
-
-这不是最终夹爪抓取中心。  
-后续真正做 cube grasping 时，建议把 TCP 改成两个 jaw 中间、真正接触 cube 的夹爪中心点。
-
-当前版本这么做的原因是：
-
-```text
-1. spur_gear_joint 在 URDF 中已有明确位置
-2. 不需要额外测量 gripper 几何
-3. 适合先验证 IK + minimum-jerk 运动链路
-```
-
----
-
-## 4. Calibration pose / Home 规定
-
-现在由 `rascl_faulhaber_bridge.py` 读取 FAULHABER 数字输入，并调用驱动器内部的 Homing Mode 自动寻找参考传感器。
-
-### 4.1 当前已确认的传感器映射
-
-四个关节的参考传感器输入已经确认如下：
-
-| 关节 | Drive | Reference input | 触发状态 |
-|---|---:|---:|---|
-| `shoulder_joint` | 0 | DigIn2 | 物理低电平，逻辑值为 1 |
-| `upperarm_joint` | 1 | DigIn2 | 物理低电平，逻辑值为 1 |
-| `lowerarm_joint` | 2 | DigIn2 | 物理低电平，逻辑值为 1 |
-| `spur_gear_joint` | 3 | DigIn1 | 物理低电平，逻辑值为 1 |
-
-因此当前 Reference Switch 配置应为：
-
-```text
-reference_inputs = [2, 2, 2, 1]
-```
-
-前三轴目前选择的搜索方向为：
-
-```text
-shoulder: Method 28
-upperarm: Method 28
-lowerarm: Method 24
-```
-
-`spur_gear_joint` 可以连续旋转，但其 Homing Method 仍需单轴验证。  
-当前 Drive 3 曾返回：
-
----
-
-### 4.2 单轴 Homing
-
-第一次调试必须使用 `home_one`，不要直接使用 `home_all`。
-
-设置测试轴：
-
-```bash
-ros2 param set   /rascl_faulhaber_bridge   test_drive_index 0
-```
-
-Drive 与关节对应关系：
-
-```text
-0 = shoulder_joint
-1 = upperarm_joint
-2 = lowerarm_joint
-3 = spur_gear_joint
-```
-
-执行单轴 Homing：
-
-```bash
-ros2 service call   /rascl_faulhaber_bridge/home_one   std_srvs/srv/Trigger "{}"
-```
-
-成功返回示例：
-
-```text
-success=True
-message='Drive 0 homing completed; actual_position=...'
-```
-
-失败时立即执行：
-
-```bash
-ros2 service call   /rascl_faulhaber_bridge/disable_all   std_srvs/srv/Trigger "{}"
-```
-
-如果返回：
-
-```text
-statusword=0x2427
-```
-
-表示 Homing Error，不能继续重复执行。应检查：
-
-```text
-1. 当前实际 Homing Method
-2. Reference Switch 输入编号
-3. 传感器 logical 是否能产生边沿
-4. Lower/Upper limit 是否与 Reference Switch 冲突
-5. Homing speed 和 acceleration 是否为正数
-6. 当前运行的是否为重新编译、重新启动后的 bridge
-```
-
----
-
-### 4.3 四轴 Homing
-
-只有 Drive 0、1、2、3 都分别通过 `home_one` 后，才执行：
-
-```bash
-ros2 service call   /rascl_faulhaber_bridge/home_all   std_srvs/srv/Trigger "{}"
-```
-
-`home_all` 是顺序执行，不是四轴同时开始。  
-如果 Drive 3 失败，Drive 0–2 可能已经重新建立零点，因此不能把一次失败理解为“四个关节都没有变化”。
-
-Homing 完成后，切换到完整 `ros2_control` 系统并检查：
-
-```bash
-ros2 topic echo --once /joint_states
-```
-
-期望四个关节接近：
-
-```text
-[0.0, 0.0, 0.0, 0.0]
-```
-
----
-
-## 5. 编译流程
-
-进入 container 后执行：
+## 4. 编译
 
 ```bash
 cd /root/ws
@@ -233,21 +117,13 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
-如果 build 成功，说明三个 package 都能被 colcon 找到并安装：
-
-```text
-rascl_description
-rascl_hardware_interface
-rascl_wp3_ss26_group8
-```
-
-可以检查 package 是否存在：
+检查包：
 
 ```bash
 ros2 pkg list | grep rascl
 ```
 
-期望至少看到：
+应至少包含：
 
 ```text
 rascl_description
@@ -257,9 +133,39 @@ rascl_wp3_ss26_group8
 
 ---
 
-## 6. Fake hardware 调试流程
+## 5. 软件测试
 
-### 6.1 Terminal 1：启动 fake hardware
+### 5.1 bridge PDO 单元测试
+
+该测试不连接 EtherCAT，也不会使能电机：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+
+# 第 4 节使用 BUILD_TESTING=OFF 时不会生成测试目标；测试前单独重编该包。
+colcon build --symlink-install \
+  --packages-select rascl_hardware_interface \
+  --cmake-args -DBUILD_TESTING=ON
+source install/local_setup.bash
+
+colcon test --packages-select rascl_hardware_interface \
+  --ctest-args --output-on-failure
+colcon test-result --verbose
+```
+
+它检查：
+
+1. CSP Position PDO payload 为 6 bytes、小端序。
+2. 只写 SyncManager assignment。
+3. 不写只读的 Position PDO mapping count。
+4. 非法同步周期被拒绝。
+5. SM-Sync 周期写入 `0x1C32:02` 并正确读回。
+6. C++ fake hardware lifecycle 和 interface 声明。
+
+### 5.2 fake hardware
+
+Terminal 1：
 
 ```bash
 cd /root/ws
@@ -267,77 +173,31 @@ source /opt/ros/jazzy/setup.bash
 source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 
-ros2 launch rascl_description ros2_control.launch.py use_fake_hardware:=true
+ros2 launch rascl_description ros2_control.launch.py \
+  use_fake_hardware:=true
 ```
 
-看到 controller 激活成功即可：
+fake hardware 不连接 FAULHABER，因此它验证 ROS position interface、IK、轨迹和 controller，不证明真实 PDO 通信。
 
-```text
-joint_state_broadcaster active
-rascl_position_controller active
-Successfully switched controllers
-```
-
-如果想打开 RViz，在另一个 terminal 中执行：
+Terminal 2，只规划：
 
 ```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-
-rviz2 -d src/rascl_description/rviz/urdf.rviz
-```
-
----
-
-### 6.2 Terminal 2：只规划，不运动
-
-先用 `execute:=false`。  
-这一步只计算 IK 和 minimum-jerk 轨迹，不会向 controller 发送运动命令。
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
   -p target_x:=0.25 \
   -p target_y:=0.00 \
   -p target_z:=0.08 \
   -p duration:=4.0 \
-  -p rate_hz:=10.0 \
+  -p rate_hz:=50.0 \
   -p execute:=false
 ```
 
-这一步用于确认：
-
-```text
-1. node 能正常启动
-2. 当前 /joint_states 能读到
-3. IK 能收敛
-4. 目标点在可达范围内
-5. 轨迹 CSV 能生成
-```
-
-成功后会生成最近一次轨迹文件：
-
-```text
-/tmp/rascl_wp3_tsk1_last_trajectory.csv
-```
-
-可以查看前几行：
+检查：
 
 ```bash
 head /tmp/rascl_wp3_tsk1_last_trajectory.csv
 ```
 
----
-
-### 6.3 Terminal 2：执行 minimum-jerk 轨迹
-
-确认 `execute:=false` 没问题后，再执行：
+确认 IK 和 CSV 后执行：
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
@@ -345,30 +205,13 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
   -p target_y:=0.00 \
   -p target_z:=0.08 \
   -p duration:=4.0 \
-  -p rate_hz:=10.0 \
+  -p rate_hz:=50.0 \
   -p execute:=true
 ```
 
-这一步会连续发布 joint command 到：
-
-```text
-/rascl_position_controller/commands
-```
-
-在 RViz 中应该看到机械臂平滑运动。
-
----
-
-## 7. 使用 launch 一起启动 fake hardware 和 wp3_tsk1
-
-也可以用 WP3 launch 文件启动：
+组合启动：
 
 ```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-
 ros2 launch rascl_wp3_ss26_group8 wp3_tsk1.launch.py \
   start_robot:=true \
   use_fake_hardware:=true \
@@ -376,118 +219,108 @@ ros2 launch rascl_wp3_ss26_group8 wp3_tsk1.launch.py \
   target_y:=0.00 \
   target_z:=0.08 \
   duration:=4.0 \
-  rate_hz:=10.0 \
+  rate_hz:=50.0 \
   execute:=true
 ```
 
-参数说明：
+---
+
+## 6. 实机 Homing：必须先于 CSP
+
+Homing 使用 mode 6 和 SDO controlword；CSP 线程使用 mode 8 和 PDO controlword。两者不能同时控制驱动器。
+
+因此当前安全流程是：
 
 ```text
-start_robot:=true
-  同时启动 rascl_description 的 ros2_control launch
-
-use_fake_hardware:=true
-  使用 fake hardware，不连接真实机器人
-
-target_x / target_y / target_z
-  base_link 坐标系下的目标 TCP 坐标，单位 meter
-
-duration
-  从当前 joint state 运动到目标 joint state 的总时间，单位 second
-
-rate_hz
-  发送 trajectory setpoints 的频率
-
-execute
-  false = 只规划不运动
-  true  = 执行轨迹
+homing.launch.py（只启动 bridge，不启动 ros2_control）
+-> home_one / home_all
+-> Ctrl-C 停止 homing launch
+-> ros2_control.launch.py（CSP/PDO）
 ```
+
+不要在 CSP ros2_control 已启动后调用 `home_all`。bridge 会拒绝该操作。
+
+### 6.1 启动专用 Homing bridge
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+
+ros2 launch rascl_description homing.launch.py \
+  interface:=enx3c18a0264863
+```
+
+按实际 `ip link` 结果替换网卡名。
+
+当前参数：
+
+```text
+homing_methods       = [28, 28, 24, 24]
+reference_inputs     = [2, 2, 2, 1]
+homing_offsets       = [0, 0, 0, 0]
+homing_search_speeds = [1000, 1000, 1000, 1000]
+homing_zero_speeds   = [200, 200, 200, 200]
+homing_accelerations = [1000, 1000, 1000, 1000]
+motion_timeout_s     = 8.0
+```
+
+这两组值与 `auto_homing` 分支中实际启动文件覆盖后的、已实机验证的参数一致。专用 Homing bridge 保持 SDO-only PRE-OP，不调用 `config_map()`，以免改变已经验证的归零通信条件。
+
+Reference 输入：
+
+| Drive | Joint | Reference input |
+|---:|---|---:|
+| 0 | `shoulder_joint` | DigIn2 |
+| 1 | `upperarm_joint` | DigIn2 |
+| 2 | `lowerarm_joint` | DigIn2 |
+| 3 | `spur_gear_joint` | DigIn1 |
+
+### 6.2 检查数字输入
+
+```bash
+ros2 service call /rascl_faulhaber_bridge/read_digital_inputs \
+  std_srvs/srv/Trigger "{}"
+```
+
+### 6.3 单轴 Homing
+
+每个轴第一次都必须单独验证：
+
+```bash
+ros2 param set /rascl_faulhaber_bridge test_drive_index 0
+ros2 service call /rascl_faulhaber_bridge/home_one \
+  std_srvs/srv/Trigger "{}"
+```
+
+依次测试 `0, 1, 2, 3`。成功示例：
+
+```text
+success=True
+message='Drive 0 homing completed; actual_position=...'
+```
+
+若出现 fault、Homing Error、方向错误或持续找不到开关，立即急停/断使能，不要直接继续 `home_all`。
+
+### 6.4 四轴 Homing
+
+四轴都通过 `home_one` 后：
+
+```bash
+ros2 service call /rascl_faulhaber_bridge/home_all \
+  std_srvs/srv/Trigger "{}"
+```
+
+`home_all` 按 Drive 0 -> 1 -> 2 -> 3 顺序执行。
+
+完成后按 `Ctrl-C` 停止 `homing.launch.py`；bridge 会依次执行 Disable Operation / Disable Voltage。确认 bridge 已退出，再进入 CSP 启动。
 
 ---
 
-## 8. 检查 /joint_states
+## 7. 实机 CSP/PDO 启动
 
-查看当前 joint 状态：
-
-```bash
-ros2 topic echo --once /joint_states
-```
-
-也可以按固定顺序打印四个 joint：
-
-```bash
-python3 - <<'PY'
-import rclpy
-from sensor_msgs.msg import JointState
-
-order = ["shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint"]
-
-rclpy.init()
-node = rclpy.create_node("print_current_order")
-
-def cb(msg):
-    d = dict(zip(msg.name, msg.position))
-    print([d.get(j, None) for j in order])
-    rclpy.shutdown()
-
-node.create_subscription(JointState, "/joint_states", cb, 10)
-rclpy.spin(node)
-PY
-```
-
-期望输出类似：
-
-```text
-[0.0, 0.0, 0.0, 0.0]
-```
-
-如果刚做完 calibration pose 和 `home_all`，这四个值应该接近 0。
-
----
-
-## 9. 检查 controller 和 topic
-
-查看 controller 状态：
-
-```bash
-ros2 control list_controllers
-```
-
-期望看到：
-
-```text
-joint_state_broadcaster active
-rascl_position_controller active
-```
-
-查看 command topic 是否存在：
-
-```bash
-ros2 topic list | grep rascl_position_controller
-```
-
-查看 `/joint_states` 发布者：
-
-```bash
-ros2 topic info /joint_states -v
-```
-
-如果 warning 一直刷：
-
-```text
-Moved backwards in time, re-publishing joint transforms!
-```
-
-需要检查是否有多个 `/joint_states` publisher 或旧 ROS 节点残留。
-
----
-
-## 10. 实机调试流程
-
-实机调试不要直接大范围运动。  
-必须先用 fake hardware 验证，再上实机小幅测试。
-
-### 10.1 Terminal 1：启动真实硬件
+Terminal 1：
 
 ```bash
 cd /root/ws
@@ -496,150 +329,210 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:=robot_interface \
+  interface:=enx3c18a0264863 \
   use_fake_hardware:=false
 ```
 
-如果真实网卡名不是 `robot_interface`，改成实际网卡名，例如：
-
-```bash
-ip link
-```
-
-找到类似：
+默认参数已经是：
 
 ```text
-enx3c18a0256e51
+control_mode = csp
+controller_config = controllers_csp.yaml
+update_rate = 50 Hz
+pdo_cycle_ns = 20000000
+enable_dc_sync = false  # SM-Sync
 ```
 
-则启动命令改为：
+期望日志顺序包含：
 
-```bash
-ros2 launch rascl_description ros2_control.launch.py \
-  interface:=enx3c18a0256e51 \
-  use_fake_hardware:=false
+```text
+assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
+SM2 cycle monitoring configured for 20000000 ns
+Process image mapped
+SM-Sync selected with cycle 20000000 ns
+Master reached OP state
+Activated real RASCL hardware in csp mode
 ```
 
----
+不应再出现：
 
-### 10.2 设置 calibration pose / home
-
-将真实机器人摆到你规定的 URDF 零位姿态，然后调用：
-
-```bash
-ros2 service call /rascl_faulhaber_bridge/home_all \
-  std_srvs/srv/Trigger "{}"
+```text
+Configuring CSP PDO mapping ...
+sdo_write(0x1600, 0, ...)
+pysoem.WkcError at PDO_RX_MAPPING subindex 0
 ```
 
-检查 joint state：
+### 7.1 检查 controller 和 joint state
 
 ```bash
+ros2 control list_controllers
 ros2 topic echo --once /joint_states
 ```
 
-确认四个 joint 接近：
+期望：
+
+```text
+joint_state_broadcaster active
+rascl_position_controller active
+```
+
+Homing 后四轴应接近：
 
 ```text
 [0.0, 0.0, 0.0, 0.0]
 ```
 
+### 7.2 CSP 激活保持测试
+
+启动后先不要发布运动目标，观察至少 10 秒：
+
+1. 机械臂不应跳动。
+2. `/joint_states` 应持续更新。
+3. 不应出现 `CSP/PDO loop stopped`。
+4. 不应出现 following error。
+5. EtherCAT 不应掉到 SAFE-OP + Error。
+
+只有保持测试通过后才执行轨迹。
+
 ---
 
-### 10.3 实机先只规划，不运动
+## 8. 实机 minimum-jerk 轨迹
 
-实机第一步仍然用 `execute:=false`：
+Terminal 2 先只规划：
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.29 \
-  -p target_y:=0.00 \
-  -p target_z:=0.05 \
-  -p duration:=5.0 \
-  -p rate_hz:=5.0 \
+  -p target_x:=0.295 \
+  -p target_y:=0.000 \
+  -p target_z:=0.048 \
+  -p duration:=6.0 \
+  -p rate_hz:=50.0 \
   -p execute:=false
 ```
 
-确认：
-
-```text
-1. IK 成功
-2. 没有明显超限
-3. 目标点离当前 TCP 很近
-4. 轨迹文件生成正常
-```
-
----
-
-### 10.4 实机小幅执行
-
-确认上一步没问题后，再执行：
+第一次 CSP 实机测试应只移动几毫米。确认 IK、CSV 和方向后：
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.29 \
-  -p target_y:=0.00 \
-  -p target_z:=0.05 \
-  -p duration:=5.0 \
-  -p rate_hz:=5.0 \
+  -p target_x:=0.295 \
+  -p target_y:=0.000 \
+  -p target_z:=0.048 \
+  -p duration:=6.0 \
+  -p rate_hz:=50.0 \
   -p execute:=true
 ```
 
-实机第一步建议：
-
-```text
-duration >= 5.0
-rate_hz = 5 或 10
-目标点只比当前 TCP 移动几毫米到一两厘米
-随时准备急停
-```
-
-不要一开始就用：
-
-```text
-rate_hz = 50
-duration = 1
-大范围 target
-```
+逐步扩大范围，不要第一次就使用短 duration 或大位移。
 
 ---
 
-## 11. 常见目标点建议
+## 9. DC-Sync 可选测试
 
-Calibration pose 下，当前 TCP 大约是：
-
-```text
-[0.29756, -0.00177, 0.043001]
-```
-
-fake hardware 可先试：
+只有默认 SM-Sync 稳定后才测试：
 
 ```bash
-ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.25 \
-  -p target_y:=0.00 \
-  -p target_z:=0.08 \
-  -p duration:=4.0 \
-  -p rate_hz:=10.0 \
-  -p execute:=true
+ros2 launch rascl_description ros2_control.launch.py \
+  interface:=enx3c18a0264863 \
+  use_fake_hardware:=false \
+  enable_dc_sync:=true \
+  pdo_cycle_ns:=20000000
 ```
 
-实机建议先试更小的位移：
-
-```bash
-ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.29 \
-  -p target_y:=0.00 \
-  -p target_z:=0.05 \
-  -p duration:=5.0 \
-  -p rate_hz:=5.0 \
-  -p execute:=true
-```
+Python 用户态调度不是硬实时环境。若出现 Sync0 monitoring、周期抖动或 SAFE-OP 错误，恢复默认 SM-Sync；Task 1 的核心要求是 CSP + 周期 Position PDO，不要求强制 DC-Sync。
 
 ---
 
-## 12. 清理旧 ROS 进程
+## 10. Profile Position 回归模式
 
-如果 launch 异常、warning 一直刷、topic 混乱，可以先清理：
+仅用于确认旧链路或排查硬件，不用于最终 WP3 CSP 验收：
+
+```bash
+ros2 launch rascl_description ros2_control.launch.py \
+  interface:=enx3c18a0264863 \
+  use_fake_hardware:=false \
+  control_mode:=profile \
+  controller_config:=controllers.yaml
+```
+
+Profile 模式不会配置 CSP PDO assignment，也不会运行周期 PDO 线程。
+
+---
+
+## 11. 常见故障
+
+### 11.1 `pysoem.WkcError` 出现在 `0x1600:00`
+
+说明运行的是旧安装文件。当前代码不写该对象。
+
+```bash
+grep -R -n "PDO_RX_MAPPING\|0x1600" \
+  src/rascl_hardware_interface install/rascl_hardware_interface 2>/dev/null
+```
+
+清理并重新编译、重新 source。
+
+### 11.2 Factory Position PDO mapping 不一致
+
+错误会列出读取到的 Rx/Tx entries。不要猜测 payload 布局，也不要强行覆盖只读 mapping count。记录 drive firmware/revision 和实际对象值，再与老师或 FAULHABER ESI/手册确认。
+
+### 11.3 EtherCAT 无法进入 OP
+
+检查：
+
+1. 四个 slave 是否全部找到。
+2. 网卡名是否正确。
+3. Position PDO assignment 是否成功。
+4. 是否先到 SAFE-OP。
+5. 初始 process-data frame 是否成功，working counter 是否大于 0。
+
+### 11.4 `CSP/PDO loop stopped`
+
+bridge 会把原因写在同一行。常见原因：
+
+1. PDO working counter 为 0。
+2. Drive 离开 Operation Enabled。
+3. Statusword bit 13 following error。
+4. PDO 长度不是 6 bytes。
+5. EtherCAT 同步/周期错误。
+
+发生后停止轨迹、急停或断使能，检查机械阻挡、目标步长和跟随误差参数。
+
+### 11.5 Mode display 不是 8
+
+当前 bridge 在 CSP 激活时读取 `0x6061`。若不是 8，CSP 激活失败，不会开始轨迹。检查 drive 是否支持 CSP、是否有其他接口同时修改模式。
+
+### 11.6 Homing 被拒绝
+
+如果返回：
+
+```text
+Cannot home while CSP/PDO is active
+```
+
+停止 `ros2_control.launch.py`，使用 `homing.launch.py`，不要绕过保护。
+
+### 11.7 `/joint_states` 中断
+
+检查 bridge 是否仍在运行、controller 是否 active、PDO loop 是否报错。不要只提高 `joint_state_timeout_s` 掩盖 EtherCAT 故障。
+
+### 11.8 IK failed
+
+目标可能不可达、接近奇异位形或超出关节限位。先使用接近零位 TCP 的目标。
+
+### 11.9 bridge `executable not found` / `Permission denied`
+
+`auto_homing` 分支中的脚本 Git mode 是 `100755`，main 曾退回 `100644`。当前 CMake 会先在 build 目录生成权限为 `0755` 的副本，再安装该副本，因此也兼容 `--symlink-install`。重新 build 后检查：
+
+```bash
+ls -l /root/ws/build/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
+ls -l /root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py
+```
+
+两者都应具有执行权限；如果 install 中仍指向旧文件，清理该包的 build/install 后重新编译。
+
+---
+
+## 12. 清理旧进程
 
 ```bash
 pkill -9 -f rviz2
@@ -653,174 +546,30 @@ ros2 daemon stop
 ros2 daemon start
 ```
 
-如果怀疑多个 container 残留，在 WSL 或宿主机中查看：
-
-```bash
-docker ps
-```
-
-停掉不用的 container：
-
-```bash
-docker stop <container_name_or_id>
-```
-
-最彻底方式是在 Windows PowerShell 中：
-
-```powershell
-wsl --shutdown
-```
-
-然后重新打开 WSL 和 container。
+重新启动前确认没有第二个 bridge 占用 EtherCAT 网卡或 TCP 端口 15001。
 
 ---
 
-## 13. 常见问题判断
+## 13. 当前阶段成功标准
 
-### 13.1 Package not found
-
-错误：
-
-```text
-Package 'rascl_wp3_ss26_group8' not found
-```
-
-原因通常是没有 source：
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-```
-
-或者 build 没成功。
+1. `colcon build` 和软件测试通过。
+2. fake hardware 下 IK、CSV、50 Hz minimum-jerk 执行正常。
+3. 四个轴分别通过 `home_one`，再通过 `home_all`。
+4. Homing launch 停止后，CSP launch 成功进入 OP。
+5. 四个 drive mode display 均为 8。
+6. 启动后 target=actual，不发生跳动。
+7. Position PDO 以固定 20 ms 周期持续交换。
+8. `/joint_states` 持续更新，无 following error / WKC error。
+9. 实机几毫米 minimum-jerk 轨迹成功，再逐步扩大范围。
+10. 最终 Task 1 的每个 major movement 都使用预计算 minimum-jerk 位置轨迹。
 
 ---
 
-### 13.2 找不到 /joint_states
+## 14. 本实现依据
 
-检查 fake/real hardware 是否已经启动：
+仓库内文档：
 
-```bash
-ros2 topic list | grep joint_states
-```
-
-检查 controller：
-
-```bash
-ros2 control list_controllers
-```
-
----
-
-### 13.3 IK failed
-
-可能原因：
-
-```text
-1. 目标点超出机械臂可达范围
-2. target_z 太低，接近桌面或低于机械结构可达范围
-3. target_x / target_y 对当前模型不可达
-4. calibration pose 不符合规定
-```
-
-先用接近初始 TCP 的点测试。
-
----
-
-### 13.4 RViz 方向和直觉相反
-
-这不一定是错。当前坐标以 URDF 的 `base_link` 为准。
-
-先查看 RViz 里的坐标轴：
-
-```text
-Red   = X
-Green = Y
-Blue  = Z
-```
-
-确认之后再决定 target_x / target_y 正负方向。
-
----
-
-### 13.5 轨迹不平滑
-
-检查参数：
-
-```text
-duration 太短 → 运动太急
-rate_hz 太低 → 采样点太少
-目标点太远 → joint 变化太大
-```
-
-建议：
-
-```text
-fake hardware:
-  duration = 4.0
-  rate_hz = 10 或 20
-
-real hardware first test:
-  duration = 5.0
-  rate_hz = 5 或 10
-```
-
----
-
-## 14. 当前版本成功标准
-
-在进入 CSP 修改前，当前版本至少应满足：
-
-```text
-1. colcon build 成功
-2. fake hardware launch 成功
-3. wp3_tsk1 execute:=false 能成功生成轨迹
-4. /tmp/rascl_wp3_tsk1_last_trajectory.csv 存在且内容合理
-5. wp3_tsk1 execute:=true 时 RViz 中机械臂平滑运动
-6. 换几个近距离 target 后，运动方向和 base_link 坐标系一致
-7. 实机小位移测试中，机器人没有异常跳动、反向、撞击
-```
-
----
-
-## 15. 下一步：CSP 修改方向
-
-当前版本暂时没有改 CSP。  
-如果本阶段验证通过，下一步应修改底层执行方式：
-
-```text
-当前：
-  WP3 node 发布 minimum-jerk joint samples
-  → /rascl_position_controller/commands
-  → hardware_interface::write()
-  → MOVE_ALL
-  → bridge
-  → Profile Position Mode
-
-目标：
-  WP3 node 发布 minimum-jerk joint samples
-  → /rascl_position_controller/commands
-  → hardware_interface::write()
-  → CSP_SETPOINT_ALL
-  → bridge
-  → Cyclic Synchronous Position Mode, mode = 8
-```
-
-建议分阶段：
-
-```text
-1. bridge 中新增 MODE_CYCLIC_SYNC_POSITION = 8
-2. 新增 ENTER_CSP，不运动，只确认 drive 能安全进入 CSP mode
-3. 进入 CSP 前先把 target position 设置为当前 actual position，避免跳动
-4. 新增 CSP_SETPOINT_ALL count0 count1 count2 count3
-5. C++ hardware_interface 新增 control_mode 参数
-6. control_mode:=profile 时保留旧 MOVE_ALL
-7. control_mode:=csp 时发送 CSP_SETPOINT_ALL
-8. 实机先做单关节极小幅测试
-9. 再执行当前 wp3_tsk1 的 x/y/z minimum-jerk 轨迹
-```
-
-注意：严格意义上的 CSP 最好通过 PDO cyclic process data 实现，而不是 SDO 高频写入。  
-但工程调试可以先做最小 CSP 版本，再逐步规范化。
+1. `Docs/RASCL_WP3_SS26_Tasksheet.pdf` 第 2 页：Task 1 要求 CSP。
+2. `Docs/RASCL_WP3_Intro.pdf` 第 5 页：MC CSP + position trajectory，不使用顶层 effort interface。
+3. `Docs/Codex可能需要的规格说明和功能手册/驱动功能.pdf` 第 117-120 页：CSP mode 8、周期写 `0x607A`、状态字 bit 12/13。
+4. FAULHABER Communications Manual EtherCAT（7000.05051）：RxPDO2/TxPDO2、SM/DC 同步周期、SyncManager assignment。

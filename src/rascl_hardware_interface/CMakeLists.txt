@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.19)
 project(rascl_hardware_interface)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -46,8 +46,27 @@ install(FILES rascl_hardware_interface.xml
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS
+# The main branch lost the executable bit that exists on auto_homing. Generate
+# a build-tree copy with explicit POSIX permissions so --symlink-install also
+# resolves to an executable target, independent of the source checkout mode.
+set(BRIDGE_BUILD_SCRIPT
+  "${CMAKE_CURRENT_BINARY_DIR}/scripts/rascl_faulhaber_bridge.py"
+)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/scripts")
+configure_file(
   scripts/rascl_faulhaber_bridge.py
+  "${BRIDGE_BUILD_SCRIPT}"
+  COPYONLY
+)
+file(CHMOD "${BRIDGE_BUILD_SCRIPT}"
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
+)
+
+install(PROGRAMS
+  "${BRIDGE_BUILD_SCRIPT}"
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -63,6 +82,7 @@ ament_export_dependencies(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   find_package(ament_cmake_clang_format REQUIRED)
   find_package(ament_cmake_cppcheck REQUIRED)
   find_package(ament_cmake_cpplint REQUIRED)
@@ -76,6 +96,8 @@ if(BUILD_TESTING)
       rclcpp_lifecycle
     )
   endif()
+
+  ament_add_pytest_test(test_faulhaber_bridge test/test_faulhaber_bridge.py)
 
   ament_clang_format()
   ament_cppcheck()

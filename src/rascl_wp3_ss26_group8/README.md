@@ -10,9 +10,9 @@ The current milestone focuses on Task 1 preparation:
 - it generates a joint-space minimum-jerk trajectory,
 - it publishes the trajectory to `/rascl_position_controller/commands`.
 
-This first version does **not** control the gripper and does **not** constrain the
-end-effector orientation.  It is intended for step-by-step validation before the
-full cube stacking sequence is assembled.
+This version does **not** yet control the gripper or constrain arbitrary
+end-effector orientation. Joint position samples are executed through the
+FAULHABER CSP mode and cyclic EtherCAT Position PDOs on real hardware.
 
 ## Coordinate convention
 
@@ -21,9 +21,9 @@ The TCP is currently the `spur_gear_joint` origin.
 
 Calibration convention for real hardware:
 
-1. Place the real robot in the same physical pose as the URDF/RViz zero pose.
-2. Call the existing `home_all` service.
-3. Check that all four joints read `0 rad`.
+1. Place the real robot in the validated safe starting region for the reference search.
+2. Run the dedicated `homing.launch.py`, validate each axis with `home_one`, then call `home_all`.
+3. After the switches and offsets establish the URDF zero pose, check that all four joints read `0 rad`.
 
 With this convention, `q=[0,0,0,0]` corresponds to the URDF zero pose.  The
 nominal TCP position in that pose is approximately:
@@ -67,7 +67,7 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
   -p target_y:=0.00 \
   -p target_z:=0.08 \
   -p duration:=4.0 \
-  -p rate_hz:=10.0 \
+  -p rate_hz:=50.0 \
   -p execute:=false
 ```
 
@@ -80,7 +80,7 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
   -p target_y:=0.00 \
   -p target_z:=0.08 \
   -p duration:=4.0 \
-  -p rate_hz:=10.0 \
+  -p rate_hz:=50.0 \
   -p execute:=true
 ```
 
@@ -96,16 +96,26 @@ ros2 launch rascl_wp3_ss26_group8 wp3_tsk1.launch.py \
   target_y:=0.00 \
   target_z:=0.08 \
   duration:=4.0 \
-  rate_hz:=10.0 \
+  rate_hz:=50.0 \
   execute:=true
 ```
 
-For real hardware, first validate in fake hardware.  Then use the existing real
-hardware startup, calibrate the robot in the fixed zero pose, call `home_all`, and
-run the same WP3 node with conservative targets and `rate_hz:=10.0`.
+For real hardware, first validate in fake hardware. Run reference-switch homing
+with `rascl_description homing.launch.py`, stop that launch, and then start
+`ros2_control.launch.py`, whose default real-hardware mode is CSP with a 20 ms
+Position PDO cycle. Start with conservative Cartesian targets.
 
-## Current limitation
+## CSP/PDO execution path
 
-This package generates and publishes minimum-jerk position trajectories on the
-ROS side.  The lower-level WP2.2 bridge still uses the previous position command
-path.  True motion-controller CSP mode will be added in a later step.
+```text
+wp3_tsk1 minimum-jerk samples
+  -> ForwardCommandController position interface
+  -> RASCLHardwareInterface target-count cache
+  -> rascl_faulhaber_bridge fixed 20 ms loop
+  -> RxPDO2: 0x6040 Controlword + 0x607A Target Position
+  <- TxPDO2: 0x6041 Statusword + 0x6064 Position Actual Value
+```
+
+The bridge uses the FAULHABER factory Position PDO mappings (`0x1601` and
+`0x1A01`) and assigns only those PDOs to SyncManager 2/3. The default is
+SM-Sync at 50 Hz; DC-Sync is optional after stable SM-Sync validation.
