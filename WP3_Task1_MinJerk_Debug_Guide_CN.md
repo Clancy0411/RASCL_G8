@@ -442,16 +442,16 @@ export ROS_DOMAIN_ID=88
 ip -br link
 ```
 
-找到连接 EtherCAT 驱动链的专用网卡，例如：
+实验室电脑上连接 EtherCAT 驱动链的专用网卡已经确认为：
 
 ```text
-enx3c18a0264863
+enx94bdbe9565bc
 ```
 
-把实际名称保存在 `Container-T1` 的变量中。以下示例必须替换为真实名称：
+在 `Container-T1` 中保存并启用该网卡：
 
 ```bash
-export ETHERCAT_IF=enx3c18a0264863
+export ETHERCAT_IF=enx94bdbe9565bc
 ip link show "$ETHERCAT_IF"
 ip link set "$ETHERCAT_IF" up
 ```
@@ -511,7 +511,7 @@ echo "$ETHERCAT_IF"
 如果输出为空，重新执行：
 
 ```bash
-export ETHERCAT_IF=enx3c18a0264863
+export ETHERCAT_IF=enx94bdbe9565bc
 ```
 
 然后启动：
@@ -644,10 +644,10 @@ ss -ltnp | grep 15001
 echo "$ETHERCAT_IF"
 ```
 
-若为空，重新设置实际网卡：
+若为空，重新设置已经确认的 EtherCAT 网卡：
 
 ```bash
-export ETHERCAT_IF=enx3c18a0264863
+export ETHERCAT_IF=enx94bdbe9565bc
 ```
 
 启动 CSP：
@@ -860,7 +860,7 @@ ss -ltnp | grep 15001
 在 `Container-T1`：
 
 ```bash
-export ETHERCAT_IF=enx3c18a0264863  # 替换为实际网卡
+export ETHERCAT_IF=enx94bdbe9565bc
 
 ros2 launch rascl_description ros2_control.launch.py \
   interface:="$ETHERCAT_IF" \
@@ -901,7 +901,7 @@ ros2 topic echo --once /joint_states
 在 `Container-T1`：
 
 ```bash
-export ETHERCAT_IF=enx3c18a0264863  # 替换为实际网卡
+export ETHERCAT_IF=enx94bdbe9565bc
 
 ros2 launch rascl_description ros2_control.launch.py \
   interface:="$ETHERCAT_IF" \

@@ -31,14 +31,15 @@ colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF
 
 source install/local_setup.bash
 export ROS_DOMAIN_ID=88
-export ETHERCAT_IF=enx3c18a0264863
+export ETHERCAT_IF=enx94bdbe9565bc
 ```
 
-把 `enx3c18a0264863` 替换为实际 EtherCAT 网卡名。可用以下命令确认：
+实验室电脑已经确认 EtherCAT 网卡名为 `enx94bdbe9565bc`。用以下命令确认并启用：
 
 ```bash
 ip -br link
 ip link show "$ETHERCAT_IF"
+ip link set "$ETHERCAT_IF" up
 ```
 
 保持这个窗口打开，后面称为 `Terminal 1`。
