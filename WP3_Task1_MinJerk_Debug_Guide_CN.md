@@ -104,42 +104,116 @@ spur_gear_joint 的原点
 
 ## 4. Calibration pose / Home 规定
 
-这一点非常重要。
+现在由 `rascl_faulhaber_bridge.py` 读取 FAULHABER 数字输入，并调用驱动器内部的 Homing Mode 自动寻找参考传感器。
 
-WP3 中不能随便在任意姿态调用 `home_all`，否则空间坐标会失去意义。
+### 4.1 当前已确认的传感器映射
 
-当前版本规定：
+四个关节的参考传感器输入已经确认如下：
+
+| 关节 | Drive | Reference input | 触发状态 |
+|---|---:|---:|---|
+| `shoulder_joint` | 0 | DigIn2 | 物理低电平，逻辑值为 1 |
+| `upperarm_joint` | 1 | DigIn2 | 物理低电平，逻辑值为 1 |
+| `lowerarm_joint` | 2 | DigIn2 | 物理低电平，逻辑值为 1 |
+| `spur_gear_joint` | 3 | DigIn1 | 物理低电平，逻辑值为 1 |
+
+因此当前 Reference Switch 配置应为：
 
 ```text
-真实机器人应先摆到 URDF / RViz 中的零位姿态；
-然后调用 home_all；
-此时四个 joint 都应该读成 0 rad。
+reference_inputs = [2, 2, 2, 1]
 ```
 
-也就是说，calibration pose 定义为：
+前三轴目前选择的搜索方向为：
 
 ```text
-[shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
-=
+shoulder: Method 28
+upperarm: Method 28
+lowerarm: Method 24
+```
+
+`spur_gear_joint` 可以连续旋转，但其 Homing Method 仍需单轴验证。  
+当前 Drive 3 曾返回：
+
+---
+
+### 4.2 单轴 Homing
+
+第一次调试必须使用 `home_one`，不要直接使用 `home_all`。
+
+设置测试轴：
+
+```bash
+ros2 param set   /rascl_faulhaber_bridge   test_drive_index 0
+```
+
+Drive 与关节对应关系：
+
+```text
+0 = shoulder_joint
+1 = upperarm_joint
+2 = lowerarm_joint
+3 = spur_gear_joint
+```
+
+执行单轴 Homing：
+
+```bash
+ros2 service call   /rascl_faulhaber_bridge/home_one   std_srvs/srv/Trigger "{}"
+```
+
+成功返回示例：
+
+```text
+success=True
+message='Drive 0 homing completed; actual_position=...'
+```
+
+失败时立即执行：
+
+```bash
+ros2 service call   /rascl_faulhaber_bridge/disable_all   std_srvs/srv/Trigger "{}"
+```
+
+如果返回：
+
+```text
+statusword=0x2427
+```
+
+表示 Homing Error，不能继续重复执行。应检查：
+
+```text
+1. 当前实际 Homing Method
+2. Reference Switch 输入编号
+3. 传感器 logical 是否能产生边沿
+4. Lower/Upper limit 是否与 Reference Switch 冲突
+5. Homing speed 和 acceleration 是否为正数
+6. 当前运行的是否为重新编译、重新启动后的 bridge
+```
+
+---
+
+### 4.3 四轴 Homing
+
+只有 Drive 0、1、2、3 都分别通过 `home_one` 后，才执行：
+
+```bash
+ros2 service call   /rascl_faulhaber_bridge/home_all   std_srvs/srv/Trigger "{}"
+```
+
+`home_all` 是顺序执行，不是四轴同时开始。  
+如果 Drive 3 失败，Drive 0–2 可能已经重新建立零点，因此不能把一次失败理解为“四个关节都没有变化”。
+
+Homing 完成后，切换到完整 `ros2_control` 系统并检查：
+
+```bash
+ros2 topic echo --once /joint_states
+```
+
+期望四个关节接近：
+
+```text
 [0.0, 0.0, 0.0, 0.0]
-```
-
-在这个 calibration pose 下，当前版本根据 URDF 估计的 TCP 位置约为：
-
-```text
-TCP in base_link:
-x = 0.29756 m
-y = -0.00177 m
-z = 0.043001 m
-```
-
-所以第一次实机测试时，不要给很远的目标点。  
-应该先给一个非常接近这个初始 TCP 的目标，例如：
-
-```text
-x = 0.29
-y = 0.00
-z = 0.05
 ```
 
 ---
