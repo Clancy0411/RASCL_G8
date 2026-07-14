@@ -16,7 +16,8 @@ export ROS_DOMAIN_ID=88
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:=enx94bdbe9565bc
+  interface:=enx94bdbe9565bc \
+  ignore_spur_gear_in_csp:=true
 ```
 
 确认显示 SDO-only PRE-OP，PDO mapping deferred。`T1` 从现在到停机不得关闭。
@@ -35,10 +36,11 @@ ros2 service call /rascl_faulhaber_bridge/home_all \
 
 ```text
 success=True
-Homing completed for all drives; CSP handoff armed
+Homing completed for required drives; CSP handoff armed
 ```
 
-不要停止 `T1`，不要调用 `disable_all`。
+`home_all` 只执行 Drive 0–2；Drive 3 `spur_gear_joint` 不动作。不要停止 `T1`，
+不要调用 `disable_all`。
 
 ## 4. T2：复用同一 bridge 启动 CSP
 
@@ -58,7 +60,7 @@ ros2 launch rascl_description ros2_control.launch.py \
 ```text
 Deferred process image mapped
 Master reached OP state
-Homing-to-CSP handoff completed without Shutdown/Disable controlwords
+Homing-to-CSP handoff completed for required drives; ignored drives remain Disable Voltage
 ```
 
 ## 5. T3：保持测试
@@ -69,8 +71,9 @@ ros2 topic echo --once /joint_states
 ros2 topic hz /joint_states
 ```
 
-要求 controller active、关节约为 `[0,+1.5708,+1.5708,0]`、保持 10 秒无跳动，
-且没有 WKC/following error。只在 `T3` 按 `Ctrl-C` 停止 `topic hz`。
+要求 controller active、前三轴约为 `[0,+1.5708,+1.5708]`、保持 10 秒无跳动，
+且没有 WKC/following error。Drive 3 的状态值不作验收依据，但必须不动作并保持
+Disable Voltage。只在 `T3` 按 `Ctrl-C` 停止 `topic hz`。
 
 ## 6. T3：先规划，再执行
 
@@ -104,5 +107,5 @@ ps -ef | grep -E "ros2_control_node|rascl_faulhaber_bridge|wp3_tsk1" | grep -v g
 ss -ltnp | grep 15001
 ```
 
-若出现 `home_all has not completed`、`lost Operation Enabled`、WKC、following
+若出现 `not all required drives were homed`、`lost Operation Enabled`、WKC、following
 error 或 SAFE-OP，禁止重试运动，立即支撑/急停并保留完整日志。

@@ -33,6 +33,13 @@ def generate_launch_description():
     pdo_cycle_ns_arg = DeclareLaunchArgument("pdo_cycle_ns", default_value="20000000")
     pdo_timeout_us_arg = DeclareLaunchArgument("pdo_timeout_us", default_value="5000")
     enable_dc_sync_arg = DeclareLaunchArgument("enable_dc_sync", default_value="false")
+    ignore_spur_gear_arg = DeclareLaunchArgument(
+        "ignore_spur_gear_in_csp",
+        default_value="true",
+        description=(
+            "Temporary three-axis mode: skip Drive 3 Homing and keep it Disable Voltage in CSP."
+        ),
+    )
 
     bridge_node = Node(
         package="rascl_hardware_interface",
@@ -60,6 +67,9 @@ def generate_launch_description():
                 "enable_dc_sync": ParameterValue(
                     LaunchConfiguration("enable_dc_sync"), value_type=bool
                 ),
+                "ignore_spur_gear_in_csp": ParameterValue(
+                    LaunchConfiguration("ignore_spur_gear_in_csp"), value_type=bool
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -83,6 +93,7 @@ def generate_launch_description():
             pdo_cycle_ns_arg,
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
+            ignore_spur_gear_arg,
             bridge_node,
         ]
     )

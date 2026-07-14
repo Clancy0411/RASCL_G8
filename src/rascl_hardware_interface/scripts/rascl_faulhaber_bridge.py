@@ -295,6 +295,7 @@ class FaulhaberBus:
         pdo_cycle_ns: int,
         pdo_timeout_us: int,
         enable_dc_sync: bool,
+        ignored_csp_drive_indices: Optional[Sequence[int]] = None,
     ) -> None:
         self.interface = interface
         self.slave_indices = slave_indices
@@ -304,6 +305,19 @@ class FaulhaberBus:
         self.pdo_cycle_ns = pdo_cycle_ns
         self.pdo_timeout_us = pdo_timeout_us
         self.enable_dc_sync = enable_dc_sync
+        self.ignored_csp_drive_ids = {
+            int(index) for index in (ignored_csp_drive_indices or [])
+        }
+        invalid_ignored = self.ignored_csp_drive_ids.difference(
+            range(len(self.slave_indices))
+        )
+        if invalid_ignored:
+            raise ValueError(f"Invalid ignored CSP drive indices: {sorted(invalid_ignored)}")
+        self.required_homing_drive_ids = set(range(len(self.slave_indices))).difference(
+            self.ignored_csp_drive_ids
+        )
+        if not self.required_homing_drive_ids:
+            raise ValueError("At least one drive must remain enabled for CSP")
 
         self.master: Optional[pysoem.Master] = None
         self.drives: List[FaulhaberDrive] = []
@@ -316,14 +330,35 @@ class FaulhaberBus:
         self.pdo_error: Optional[str] = None
         self.last_working_counter = 0
         self.homing_complete = False
+        self.homed_drive_ids = set()
         self.deferred_csp_prepared = False
 
         self._validate_cycle_configuration()
 
     def mark_homing_complete(self, complete: bool) -> None:
-        """Gate the no-disable Homing-to-CSP handoff on a full home_all run."""
+        """Set the aggregate Homing state; primarily used by bus-level tests."""
 
+        if complete:
+            self.homed_drive_ids = set(self.required_homing_drive_ids)
+        else:
+            self.homed_drive_ids.clear()
         self.homing_complete = bool(complete)
+
+    def mark_drive_homing_started(self, drive_id: int) -> None:
+        """Invalidate one axis until its current Homing attempt succeeds."""
+
+        self.homed_drive_ids.discard(int(drive_id))
+        self.homing_complete = self.required_homing_drive_ids.issubset(
+            self.homed_drive_ids
+        )
+
+    def mark_drive_homed(self, drive_id: int) -> None:
+        """Record one successfully homed axis in this EtherCAT session."""
+
+        self.homed_drive_ids.add(int(drive_id))
+        self.homing_complete = self.required_homing_drive_ids.issubset(
+            self.homed_drive_ids
+        )
 
     def _validate_cycle_configuration(self) -> None:
         if self.pdo_timeout_us <= 0:
@@ -492,7 +527,12 @@ class FaulhaberBus:
             raise RuntimeError("CSP target cache is not initialized")
 
         for drive, target in zip(self.drives, self.target_counts):
-            payload = self._pack_rxpdo(controlword, target)
+            drive_controlword = (
+                CMD_DISABLE_VOLTAGE
+                if drive.drive_id in self.ignored_csp_drive_ids
+                else controlword
+            )
+            payload = self._pack_rxpdo(drive_controlword, target)
             if len(payload) != PDO_RX_SIZE_BYTES:
                 raise RuntimeError("Internal RxPDO packing error")
             drive.slave.output = payload
@@ -528,18 +568,26 @@ class FaulhaberBus:
         if self.control_mode != "homing_csp":
             raise RuntimeError("Deferred CSP preparation requires control_mode:=homing_csp")
         if not self.homing_complete:
-            raise RuntimeError("CSP handoff rejected: home_all has not completed successfully")
+            raise RuntimeError(
+                "CSP handoff rejected: not all required drives were homed in this bridge session"
+            )
         if self.master is None:
             raise RuntimeError("EtherCAT master is not connected")
 
-        statuses = [drive.read_status() for drive in self.drives]
+        statuses = {
+            drive.drive_id: drive.read_status()
+            for drive in self.drives
+            if drive.drive_id in self.required_homing_drive_ids
+        }
         if any(
             (status & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE
-            for status in statuses
+            for status in statuses.values()
         ):
             raise RuntimeError(
-                "CSP handoff requires every homed drive to remain Operation Enabled: "
-                + " ".join(f"drive{i}=0x{status:04X}" for i, status in enumerate(statuses))
+                "CSP handoff requires every required drive to remain Operation Enabled: "
+                + " ".join(
+                    f"drive{i}=0x{status:04X}" for i, status in statuses.items()
+                )
             )
 
         if self.deferred_csp_prepared:
@@ -593,21 +641,36 @@ class FaulhaberBus:
         states: List[PDOState] = []
         for _ in range(25):
             states = self._exchange_pdo_locked(controlword, require_expected_wkc=True)
-            if any(status & STATUS_FAULT for _, status, _ in states):
+            required_states = [
+                (drive_id, state)
+                for drive_id, state in enumerate(states)
+                if drive_id in self.required_homing_drive_ids
+            ]
+            if any(status & STATUS_FAULT for _, (_, status, _) in required_states):
                 raise RuntimeError(
                     "Drive fault during CSP activation: "
-                    + " ".join(f"drive{i}=0x{s:04X}" for i, (_, s, _) in enumerate(states))
+                    + " ".join(
+                        f"drive{i}=0x{s:04X}" for i, (_, s, _) in required_states
+                    )
                 )
-            state_ok = all((status & STATUS_STATE_MASK) == expected_state for _, status, _ in states)
+            state_ok = all(
+                (status & STATUS_STATE_MASK) == expected_state
+                for _, (_, status, _) in required_states
+            )
             accept_ok = not require_csp_accept or all(
-                status & STATUS_CSP_TARGET_ACCEPTED for _, status, _ in states
+                status & STATUS_CSP_TARGET_ACCEPTED
+                for _, (_, status, _) in required_states
             )
             if state_ok and accept_ok:
                 return states
             time.sleep(self.pdo_cycle_ns / 1_000_000_000.0)
         raise RuntimeError(
             f"CiA 402 transition to 0x{expected_state:04X} timed out: "
-            + " ".join(f"drive{i}=0x{s:04X}" for i, (_, s, _) in enumerate(states))
+            + " ".join(
+                f"drive{i}=0x{s:04X}"
+                for i, (_, s, _) in enumerate(states)
+                if i in self.required_homing_drive_ids
+            )
         )
 
     def enter_csp(self, target_counts: Optional[Sequence[int]] = None) -> List[PDOState]:
@@ -619,7 +682,9 @@ class FaulhaberBus:
         with self.pdo_lock:
             preserve_homing_hold = self.control_mode == "homing_csp"
             if preserve_homing_hold and not self.homing_complete:
-                raise RuntimeError("CSP handoff rejected: home_all has not completed successfully")
+                raise RuntimeError(
+                    "CSP handoff rejected: not all required drives were homed in this bridge session"
+                )
 
             initial_targets = (
                 [drive.read_actual_position_counts() for drive in self.drives]
@@ -633,22 +698,32 @@ class FaulhaberBus:
                 self._prepare_deferred_csp_locked()
 
             for drive in self.drives:
+                if drive.drive_id in self.ignored_csp_drive_ids:
+                    print(
+                        f"[EtherCAT] Drive {drive.drive_id} is ignored for CSP "
+                        "and held at Disable Voltage"
+                    )
+                    continue
                 drive.reset_fault_if_needed()
                 if drive.set_operation_mode(MODE_CYCLIC_SYNC_POSITION) != MODE_CYCLIC_SYNC_POSITION:
                     raise RuntimeError(f"Drive {drive.drive_id} rejected CSP mode")
 
             if preserve_homing_hold:
-                handoff_statuses = [drive.read_status() for drive in self.drives]
+                handoff_statuses = {
+                    drive.drive_id: drive.read_status()
+                    for drive in self.drives
+                    if drive.drive_id in self.required_homing_drive_ids
+                }
                 if any(
                     (status & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE
-                    for status in handoff_statuses
+                    for status in handoff_statuses.values()
                 ):
                     raise RuntimeError(
                         "A drive lost Operation Enabled while selecting CSP; "
                         "continuous-hold handoff is not supported by this drive state: "
                         + " ".join(
                             f"drive{i}=0x{status:04X}"
-                            for i, status in enumerate(handoff_statuses)
+                            for i, status in handoff_statuses.items()
                         )
                     )
 
@@ -659,19 +734,25 @@ class FaulhaberBus:
 
             try:
                 if preserve_homing_hold:
-                    # The homing procedure leaves every drive Operation Enabled.
-                    # Keep 0x000F on the first valid PDO and use actual positions
-                    # as targets; never send Shutdown/Disable during the handoff.
+                    # Homing leaves every required drive Operation Enabled. Keep
+                    # 0x000F on their first valid PDO and use actual positions as
+                    # targets. Ignored drives receive Disable Voltage instead.
                     self._request_operational_locked(CMD_ENABLE_OPERATION)
                     states = self._wait_cia402_state_locked(
                         CMD_ENABLE_OPERATION,
                         STATUS_OPERATION_ENABLED_STATE,
                         require_csp_accept=True,
                     )
-                    print(
-                        "[EtherCAT] Homing-to-CSP handoff completed without "
-                        "Shutdown/Disable controlwords"
-                    )
+                    if self.ignored_csp_drive_ids:
+                        print(
+                            "[EtherCAT] Homing-to-CSP handoff completed for required "
+                            "drives; ignored drives remain Disable Voltage"
+                        )
+                    else:
+                        print(
+                            "[EtherCAT] Homing-to-CSP handoff completed without "
+                            "Shutdown/Disable controlwords"
+                        )
                 else:
                     self._request_operational_locked()
                     self._wait_cia402_state_locked(CMD_SHUTDOWN, STATUS_READY_TO_SWITCH_ON)
@@ -685,7 +766,10 @@ class FaulhaberBus:
                 self._safeop_locked()
                 raise
 
-            if modes != [MODE_CYCLIC_SYNC_POSITION] * len(self.drives):
+            if any(
+                modes[drive_id] != MODE_CYCLIC_SYNC_POSITION
+                for drive_id in self.required_homing_drive_ids
+            ):
                 self._safeop_locked()
                 raise RuntimeError(f"Unexpected CSP mode displays: {modes}")
 
@@ -701,6 +785,8 @@ class FaulhaberBus:
 
     def _validate_running_states(self, states: Sequence[PDOState]) -> None:
         for drive_id, (_, statusword, mode) in enumerate(states):
+            if drive_id in self.ignored_csp_drive_ids:
+                continue
             if statusword & STATUS_FAULT:
                 raise RuntimeError(f"Drive {drive_id} fault; statusword=0x{statusword:04X}")
             if statusword & STATUS_FOLLOWING_OR_HOMING_ERROR:
@@ -754,6 +840,9 @@ class FaulhaberBus:
                 raise RuntimeError(f"Expected {len(self.drives)} CSP targets, got {len(targets)}")
             for target in targets:
                 self._pack_rxpdo(CMD_ENABLE_OPERATION, target)
+            for drive_id in self.ignored_csp_drive_ids:
+                if drive_id < len(self.latest_states):
+                    targets[drive_id] = self.latest_states[drive_id][0]
             self.target_counts = targets
             return list(self.latest_states)
 
@@ -858,6 +947,7 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("pdo_cycle_ns", 20_000_000)
         self.declare_parameter("pdo_timeout_us", 5_000)
         self.declare_parameter("enable_dc_sync", False)
+        self.declare_parameter("ignore_spur_gear_in_csp", False)
 
         # Values validated on the auto_homing branch.
         self.declare_parameter("homing_methods", [28, 28, 24, 24])
@@ -884,6 +974,9 @@ class RASCLFaulhaberBridge(Node):
         self.pdo_cycle_ns = int(self.get_parameter("pdo_cycle_ns").value)
         self.pdo_timeout_us = int(self.get_parameter("pdo_timeout_us").value)
         self.enable_dc_sync = bool(self.get_parameter("enable_dc_sync").value)
+        self.ignore_spur_gear_in_csp = bool(
+            self.get_parameter("ignore_spur_gear_in_csp").value
+        )
 
         self.homing_methods = self._int_parameter_list("homing_methods")
         self.reference_inputs = self._int_parameter_list("reference_inputs")
@@ -904,10 +997,16 @@ class RASCLFaulhaberBridge(Node):
             self.pdo_cycle_ns,
             self.pdo_timeout_us,
             self.enable_dc_sync,
+            [len(self.slave_indices) - 1] if self.ignore_spur_gear_in_csp else [],
         )
         self.get_logger().info(
             f"Connecting EtherCAT on {self.interface}; control_mode={self.control_mode}"
         )
+        if self.ignore_spur_gear_in_csp:
+            self.get_logger().warning(
+                "Temporary three-axis mode: spur_gear_joint (Drive 3) will not Home, "
+                "will remain Disable Voltage in CSP, and its commands will be ignored"
+            )
         self.bus.connect()
         for drive in self.bus.drives:
             drive.configure_profile_motion(
@@ -970,9 +1069,9 @@ class RASCLFaulhaberBridge(Node):
             )
 
     def _home_drive(self, drive_index: int) -> int:
-        self.bus.mark_homing_complete(False)
+        self.bus.mark_drive_homing_started(drive_index)
         drive = self.bus.drives[drive_index]
-        return drive.home_to_reference_switch(
+        position = drive.home_to_reference_switch(
             method=self.homing_methods[drive_index],
             reference_input=self.reference_inputs[drive_index],
             offset_counts=self.homing_offsets[drive_index],
@@ -981,6 +1080,8 @@ class RASCLFaulhaberBridge(Node):
             acceleration=self.homing_accelerations[drive_index],
             timeout_s=self.motion_timeout_s,
         )
+        self.bus.mark_drive_homed(drive_index)
+        return position
 
     def publish_home_done(self) -> None:
         msg = Bool()
@@ -996,9 +1097,13 @@ class RASCLFaulhaberBridge(Node):
                 elif self.bus.deferred_csp_prepared:
                     raise RuntimeError("Restart the Homing session after CSP has exited")
                 else:
-                    statuses = [drive.enable_operation() for drive in self.bus.drives]
+                    statuses = [
+                        drive.enable_operation()
+                        for drive in self.bus.drives
+                        if drive.drive_id in self.bus.required_homing_drive_ids
+                    ]
             response.success = True
-            response.message = "Enabled all drives: " + " ".join(
+            response.message = "Enabled required drives: " + " ".join(
                 f"0x{status:04X}" for status in statuses
             )
         except Exception as exc:
@@ -1028,11 +1133,20 @@ class RASCLFaulhaberBridge(Node):
             drive_index = int(self.get_parameter("test_drive_index").value)
             if not 0 <= drive_index < len(self.bus.drives):
                 raise ValueError(f"test_drive_index={drive_index} is out of range")
+            if drive_index in self.bus.ignored_csp_drive_ids:
+                response.success = True
+                response.message = (
+                    f"Drive {drive_index} is temporarily ignored; Homing was not executed"
+                )
+                return response
             with self.lock:
                 self._ensure_non_csp_operation("home")
                 position = self._home_drive(drive_index)
             response.success = True
-            response.message = f"Drive {drive_index} homing completed; actual_position={position}"
+            suffix = "; CSP handoff armed" if self.bus.homing_complete else ""
+            response.message = (
+                f"Drive {drive_index} homing completed; actual_position={position}{suffix}"
+            )
         except Exception as exc:
             response.success = False
             response.message = f"Home one failed: {exc}"
@@ -1042,13 +1156,17 @@ class RASCLFaulhaberBridge(Node):
         try:
             with self.lock:
                 self._ensure_non_csp_operation("home")
-                positions = [self._home_drive(index) for index in range(len(self.bus.drives))]
-                self.bus.mark_homing_complete(True)
+                positions = {
+                    index: self._home_drive(index)
+                    for index in sorted(self.bus.required_homing_drive_ids)
+                }
             self.publish_home_done()
             response.success = True
             response.message = (
-                "Homing completed for all drives; CSP handoff armed: "
-                + " ".join(str(position) for position in positions)
+                "Homing completed for required drives; CSP handoff armed: "
+                + " ".join(
+                    f"drive{index}={position}" for index, position in positions.items()
+                )
             )
         except Exception as exc:
             response.success = False
@@ -1061,14 +1179,17 @@ class RASCLFaulhaberBridge(Node):
         try:
             with self.lock:
                 self._ensure_non_csp_operation("move to home")
-                positions = [
-                    drive.move_absolute_counts_and_wait(0, self.motion_timeout_s)
+                positions = {
+                    drive.drive_id: drive.move_absolute_counts_and_wait(
+                        0, self.motion_timeout_s
+                    )
                     for drive in self.bus.drives
-                ]
+                    if drive.drive_id in self.bus.required_homing_drive_ids
+                }
             self.publish_home_done()
             response.success = True
-            response.message = "Moved all drives to zero: " + " ".join(
-                str(position) for position in positions
+            response.message = "Moved required drives to zero: " + " ".join(
+                f"drive{index}={position}" for index, position in positions.items()
             )
         except Exception as exc:
             response.success = False

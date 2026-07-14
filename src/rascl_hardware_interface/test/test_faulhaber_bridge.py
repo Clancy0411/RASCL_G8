@@ -230,7 +230,7 @@ class BridgePDOTest(unittest.TestCase):
         self.assertEqual(master.config_map_calls, 0)
         self.assertTrue(all(not slave.writes for slave in master.slaves))
 
-    def test_homing_csp_rejects_handoff_before_home_all(self):
+    def test_homing_csp_rejects_handoff_before_all_axes_are_homed(self):
         bus = make_bus(control_mode="homing_csp")
         slaves = [FakeSlave() for _ in range(4)]
         bus.master = FakeMaster(slaves)
@@ -239,13 +239,27 @@ class BridgePDOTest(unittest.TestCase):
             for index, slave in enumerate(slaves)
         ]
 
-        with self.assertRaisesRegex(RuntimeError, "home_all"):
+        with self.assertRaisesRegex(RuntimeError, "not all required drives"):
             bus.enter_csp()
         self.assertEqual(bus.master.config_map_calls, 0)
 
         statuses = bus.exit_csp()
         self.assertEqual(len(statuses), 4)
         self.assertEqual(bus.master.write_state_calls, 0)
+
+    def test_four_individual_homing_results_arm_handoff(self):
+        bus = make_bus(control_mode="homing_csp")
+
+        for drive_id in range(4):
+            bus.mark_drive_homing_started(drive_id)
+            self.assertFalse(bus.homing_complete)
+            bus.mark_drive_homed(drive_id)
+
+        self.assertTrue(bus.homing_complete)
+        self.assertEqual(bus.homed_drive_ids, {0, 1, 2, 3})
+
+        bus.mark_drive_homing_started(2)
+        self.assertFalse(bus.homing_complete)
 
     def test_homing_csp_handoff_keeps_enable_operation_controlword(self):
         positions = [10, 20, 30, 40]
@@ -301,6 +315,46 @@ class BridgePDOTest(unittest.TestCase):
             bus.enter_csp()
         self.assertEqual(bus.master.config_map_calls, 0)
         self.assertEqual(bus.master.controlwords, [])
+
+    def test_ignored_spur_gear_does_not_block_homing_and_stays_disabled(self):
+        positions = [10, 20, 30, 40]
+        slaves = [FakeSlave() for _ in range(4)]
+        for slave, position in zip(slaves, positions):
+            slave.values[(bridge.STATUS_WORD, 0)] = int(
+                bridge.STATUS_OPERATION_ENABLED_STATE
+            ).to_bytes(2, "little")
+            slave.values[(bridge.ACTUAL_POSITION, 0)] = int(position).to_bytes(
+                4, "little", signed=True
+            )
+
+        bus = make_bus(
+            control_mode="homing_csp",
+            pdo_cycle_ns=1_000_000,
+            ignored_csp_drive_indices=[3],
+        )
+        bus.master = FakeMaster(slaves)
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+
+        for drive_id in range(3):
+            bus.mark_drive_homing_started(drive_id)
+            bus.mark_drive_homed(drive_id)
+        self.assertTrue(bus.homing_complete)
+        self.assertEqual(bus.required_homing_drive_ids, {0, 1, 2})
+
+        states = bus.enter_csp()
+        time.sleep(0.005)
+        self.assertEqual(len(states), 4)
+        self.assertEqual(
+            bridge.struct.unpack("<Hi", slaves[3].output)[0],
+            bridge.CMD_DISABLE_VOLTAGE,
+        )
+
+        bus.set_csp_targets([11, 22, 33, 999])
+        self.assertEqual(bus.target_counts[3], bus.latest_states[3][0])
+        bus.exit_csp()
 
     def test_csp_activation_runs_a_repeating_pdo_loop(self):
         bus = make_bus(pdo_cycle_ns=1_000_000)

@@ -125,9 +125,16 @@ Homing must run without an active CSP/PDO loop. Start the dedicated bridge:
 ros2 launch rascl_description homing.launch.py interface:=robot_interface
 ```
 
-Validate each drive with `home_one`, then call `home_all`. Keep the Homing launch
-running until the complete CSP session has ended. For a gravity-loaded arm,
-stopping it between Homing and CSP removes drive voltage.
+The current launch defaults to temporary three-axis mode
+(`ignore_spur_gear_in_csp:=true`). `home_all` homes only Drives 0–2; Drive 3
+(`spur_gear_joint`) receives no Homing motion, is excluded from CSP admission
+and state checks, and receives Disable Voltage in every PDO cycle. Do not rely
+on it to hold a load. After its Homing fault is repaired, restore four-axis mode
+with `ignore_spur_gear_in_csp:=false`.
+
+Validate Drives 0–2 with `home_one`, or call `home_all` once. Keep the Homing
+launch running until the complete CSP session has ended. For a gravity-loaded
+arm, stopping it between Homing and CSP removes drive voltage.
 
 ## Running with Real Hardware (CSP/PDO)
 
@@ -141,11 +148,12 @@ ros2 launch rascl_description ros2_control.launch.py \
   start_bridge:=false
 ```
 
-The existing bridge defers PDO mapping until this activation, initializes every
-CSP target from `0x6064`, and requests OP using only Enable Operation. CSP is
-rejected if `home_all` did not finish or any drive stopped being Operation
-Enabled. Support the arm before stopping ros2_control because shutdown disables
-the drives.
+The existing bridge defers PDO mapping until this activation and initializes
+every CSP target from `0x6064`. Required drives request OP using only Enable
+Operation; an ignored Drive 3 stays at Disable Voltage. CSP is rejected if
+Homing of a required drive did not finish or a required drive stopped being
+Operation Enabled. Support the arm before stopping ros2_control because
+shutdown disables the drives.
 
 The defaults select `control_mode:=csp`, `controllers_csp.yaml`, a 20 ms PDO
 cycle, and SM-Sync. Profile Position remains available only as a regression
@@ -162,11 +170,15 @@ ros2 service call /rascl_faulhaber_bridge/home_all \
   std_srvs/srv/Trigger "{}"
 ```
 
-After successful homing, the current joint positions should be:
+After successful Homing in temporary three-axis mode, the first three joint
+positions should be:
 
 ```text
-[0.0, +1.5708, +1.5708, 0.0]
+[0.0, +1.5708, +1.5708]
 ```
+
+Drive 3 is unhomed in this mode, so its reported position is not an acceptance
+value and position commands for it are ignored by the bridge.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search. The ros2_control parameters
@@ -182,9 +194,9 @@ each drive's raw `0x6064` value in the physical URDF zero pose and use those
 counts as the corresponding `*_home_offset_counts` launch arguments. Keep the
 Homing bridge running after `home_all`, call its `disable_all` service, support
 the links while moving to the validated physical URDF-zero pose, and send
-`GET_ALL` to `127.0.0.1:15001`. The four returned raw-position fields are the
-calibration values. See the Chinese Debug Guide for the guarded procedure and
-response layout.
+`GET_ALL` to `127.0.0.1:15001`. In temporary three-axis mode only the Drive 0–2
+raw-position fields are valid calibration values; the unhomed Drive 3 value is
+not. See the Chinese Debug Guide for the guarded procedure and response layout.
 
 Do not call homing services while the CSP ros2_control stack is active. Also do
 not publish `[0,0,0,0]` as the first command after automatic homing: that is the
@@ -205,16 +217,17 @@ colcon build --symlink-install \
 
 source install/local_setup.bash
 
-colcon test --packages-select rascl_hardware_interface \
-  --ctest-args -R test_generic_system --output-on-failure
-
-colcon test-result --verbose
+ctest --test-dir build/rascl_hardware_interface \
+  -R '^(test_generic_system|test_faulhaber_bridge)$' \
+  --output-on-failure
 ```
 
-A successful result should report no errors or failures, for example:
+A successful functional result should report both selected targets as passed.
+The package also defines optional clang-format/cpplint checks; style or missing
+copyright-header findings are not real-hardware functional failures.
 
 ```text
-Summary: x tests, 0 errors, 0 failures, 0 skipped
+100% tests passed, 0 tests failed out of 2
 ```
 
 ## Notes

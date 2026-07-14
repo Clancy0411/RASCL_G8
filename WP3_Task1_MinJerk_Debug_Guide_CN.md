@@ -23,6 +23,10 @@
 4. 任一 controller inactive、WKC/following error、方向异常时禁止发目标。
 5. 停机前先支撑机械臂；正常停机会 Disable Voltage。
 
+当前临时使用三轴模式：Drive 3 `spur_gear_joint` 不执行 Homing，不参与 CSP
+准入和状态检查，并在每个 PDO 周期保持 Disable Voltage。不得向该关节施加载荷或
+依赖其保持位置。修复后用 `ignore_spur_gear_in_csp:=false` 恢复四轴模式。
+
 坐标约定：
 
 ```text
@@ -99,17 +103,21 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
-在 `T1` 运行测试：
+在 `T1` 只运行两个功能测试目标：
 
 ```bash
-colcon test --packages-select rascl_hardware_interface \
-  --event-handlers console_direct+
-colcon test-result --verbose
+ctest --test-dir build/rascl_hardware_interface \
+  -R '^(test_generic_system|test_faulhaber_bridge)$' \
+  --output-on-failure
 ```
 
-必须无 failure。测试包含：PDO 字节布局、固定周期循环、SDO-only Homing、
-Homing→CSP 延迟 mapping、未 Home 禁止 CSP、交接不发送 Shutdown/Disable、
-以及 `home_offset_counts` 双向换算。
+这两个目标必须通过。它们覆盖硬件接口换算、PDO 字节布局、固定周期循环、
+SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及三轴临时模式下
+Drive 3 始终 Disable Voltage。
+
+完整 `colcon test` 还会运行 `clang_format`、`cpplint` 等代码风格检查。这些检查
+可以在提交前处理，但格式或版权头失败不阻塞实机调试。判断时看 CTest 的测试
+目标结果，不要把单个格式差异数量当成功能 failure。
 
 检查 bridge 可执行权限：
 
@@ -171,7 +179,8 @@ ros2 daemon start
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:=enx94bdbe9565bc
+  interface:=enx94bdbe9565bc \
+  ignore_spur_gear_in_csp:=true
 ```
 
 应看到：
@@ -189,7 +198,7 @@ ros2 service call /rascl_faulhaber_bridge/read_digital_inputs \
   std_srvs/srv/Trigger "{}"
 ```
 
-首次或机械结构变化后逐轴执行；每轴成功后再继续：
+首次或机械结构变化后逐轴执行 Drive 0–2；每轴成功后再继续：
 
 ```bash
 ros2 param set /rascl_faulhaber_bridge test_drive_index 0
@@ -200,12 +209,12 @@ ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 
 ros2 param set /rascl_faulhaber_bridge test_drive_index 2
 ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
-
-ros2 param set /rascl_faulhaber_bridge test_drive_index 3
-ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 ```
 
-最后必须执行完整 Homing；只有它会解锁 CSP 交接：
+Drive 2 成功后应看到 `CSP handoff armed`，不需要再重复执行 `home_all`。
+
+Drive 0–2 已经逐轴验证过时，也可以在新的 bridge 会话中用一次 `home_all`
+代替上面三组 `home_one`。该服务不会命令 Drive 3：
 
 ```bash
 ros2 service call /rascl_faulhaber_bridge/home_all \
@@ -216,7 +225,7 @@ ros2 service call /rascl_faulhaber_bridge/home_all \
 
 ```text
 success=True
-Homing completed for all drives; CSP handoff armed
+Homing completed for required drives; CSP handoff armed
 ```
 
 此时不要按 `Ctrl-C`，不要调用 `disable_all`，不要关闭 `T1`。
@@ -246,9 +255,9 @@ OK <D0_raw> <D0_status> <D1_raw> <D1_status> \
    <D2_raw> <D2_status> <D3_raw> <D3_status>
 ```
 
-四个 raw 就是最终 offset。记录后支撑机械臂，在 `T1` 按 `Ctrl-C`，重新启动
-前先把机械臂放回已验证的安全 Homing 起始区域，再从第 5 节重新执行。
-第 7 节启动时用实测值替换示例数字。
+三轴临时模式下只有 D0–D2 raw 可作为 offset。D3 未 Homing，其 raw 不得用于
+最终标定。记录后支撑机械臂，在 `T1` 按 `Ctrl-C`；重新启动前放回已验证的安全
+Homing 起始区域，再从第 5 节执行。第 7 节用 D0–D2 实测值替换示例数字。
 
 ## 7. 同一 EtherCAT 会话切换 CSP
 
@@ -272,7 +281,7 @@ ros2 launch rascl_description ros2_control.launch.py \
 assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
 Deferred process image mapped
 Master reached OP state
-Homing-to-CSP handoff completed without Shutdown/Disable controlwords
+Homing-to-CSP handoff completed for required drives; ignored drives remain Disable Voltage
 ```
 
 `T2` 应看到：
@@ -281,7 +290,7 @@ Homing-to-CSP handoff completed without Shutdown/Disable controlwords
 Activated real RASCL hardware in csp mode
 ```
 
-若出现 `home_all has not completed`、`lost Operation Enabled`、WKC、following
+若出现 `not all required drives were homed`、`lost Operation Enabled`、WKC、following
 error 或 SAFE-OP + Error，禁止重试运动；按第 10 节处理。
 
 ## 8. CSP 保持检查
@@ -299,11 +308,12 @@ ros2 topic hz /joint_states
 ```text
 joint_state_broadcaster active
 rascl_position_controller active
-joint positions ~= [0,+1.5708,+1.5708,0]
+前三轴 positions ~= [0,+1.5708,+1.5708]
 ```
 
-保持至少 10 秒，不发送目标。实机与 RViz 必须一致，机械臂无跳动，`T1/T2`
-无 PDO、WKC 或 following error。结束 `topic hz` 时只在 `T3` 按 `Ctrl-C`。
+Drive 3 的状态值此时未标定，不作为验收依据；它必须不动作且保持失能。保持至少
+10 秒，不发送目标。前三轴实机与 RViz 必须一致，`T1/T2` 无 PDO、WKC 或
+following error。结束 `topic hz` 时只在 `T3` 按 `Ctrl-C`。
 
 ## 9. 小幅 minimum-jerk 轨迹
 
@@ -348,8 +358,8 @@ ss -ltnp | grep 15001
 
 ### 关键错误
 
-- `home_all has not completed`：停止 `T2` 的 ros2_control launch；保持 `T1`，重新
-  完成 `home_all`，再启动第 7 节。
+- `not all required drives were homed`：停止 `T2` 的 ros2_control launch；保持 `T1`，完成
+  缺少的逐轴 Homing，或重新执行 `home_all`，再启动第 7 节。
 - `lost Operation Enabled while selecting CSP`：驱动状态不支持当前无失能交接。
   立即支撑/急停，不得循环重试。
 - `following error`、WKC、SAFE-OP：controller 可能自动失能，立即支撑/急停；
@@ -381,10 +391,10 @@ source install/local_setup.bash
 ## 11. 验收标准
 
 1. 软件测试和 fake hardware 全部通过。
-2. 四个 `home_one` 与最终 `home_all` 成功。
+2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；Drive 3 未动作。
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
-4. 交接只发送 Enable Operation，首个 target 等于当前 actual position。
-5. `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动。
+4. Drive 0–2 交接只发送 Enable Operation；Drive 3 始终 Disable Voltage。
+5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动。
 6. 20 ms PDO 循环无 WKC/following error。
 7. Home 附近 12 秒 minimum-jerk 小轨迹成功。
 
@@ -393,6 +403,7 @@ source install/local_setup.bash
 | 项目 | 值 |
 |---|---|
 | Drive / Joint | `0 shoulder`, `1 upperarm`, `2 lowerarm`, `3 spur_gear` |
+| 临时三轴开关 | `ignore_spur_gear_in_csp:=true`（Drive 3 不 Homing、保持失能） |
 | Homing method | `[28,28,24,24]` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]` |
