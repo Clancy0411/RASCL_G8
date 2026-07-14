@@ -68,6 +68,26 @@ def generate_launch_description():
         default_value="1323008",
         description="Joint output counts per revolution for the end-effector drive: 4096 * 323 by default.",
     )
+    shoulder_home_offset_arg = DeclareLaunchArgument(
+        "shoulder_home_offset_counts",
+        default_value="0",
+        description="Raw count at the physical URDF zero pose for shoulder_joint.",
+    )
+    upperarm_home_offset_arg = DeclareLaunchArgument(
+        "upperarm_home_offset_counts",
+        default_value="-802816",
+        description="Raw count at the physical URDF zero pose for upperarm_joint.",
+    )
+    lowerarm_home_offset_arg = DeclareLaunchArgument(
+        "lowerarm_home_offset_counts",
+        default_value="-802816",
+        description="Raw count at the physical URDF zero pose for lowerarm_joint.",
+    )
+    spur_gear_home_offset_arg = DeclareLaunchArgument(
+        "spur_gear_home_offset_counts",
+        default_value="0",
+        description="Raw count at the physical URDF zero pose for spur_gear_joint.",
+    )
 
     pkg_share = FindPackageShare("rascl_description")
 
@@ -84,6 +104,10 @@ def generate_launch_description():
             " control_mode:=", LaunchConfiguration("control_mode"),
             " axis_counts_per_revolution:=", LaunchConfiguration("axis_counts_per_revolution"),
             " gripper_counts_per_revolution:=", LaunchConfiguration("gripper_counts_per_revolution"),
+            " shoulder_home_offset_counts:=", LaunchConfiguration("shoulder_home_offset_counts"),
+            " upperarm_home_offset_counts:=", LaunchConfiguration("upperarm_home_offset_counts"),
+            " lowerarm_home_offset_counts:=", LaunchConfiguration("lowerarm_home_offset_counts"),
+            " spur_gear_home_offset_counts:=", LaunchConfiguration("spur_gear_home_offset_counts"),
         ]
     )
     robot_description = {"robot_description": robot_description_content}
@@ -176,6 +200,10 @@ def generate_launch_description():
             enable_dc_sync_arg,
             axis_counts_arg,
             gripper_counts_arg,
+            shoulder_home_offset_arg,
+            upperarm_home_offset_arg,
+            lowerarm_home_offset_arg,
+            spur_gear_home_offset_arg,
             bridge_node,
             robot_state_publisher_node,
             TimerAction(period=2.0, actions=[ros2_control_node]),

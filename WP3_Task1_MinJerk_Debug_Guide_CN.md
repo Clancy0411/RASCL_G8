@@ -298,7 +298,8 @@ bridge PDO 测试会检查：
 3. 不写只读 PDO mapping count；
 4. SM-Sync 周期合法并写入 `0x1C32:02`；
 5. Profile/Homing 保持 SDO-only PRE-OP，不调用 `config_map()`；
-6. 固定周期 PDO loop 可以重复交换目标和状态。
+6. 固定周期 PDO loop 可以重复交换目标和状态；
+7. `home_offset_counts` 能把自动 Home 的 raw `0 counts` 双向映射为正确的 URDF 关节角。
 
 只有测试结果没有 failure 才进入 fake hardware。
 
@@ -479,6 +480,87 @@ homing_zero_speeds   = [200, 200, 200, 200]
 homing_accelerations = [1000, 1000, 1000, 1000]
 motion_timeout_s     = 8.0
 ```
+
+这里有两组名称相近但用途不同的 offset：
+
+- `homing_offsets=[0,0,0,0]` 是写给驱动器 `0x607C` 的参数，继续保持为零，以免改变已经验证的自动 Homing；
+- `home_offset_counts=[0,-802816,-802816,0]` 位于 URDF 的 ros2_control joint 参数中，只负责 raw counts 与 ROS/URDF 角度的换算。
+
+当前前三轴一圈为 `3211264 counts`，所以 90° 为 `802816 counts`。换算公式为：
+
+```text
+q = direction * (raw_counts - home_offset_counts) / counts_per_rad
+```
+
+自动 Home 的开关姿态下四轴 raw counts 应接近零；经过软件标定后，该物理姿态在 URDF 中应表示为：
+
+```text
+[shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
+= [0, +1.570796327, +1.570796327, 0] rad
+```
+
+这是基于两个关节恰好偏转 90°的名义初值。最终精标时，应在 `3588dc98` 已验证的物理 URDF 零姿态读取每轴 `0x6064` raw counts，并用实测值覆盖对应的 `*_home_offset_counts` launch 参数。不要同时修改 `0x607C homing_offsets`，否则会重复补偿。
+
+两个必须区分的 TCP：
+
+```text
+URDF q=[0,0,0] TCP              = [0.29756, -0.00177, 0.043001] m
+自动 Home q=[0,+pi/2,+pi/2] TCP = [0.20756, -0.00177, 0.293001] m
+```
+
+#### 一次性实机精标（建议在正式轨迹测试前完成）
+
+`-802816` 是“恰好 90°”的名义值。若开关安装角度或机械装配存在误差，按下面步骤取得真实 offset：
+
+1. 先按本章 6.1～6.7 完成 `home_all`，期间不要重启驱动器或 Homing bridge；
+2. 在 `Container-T2` 解除四轴使能：
+
+```bash
+ros2 service call /rascl_faulhaber_bridge/disable_all \
+  std_srvs/srv/Trigger "{}"
+```
+
+3. 可靠支撑各连杆，在驱动器已 Disable、机械臂不会因重力坠落的前提下，手动移动到 `3588dc98` 已验证的物理 URDF 零姿态，即 RViz 的 `q=[0,0,0,0]` 外形；
+4. 保持 Homing bridge 运行，在 `Container-T2` 只读查询四轴计数：
+
+```bash
+printf 'GET_ALL\n' | nc 127.0.0.1 15001
+```
+
+响应格式为：
+
+```text
+OK <Drive0 raw> <Drive0 status> <Drive1 raw> <Drive1 status> \
+   <Drive2 raw> <Drive2 status> <Drive3 raw> <Drive3 status>
+```
+
+取四个 `raw` 数值作为最终
+`[shoulder, upperarm, lowerarm, spur_gear] home_offset_counts`。名义上应接近
+`[0,-802816,-802816,0]`；若符号或数量级明显不符，先检查姿态、Drive/Joint
+对应关系和 `direction`，不要直接继续 CSP。
+
+记录完成后必须按 6.8 正常停止 Homing bridge，确认端口 15001 已释放，才能启动 ros2_control。
+
+首次验证可以通过 launch 参数临时覆盖；下面是名义值示例，执行前把四个数字替换为刚才读取的对应 `raw`：
+
+```bash
+ros2 launch rascl_description ros2_control.launch.py \
+  interface:=enx94bdbe9565bc \
+  shoulder_home_offset_counts:=0 \
+  upperarm_home_offset_counts:=-802816 \
+  lowerarm_home_offset_counts:=-802816 \
+  spur_gear_home_offset_counts:=0
+```
+
+确认自动 Home 后 `/joint_states`、RViz 和实机一致，再把实测默认值同步到：
+
+- `src/rascl_description/urdf/rascl.urdf`；
+- `src/rascl_description/launch/ros2_control.launch.py`；
+- `src/rascl_wp3_ss26_group8/launch/wp3_tsk1.launch.py`。
+
+精标只修改这四个 ROS 软件 offset；`homing_offsets=[0,0,0,0]`、Homing
+method、reference input、速度和加速度全部保持不变。若容器没有 `nc`，先安装
+netcat 或使用其他 TCP 客户端向 `127.0.0.1:15001` 发送一行 `GET_ALL`。
 
 对应关系：
 
@@ -687,7 +769,7 @@ rascl_position_controller active
 
 如果任一 controller 为 inactive，不要发送运动目标。
 
-### 7.3 Terminal 2 检查 Homing 后零位
+### 7.3 Terminal 2 检查自动 Home 的已标定姿态
 
 仍在 `Container-T2`：
 
@@ -698,10 +780,10 @@ ros2 topic echo --once /joint_states
 四个关节应接近：
 
 ```text
-[0.0, 0.0, 0.0, 0.0]
+[0.0, +1.5708, +1.5708, 0.0]
 ```
 
-少量编码器/换算误差可以记录，但明显偏离零位时不要继续。
+这表示自动 Home 的物理开关位置在 URDF 模型中是两个关节的 `+90°`，不是把开关姿态错误地当作 URDF `q=0`。同时打开 RViz，确认 `upperarm_joint` 向上、`lowerarm_joint` 向下的实机姿态与 RViz 一致。若任一轴符号相反、明显偏离 90°或超出 limit，不要继续。
 
 ### 7.4 保持 10 秒，不发送目标
 
@@ -747,10 +829,10 @@ ros2 topic hz /joint_states
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.295 \
-  -p target_y:=0.000 \
-  -p target_z:=0.048 \
-  -p duration:=6.0 \
+  -p target_x:=0.2108 \
+  -p target_y:=-0.00177 \
+  -p target_z:=0.2913 \
+  -p duration:=12.0 \
   -p rate_hz:=50.0 \
   -p execute:=false
 ```
@@ -765,10 +847,14 @@ tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 必须确认：
 
 1. `IK result: success=True`；
-2. 目标点与当前零位 TCP 很接近；
-3. CSV 没有 `nan`；
-4. duration 为 6 秒，不是突然运动；
-5. 操作人员确认机械方向和空间安全。
+2. `Current joints` 接近 `[0,+1.5708,+1.5708,0]`；
+3. 目标点与当前自动 Home TCP `[0.20756,-0.00177,0.293001]` 很接近；
+4. IK 结果仍在自动 Home 附近，名义结果约为 `[0,1.5527,1.5550]`，不能突然接近 `[0,0,0]`；
+5. CSV 没有 `nan`；
+6. duration 为 12 秒，不是突然运动；
+7. 操作人员确认两个关节均从 `+90°` 向软件范围内部小幅运动。
+
+旧目标 `[0.295,0,0.048]` 靠近 URDF `q=0`，离自动 Home 姿态很远；不能再把它作为自动 Home 后的首次几毫米实机测试。
 
 ### 8.3 Terminal 2 执行真实轨迹
 
@@ -776,10 +862,10 @@ tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.295 \
-  -p target_y:=0.000 \
-  -p target_z:=0.048 \
-  -p duration:=6.0 \
+  -p target_x:=0.2108 \
+  -p target_y:=-0.00177 \
+  -p target_z:=0.2913 \
+  -p duration:=12.0 \
   -p rate_hz:=50.0 \
   -p execute:=true
 ```
@@ -1073,10 +1159,11 @@ ros2 topic list | grep joint_states
 
 ### 11.12 IK failed
 
-该错误出现在 `Container-T2` 的 `wp3_tsk1`。它不会发布轨迹。保持 `Container-T1` 不动，改用更接近零位 TCP 的目标，再执行 `execute:=false`：
+该错误出现在 `Container-T2` 的 `wp3_tsk1`。它不会发布轨迹。保持 `Container-T1` 不动，先根据当前姿态选择附近目标，再执行 `execute:=false`：
 
 ```text
-零位 TCP ~= [0.29756, -0.00177, 0.043001] m
+fake hardware / URDF q=0 TCP ~= [0.29756, -0.00177, 0.043001] m
+实机自动 Home TCP             ~= [0.20756, -0.00177, 0.293001] m
 ```
 
 不要在 IK 失败后直接改成 `execute:=true`。
@@ -1135,14 +1222,15 @@ docker ps --filter name=ros2-irs-rascl-wp22
 4. fake hardware 的 controller、IK、CSV 和 50 Hz minimum-jerk 正常；
 5. 四个 Drive 分别通过 `home_one`；
 6. `home_all` 按 0 -> 1 -> 2 -> 3 成功；
-7. Homing bridge 完全停止后才能启动 CSP；
-8. 四个 Drive 都进入 mode 8；
-9. CSP 激活时 target=actual，机械臂不跳动；
-10. Position PDO 以 20 ms 周期持续交换，无 WKC/following error；
-11. `/joint_states` 持续更新；
-12. 几毫米、6 秒 minimum-jerk 实机轨迹成功；
-13. 成功后才逐步扩大运动范围；
-14. Task 1 每个 major movement 都使用预计算 minimum-jerk 位置轨迹。
+7. 自动 Home raw 约为零时，ROS joint state 接近 `[0,+pi/2,+pi/2,0]`，实机与 RViz 一致；
+8. Homing bridge 完全停止后才能启动 CSP；
+9. 四个 Drive 都进入 mode 8；
+10. CSP 激活时 target=actual，机械臂不跳动；
+11. Position PDO 以 20 ms 周期持续交换，无 WKC/following error；
+12. `/joint_states` 持续更新；
+13. 自动 Home TCP 附近的几毫米、12 秒 minimum-jerk 实机轨迹成功；
+14. 成功后才逐步扩大运动范围；
+15. Task 1 每个 major movement 都使用预计算 minimum-jerk 位置轨迹。
 
 ---
 
@@ -1159,6 +1247,8 @@ docker ps --filter name=ros2-irs-rascl-wp22
 | Rx/Tx length | 6 bytes each |
 | SM assignment | `0x1C12` / `0x1C13` |
 | SM2 cycle monitor | `0x1C32:02 = 20000000` |
+| ROS `home_offset_counts` | `[0,-802816,-802816,0]`（名义值，最终用实测值） |
+| Auto-home ROS pose | `[0,+pi/2,+pi/2,0]` |
 | TCP | `127.0.0.1:15001` |
 | ROS domain | 88 |
 

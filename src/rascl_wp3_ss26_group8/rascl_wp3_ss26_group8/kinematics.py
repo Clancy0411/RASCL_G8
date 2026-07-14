@@ -27,8 +27,9 @@ ARM_LIMITS = [
 SPUR_GEAR_LIMIT = (-3.1415, 3.1415)
 
 # Nominal position of the TCP in base_link when q=[0,0,0].  This is useful when
-# calibrating the real robot: after placing the physical robot in the URDF zero
-# pose and calling home_all, FK([0,0,0]) should describe the real TCP pose.
+# calibrating the real robot: at the physical URDF zero pose, the hardware
+# count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
+# reference-switch Homing itself finishes at a different, non-zero model pose.
 NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29756, -0.00177, 0.043001)
 
 

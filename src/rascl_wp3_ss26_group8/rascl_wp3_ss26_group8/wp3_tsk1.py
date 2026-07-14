@@ -73,9 +73,9 @@ class WP3Task1SingleTarget(Node):
         self.get_logger().info("Target frame: base_link, unit: meter.")
         self.get_logger().info("TCP definition: spur_gear_joint origin.")
         self.get_logger().info(
-            "Calibration convention: after the validated reference-switch home_all procedure, "
-            "all four joints must read 0 rad at the URDF zero pose. In that pose, the nominal TCP is "
-            f"{NOMINAL_ZERO_TCP_IN_BASE_LINK} m in base_link."
+            "Calibration convention: URDF q=[0,0,0,0] remains the physical model-zero pose "
+            f"with nominal TCP {NOMINAL_ZERO_TCP_IN_BASE_LINK} m. The calibrated automatic-Home "
+            "switch pose is nominally q=[0,+pi/2,+pi/2,0], not four zeros."
         )
 
     def _joint_state_callback(self, msg: JointState) -> None:

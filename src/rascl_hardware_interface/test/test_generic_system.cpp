@@ -8,7 +8,26 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 
+namespace rascl_hardware_interface {
+
+class RASCLHardwareInterfaceTestPeer {
+ public:
+  static int64_t RadiansToCounts(const RASCLHardwareInterface& hardware,
+                                 std::size_t joint_index, double radians) {
+    return hardware.radians_to_counts(joint_index, radians);
+  }
+
+  static double CountsToRadians(const RASCLHardwareInterface& hardware,
+                                std::size_t joint_index, int64_t counts) {
+    return hardware.counts_to_radians(joint_index, counts);
+  }
+};
+
+}  // namespace rascl_hardware_interface
+
 namespace {
+
+constexpr double kHalfPi = 1.57079632679489661923;
 
 hardware_interface::InterfaceInfo MakeInterface(const std::string& name) {
   hardware_interface::InterfaceInfo interface;
@@ -18,7 +37,8 @@ hardware_interface::InterfaceInfo MakeInterface(const std::string& name) {
 
 hardware_interface::ComponentInfo MakeJoint(const std::string& name, int slave_index,
                                             double counts_per_revolution,
-                                            double initial_position) {
+                                            double initial_position,
+                                            int64_t home_offset_counts = 0) {
   hardware_interface::ComponentInfo joint;
   joint.name = name;
   joint.type = "joint";
@@ -30,7 +50,7 @@ hardware_interface::ComponentInfo MakeJoint(const std::string& name, int slave_i
   joint.parameters["slave_index"] = std::to_string(slave_index);
   joint.parameters["counts_per_revolution"] = std::to_string(counts_per_revolution);
   joint.parameters["direction"] = "1.0";
-  joint.parameters["home_offset_counts"] = "0";
+  joint.parameters["home_offset_counts"] = std::to_string(home_offset_counts);
   joint.parameters["min_position"] = "-3.141592653589793";
   joint.parameters["max_position"] = "3.141592653589793";
   joint.parameters["initial_position"] = std::to_string(initial_position);
@@ -99,6 +119,28 @@ TEST(RASCLHardwareInterfaceTest, RejectsJointWithoutVelocityStateInterface) {
 
   rascl_hardware_interface::RASCLHardwareInterface hardware;
   EXPECT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::ERROR);
+}
+
+TEST(RASCLHardwareInterfaceTest, AppliesReferenceSwitchToUrdfZeroOffsets) {
+  auto info = MakeFakeHardwareInfo();
+  info.joints[1].parameters["home_offset_counts"] = "-802816";
+  info.joints[2].parameters["home_offset_counts"] = "-802816";
+
+  rascl_hardware_interface::RASCLHardwareInterface hardware;
+  ASSERT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::SUCCESS);
+
+  using Peer = rascl_hardware_interface::RASCLHardwareInterfaceTestPeer;
+  EXPECT_NEAR(Peer::CountsToRadians(hardware, 0, 0), 0.0, 1e-12);
+  EXPECT_NEAR(Peer::CountsToRadians(hardware, 1, 0), kHalfPi, 1e-12);
+  EXPECT_NEAR(Peer::CountsToRadians(hardware, 2, 0), kHalfPi, 1e-12);
+  EXPECT_NEAR(Peer::CountsToRadians(hardware, 3, 0), 0.0, 1e-12);
+
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 0, 0.0), 0);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, 0.0), -802816);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, 0.0), -802816);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 3, 0.0), 0);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, kHalfPi), 0);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, kHalfPi), 0);
 }
 
 TEST(RASCLHardwareInterfaceTest, RejectsUnsupportedControlMode) {

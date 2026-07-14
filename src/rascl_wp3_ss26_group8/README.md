@@ -23,14 +23,26 @@ Calibration convention for real hardware:
 
 1. Place the real robot in the validated safe starting region for the reference search.
 2. Run the dedicated `homing.launch.py`, validate each axis with `home_one`, then call `home_all`.
-3. After the switches and offsets establish the URDF zero pose, check that all four joints read `0 rad`.
+3. Start ros2_control and check that the calibrated automatic-Home pose reads approximately `[0,+pi/2,+pi/2,0] rad`.
 
-With this convention, `q=[0,0,0,0]` corresponds to the URDF zero pose.  The
-nominal TCP position in that pose is approximately:
+The original `3588dc98` convention is preserved: `q=[0,0,0,0]` still
+corresponds to the physical URDF zero pose, with nominal TCP:
 
 ```text
 base_link TCP = [0.29756, -0.00177, 0.043001] m
 ```
+
+The reference-switch pose is physically different. With nominal
+`home_offset_counts=[0,-802816,-802816,0]`, it is represented as
+`q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
+
+```text
+base_link auto-home TCP = [0.20756, -0.00177, 0.293001] m
+```
+
+The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
+calibration should replace the nominal count offsets with raw `0x6064` counts
+measured in the physical URDF zero pose.
 
 The positive/negative table directions of `base_link` should be checked in RViz
 before using real hardware.
@@ -103,7 +115,8 @@ ros2 launch rascl_wp3_ss26_group8 wp3_tsk1.launch.py \
 For real hardware, first validate in fake hardware. Run reference-switch homing
 with `rascl_description homing.launch.py`, stop that launch, and then start
 `ros2_control.launch.py`, whose default real-hardware mode is CSP with a 20 ms
-Position PDO cycle. Start with conservative Cartesian targets.
+Position PDO cycle. Start with conservative Cartesian targets near the current
+automatic-Home TCP, not near the physically different URDF-zero TCP.
 
 ## CSP/PDO execution path
 

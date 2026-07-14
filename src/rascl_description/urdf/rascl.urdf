@@ -11,6 +11,17 @@
   <xacro:arg name="upperarm_direction" default="1"/>
   <xacro:arg name="lowerarm_direction" default="1"/>
   <xacro:arg name="gripper_direction" default="1"/>
+  <!--
+    Software calibration between the reference-switch position and the URDF
+    joint-zero convention.  The proven automatic homing procedure keeps the
+    drive-level 0x607C offsets at zero.  At its switch pose Drive 1/2 report
+    approximately zero counts while the URDF angles are both +pi/2, hence the
+    nominal -quarter-revolution offsets below.
+  -->
+  <xacro:arg name="shoulder_home_offset_counts" default="0"/>
+  <xacro:arg name="upperarm_home_offset_counts" default="-802816"/>
+  <xacro:arg name="lowerarm_home_offset_counts" default="-802816"/>
+  <xacro:arg name="spur_gear_home_offset_counts" default="0"/>
 
   <link name="world"/>
 
@@ -191,6 +202,7 @@
       <param name="gear_ratio">196.0</param>
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg shoulder_direction)</param>
+      <param name="home_offset_counts">$(arg shoulder_home_offset_counts)</param>
       <param name="min_position">-1.570796327</param>
       <param name="max_position">1.570796327</param>
       <param name="initial_position">0.0</param>
@@ -205,6 +217,7 @@
       <param name="gear_ratio">196.0</param>
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg upperarm_direction)</param>
+      <param name="home_offset_counts">$(arg upperarm_home_offset_counts)</param>
       <param name="min_position">-1.570796327</param>
       <param name="max_position">1.570796327</param>
       <param name="initial_position">0.0</param>
@@ -219,6 +232,7 @@
       <param name="gear_ratio">196.0</param>
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg lowerarm_direction)</param>
+      <param name="home_offset_counts">$(arg lowerarm_home_offset_counts)</param>
       <param name="min_position">-1.570796327</param>
       <param name="max_position">1.570796327</param>
       <param name="initial_position">0.0</param>
@@ -233,6 +247,7 @@
       <param name="gear_ratio">323.0</param>
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg gripper_direction)</param>
+      <param name="home_offset_counts">$(arg spur_gear_home_offset_counts)</param>
       <param name="min_position">-3.1415</param>
       <param name="max_position">3.1415</param>
       <param name="initial_position">0</param>

@@ -13,7 +13,7 @@ The package provides:
 * conversion between motor encoder counts and ROS joint positions in radians,
 * fake-hardware support for software-side testing,
 * a Python TCP bridge for communication with the Faulhaber controllers via EtherCAT,
-* a home service for defining the current robot pose as the software zero position,
+* reference-switch homing plus a separate raw-count-to-URDF calibration,
 * optional automated tests for the hardware interface lifecycle.
 
 ## Main Files and Directories
@@ -156,17 +156,30 @@ ros2 service call /rascl_faulhaber_bridge/home_all \
 After successful homing, the current joint positions should be:
 
 ```text
-[0.0, 0.0, 0.0, 0.0]
+[0.0, +1.5708, +1.5708, 0.0]
 ```
 
-Do not call homing services while the CSP ros2_control stack is active. To move
-back to the established zero position after CSP startup, publish a zero command:
+The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
+validated reference search. The ros2_control parameters
+`home_offset_counts=[0,-802816,-802816,0]` map the switch pose to the URDF
+angles above. The conversion is:
 
-```bash
-ros2 topic pub --once /rascl_position_controller/commands \
-  std_msgs/msg/Float64MultiArray \
-  "{data: [0.0, 0.0, 0.0, 0.0]}"
+```text
+q = direction * (raw_counts - home_offset_counts) / counts_per_rad
 ```
+
+The nominal values assume exactly 90 degrees. For final calibration, record
+each drive's raw `0x6064` value in the physical URDF zero pose and use those
+counts as the corresponding `*_home_offset_counts` launch arguments. Keep the
+Homing bridge running after `home_all`, call its `disable_all` service, support
+the links while moving to the validated physical URDF-zero pose, and send
+`GET_ALL` to `127.0.0.1:15001`. The four returned raw-position fields are the
+calibration values. See the Chinese Debug Guide for the guarded procedure and
+response layout.
+
+Do not call homing services while the CSP ros2_control stack is active. Also do
+not publish `[0,0,0,0]` as the first command after automatic homing: that is the
+old URDF zero pose and requires approximately 90-degree motions of Drive 1/2.
 
 ## Optional Automated Test
 

@@ -42,6 +42,20 @@ The command order used by the position controller is:
 
 All joint positions are represented in radians on the ROS side.
 
+For real hardware, raw reference-switch counts are mapped to the fixed URDF
+joint convention through per-joint `home_offset_counts`. The nominal defaults
+are:
+
+```text
+[shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
+= [0, -802816, -802816, 0] counts
+```
+
+Therefore raw zero after automatic Homing is represented as
+`[0,+pi/2,+pi/2,0] rad`. These parameters do not change URDF joint origins, the
+IK geometry, or fake hardware's initial `q=[0,0,0,0]` pose. Override the four
+`*_home_offset_counts` launch arguments with measured calibration values.
+
 ### `config/controllers.yaml`
 
 Defines the controllers used by the system:

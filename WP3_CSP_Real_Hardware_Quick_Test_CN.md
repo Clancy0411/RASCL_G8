@@ -166,7 +166,7 @@ joint_state_broadcaster active
 rascl_position_controller active
 ```
 
-四轴位置应接近 `0 rad`。保持 10 秒，不发送运动目标；机械臂不应跳动，Terminal 1 不应出现 PDO/WKC/following error。
+四轴位置应接近 `[0,+1.5708,+1.5708,0] rad`。这是自动 Home 的开关姿态；URDF `q=0` 和原 TCP `[0.29756,-0.00177,0.043001]` 没有改变。确认实机与 RViz 一致后，保持 10 秒，不发送运动目标；机械臂不应跳动，Terminal 1 不应出现 PDO/WKC/following error。
 
 ---
 
@@ -176,10 +176,10 @@ rascl_position_controller active
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.295 \
-  -p target_y:=0.000 \
-  -p target_z:=0.048 \
-  -p duration:=6.0 \
+  -p target_x:=0.2108 \
+  -p target_y:=-0.00177 \
+  -p target_z:=0.2913 \
+  -p duration:=12.0 \
   -p rate_hz:=50.0 \
   -p execute:=false
 ```
@@ -197,7 +197,7 @@ head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 ```
 
-确认没有 `nan`，目标方向和空间安全后再执行下一步。
+确认 `Current joints` 接近 `[0,+1.5708,+1.5708,0]`，IK 结果仍在该姿态附近、CSV 没有 `nan`，目标方向和空间安全后再执行下一步。旧目标 `[0.295,0,0.048]` 靠近 URDF `q=0`，不能作为自动 Home 后的首次小运动。
 
 ---
 
@@ -207,10 +207,10 @@ tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.295 \
-  -p target_y:=0.000 \
-  -p target_z:=0.048 \
-  -p duration:=6.0 \
+  -p target_x:=0.2108 \
+  -p target_y:=-0.00177 \
+  -p target_z:=0.2913 \
+  -p duration:=12.0 \
   -p rate_hz:=50.0 \
   -p execute:=true
 ```

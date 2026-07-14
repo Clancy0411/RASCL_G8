@@ -22,6 +22,10 @@ def generate_launch_description():
     interface = LaunchConfiguration("interface")
     control_mode = LaunchConfiguration("control_mode")
     controller_config = LaunchConfiguration("controller_config")
+    shoulder_home_offset_counts = LaunchConfiguration("shoulder_home_offset_counts")
+    upperarm_home_offset_counts = LaunchConfiguration("upperarm_home_offset_counts")
+    lowerarm_home_offset_counts = LaunchConfiguration("lowerarm_home_offset_counts")
+    spur_gear_home_offset_counts = LaunchConfiguration("spur_gear_home_offset_counts")
 
     target_x = LaunchConfiguration("target_x")
     target_y = LaunchConfiguration("target_y")
@@ -47,6 +51,10 @@ def generate_launch_description():
             "interface": interface,
             "control_mode": control_mode,
             "controller_config": controller_config,
+            "shoulder_home_offset_counts": shoulder_home_offset_counts,
+            "upperarm_home_offset_counts": upperarm_home_offset_counts,
+            "lowerarm_home_offset_counts": lowerarm_home_offset_counts,
+            "spur_gear_home_offset_counts": spur_gear_home_offset_counts,
         }.items(),
     )
 
@@ -100,6 +108,10 @@ def generate_launch_description():
             default_value="controllers_csp.yaml",
             description="Controller YAML passed to rascl_description. Use controllers_csp.yaml for CSP tests.",
         ),
+        DeclareLaunchArgument("shoulder_home_offset_counts", default_value="0"),
+        DeclareLaunchArgument("upperarm_home_offset_counts", default_value="-802816"),
+        DeclareLaunchArgument("lowerarm_home_offset_counts", default_value="-802816"),
+        DeclareLaunchArgument("spur_gear_home_offset_counts", default_value="0"),
         DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),
         DeclareLaunchArgument("target_y", default_value="0.00", description="TCP target y in base_link [m]."),
         DeclareLaunchArgument("target_z", default_value="0.08", description="TCP target z in base_link [m]."),

@@ -98,6 +98,8 @@ class RASCLHardwareInterface : public hardware_interface::SystemInterface {
                                         const rclcpp::Duration& period) override;
 
  private:
+  friend class RASCLHardwareInterfaceTestPeer;
+
   /** @brief Establish the TCP connection to the local pysoem bridge. */
   bool connect_to_bridge();
 
