@@ -42,7 +42,7 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
 详细检查点：
 
 1. **T1 组 4：启动唯一 EtherCAT/Homing bridge。**
-   - 使用网卡 `enx3c18a026488a`。
+   - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
    - Drive 3 被忽略并保持 Disable Voltage。
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
@@ -292,12 +292,12 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
 
 ## 4. 实机准备
 
-Ubuntu 主机启用 EtherCAT 网卡：
+Ubuntu **主机**启用 EtherCAT 网卡（不要在 Docker 容器内执行 `ip`）：
 
 ```bash
-ip link show enx3c18a026488a
-sudo ip link set enx3c18a026488a up
-ip link show enx3c18a026488a
+ip link show enx3c18a0256deb
+sudo ip link set enx3c18a0256deb up
+ip link show enx3c18a0256deb
 ```
 
 `T3` 清理 ROS graph：
@@ -317,7 +317,7 @@ ros2 daemon start
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:=enx3c18a026488a \
+  interface:=enx3c18a0256deb \
   ignore_spur_gear_in_csp:=true
 ```
 
@@ -406,7 +406,7 @@ Homing 起始区域，再从第 5 节执行。第 7 节用 D0–D2 实测值替�
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:=enx3c18a026488a \
+  interface:=enx3c18a0256deb \
   use_fake_hardware:=false \
   start_bridge:=false \
   shoulder_home_offset_counts:=0 \

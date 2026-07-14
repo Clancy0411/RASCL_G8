@@ -6,7 +6,9 @@
 set -Eeuo pipefail
 
 WORKSPACE="${RASCL_WS:-/root/ws}"
-INTERFACE="${RASCL_INTERFACE:-enx3c18a026488a}"
+# EtherCAT NIC on the current workstation.  Override only when deliberately
+# using another workstation: RASCL_INTERFACE=<nic> bash ./rascl_debug.sh.
+INTERFACE="${RASCL_INTERFACE:-enx3c18a0256deb}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-88}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
