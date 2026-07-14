@@ -75,7 +75,40 @@ source /opt/ros/jazzy/setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
+后续优先使用仓库根目录的菜单脚本：
+
+```bash
+cd /root/ws
+bash ./rascl_debug.sh
+```
+
+直接输入组号即可，也可以跳过菜单，例如 `bash ./rascl_debug.sh 4`。脚本不会自动
+控制其他终端；应在 T1、T2、T3 各运行一次。短任务结束后会返回本终端菜单；
+持续任务会占用当前终端，按 `Ctrl-C` 才会停止。
+
+| 组 | 终端 | 内容 |
+|---|---|---|
+| 1 | T1 | 编译并运行功能测试 |
+| 2 / 3 | T1 / T2 | 启动并检查 fake hardware |
+| 4 | T1 | 启动唯一 Homing bridge，保持运行 |
+| 5 | T2 | 首次逐轴 Homing Drive 0–2 |
+| 6 | T2 | 已验证后一次执行 `home_all` |
+| 7 | T2 | 复用 bridge 启动 CSP，保持运行 |
+| 8 / 9 / 10 | T3 | 保持检查 / 只规划 / 确认后执行 |
+| 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
+
+实机终端协作方式：
+
+1. T1 输入 `4`，保持 Homing bridge 前台运行，不再操作 T1。
+2. T2 输入 `6`；完成且显示 `CSP handoff armed` 后，菜单会回来，再输入 `7`。
+3. T2 的 CSP launch 保持前台运行；T3 依次输入 `8`、`9`、`10`。
+4. T1/T2 分别保留 bridge 和 ros2_control 日志；脚本不会跨终端发送命令。
+
+下面保留展开后的原始命令用于排错。
+
 ## 2. 编译与软件测试
+
+脚本：`T1` 选择组 `1`。
 
 在 `T1` 确认没有旧进程：
 
@@ -127,6 +160,8 @@ ls -l install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulha
 
 ## 3. Fake hardware
 
+脚本：`T1` 选择组 `2`，`T2` 选择组 `3`。
+
 `T1`：
 
 ```bash
@@ -159,9 +194,9 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
 Ubuntu 主机启用 EtherCAT 网卡：
 
 ```bash
-ip link show enx94bdbe9565bc
-sudo ip link set enx94bdbe9565bc up
-ip link show enx94bdbe9565bc
+ip link show enx3c18a026488a
+sudo ip link set enx3c18a026488a up
+ip link show enx3c18a026488a
 ```
 
 `T3` 清理 ROS graph：
@@ -175,11 +210,13 @@ ros2 daemon start
 
 ## 5. Homing（T1 全程不得停止）
 
+脚本：`T1` 选择组 `4`；首次逐轴验证时 `T2` 选组 `5`，已验证后选组 `6`。
+
 `T1` 启动唯一 bridge：
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:=enx94bdbe9565bc \
+  interface:=enx3c18a026488a \
   ignore_spur_gear_in_csp:=true
 ```
 
@@ -261,12 +298,14 @@ Homing 起始区域，再从第 5 节执行。第 7 节用 D0–D2 实测值替�
 
 ## 7. 同一 EtherCAT 会话切换 CSP
 
+脚本：保持 `T1` 的组 `4` 运行，在 `T2` 选择组 `7`。
+
 保持 `T1` 的 Homing bridge 原样运行。在 `T2` 启动 ros2_control，明确禁止
 创建第二个 bridge：
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
-  interface:=enx94bdbe9565bc \
+  interface:=enx3c18a026488a \
   use_fake_hardware:=false \
   start_bridge:=false \
   shoulder_home_offset_counts:=0 \
@@ -295,6 +334,8 @@ error 或 SAFE-OP + Error，禁止重试运动；按第 10 节处理。
 
 ## 8. CSP 保持检查
 
+脚本：`T3` 选择组 `8`。
+
 `T3`：
 
 ```bash
@@ -316,6 +357,8 @@ Drive 3 的状态值此时未标定，不作为验收依据；它必须不动作
 following error。结束 `topic hz` 时只在 `T3` 按 `Ctrl-C`。
 
 ## 9. 小幅 minimum-jerk 轨迹
+
+脚本：`T3` 先选择组 `9`；检查结果后再选择组 `10` 并输入 `MOVE` 确认。
 
 `T3` 先只规划：
 
@@ -355,6 +398,9 @@ ss -ltnp | grep 15001
 ```
 
 应无输出。
+
+也可用脚本组 `11` 检查残留进程。需要提交完整日志时选择组 `12`，脚本会在
+`/root/ws` 生成 `ros_logs_时间.tar.gz`，可直接从共享目录拖出。
 
 ### 关键错误
 
