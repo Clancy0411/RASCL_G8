@@ -1,11 +1,106 @@
 # WP3 Task 1：Homing + CSP/PDO 调试指南
 
-本指南对应当前代码。实机顺序固定为：
+## 实机最短流程（每次完整重启从这里开始）
+
+这条流程只包含启动实机、Homing、进入 CSP 和发送 TCP 坐标所必需的步骤。
+代码、Docker 镜像和 `install/` 没有变化时，不要在流程中插入编译、测试或 fake
+hardware。只有修改代码、重新拉取仓库，或组 `4` 明确提示缺包时，才在所有实机
+进程关闭后单独执行一次组 `1`。
+
+### A. 打开三个窗口
+
+在三个 Ubuntu Terminal 中分别执行：
+
+```bash
+cd ~/RASCL_G8
+bash ./rosws.sh
+```
+
+看到 `rascl-container:~/ws$` 后，三个容器终端分别命名为 T1、T2、T3，并各执行：
+
+```bash
+cd /root/ws
+bash ./rascl_debug.sh
+```
+
+脚本不会跨终端操作。组 `4` 和组 `7` 是前台持续进程，必须分别占住 T1、T2。
+
+### B. 一步到位启动实机
+
+严格按以下窗口和组号执行：
 
 ```text
-编译/测试 -> Fake hardware -> SDO Homing -> 同一 EtherCAT 会话切换 CSP
--> 保持测试 -> 小幅 minimum-jerk 轨迹 -> 支撑后停机
+T1：4
+    ↓ bridge 保持运行，不能 Ctrl-C
+T2：6 → HOME
+    ↓ 必须显示 success=True 和 CSP handoff armed
+T2：7
+    ↓ ros2_control 保持运行，不能 Ctrl-C
+T3：8 → 13 → 14 → 9 → 10 → MOVE
 ```
+
+详细检查点：
+
+1. **T1 组 4：启动唯一 EtherCAT/Homing bridge。**
+   - 使用网卡 `enx3c18a026488a`。
+   - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
+   - Drive 3 被忽略并保持 Disable Voltage。
+   - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
+   - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
+2. **T2 组 6：执行 `home_all`。**
+   - 脚本先读取数字输入；确认机械支撑、急停和活动空间后输入 `HOME`。
+   - 只运动 Drive 0–2，Drive 3 不动作。
+   - 必须返回 `success=True` 和 `Homing completed for required drives; CSP handoff armed`。
+   - 未看到这两项时禁止进入组 7。
+3. **仍在 T2 选择组 7：启动 CSP ros2_control。**
+   - 组 7 必须复用仍在 T1 运行的 bridge，不能另开 bridge。
+   - T1 必须出现 `Master reached OP state` 和 Homing-to-CSP handoff 成功信息。
+   - T2 必须出现 `Activated real RASCL hardware in csp mode`；组 7 随后持续占住 T2。
+4. **T3 组 8：检查 controller 和 joint state。**
+   - `joint_state_broadcaster` 与 `rascl_position_controller` 必须都是 `active`。
+   - `/joint_states` 必须连续输出，前三轴应接近 `[0,+1.5708,+1.5708]`。
+   - 任一项不满足，禁止执行组 9/10。
+5. **T3 组 13：查看当前模型 TCP。**
+   - 读取 TF `base_link -> spur_gear`；名义 Home 应接近
+     `[0.20756,-0.00177,0.293001] m`。
+6. **T3 组 14：输入下一目标。**
+   - 依次输入 TCP 的 `x/y/z`（米）和运动时间（秒）。
+   - 只设置目标，不会运动。
+7. **T3 组 9：只规划。**
+   - 必须 IK success、命令正常结束，且脚本确认 CSV 不含 `nan/inf`。
+   - 组 9 成功后，同一 T3 菜单中的组 10 才会解锁。
+8. **T3 组 10：执行。**
+   - 脚本再次确认两个 controller 为 `active` 且 `/joint_states` 可用。
+   - 核对目标后输入 `MOVE`，机械臂才会运动。
+   - 运动结束后脚本再次检查 controller 和 `/joint_states`；失败时必须完整重启。
+   - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
+
+### C. CSP 正常时反复发送新坐标
+
+T1 的组 `4` 和 T2 的组 `7` 保持原样运行。只在 T3 重复：
+
+```text
+14 → 9 → 10 → MOVE
+```
+
+IK/规划失败但 T1/T2 没有 PDO、WKC、following error，且两个 controller 仍为
+`active` 时，不需要重启 CSP；换一个安全目标，重新执行 `14 → 9`。禁止对规划失败
+的目标执行组 `10`。
+
+### D. CSP 或 controller 失败后的完整重启
+
+出现 PDO/WKC/following error、SAFE-OP、controller inactive、组 `7` 退出或 T1/T2
+报错时，旧 EtherCAT 会话不得直接重试：
+
+1. 停止发送目标，立即支撑机械臂；必要时急停。
+2. 若 T2 仍在运行，在 T2 按 `Ctrl-C`，等待 ros2_control 完全退出。
+3. 在 T1 按 `Ctrl-C`，关闭旧 bridge。
+4. T3 可选择组 `12` 打包日志。
+5. T1、T2 重新运行 `bash ./rascl_debug.sh`。
+6. 从 `T1:4 → T2:6→7 → T3:8→13→14→9→10` 完整重来。
+
+禁止在旧 T1 bridge 上再次选择组 `7`；延迟 PDO mapping、Homing 完成状态和 PDO
+错误都属于该 EtherCAT 会话，必须重新启动 bridge 并重新 Homing。
 
 ## 0. 安全与窗口
 
@@ -94,21 +189,21 @@ bash ./rascl_debug.sh
 | 5 | T2 | 首次逐轴 Homing Drive 0–2 |
 | 6 | T2 | 已验证后一次执行 `home_all` |
 | 7 | T2 | 复用 bridge 启动 CSP，保持运行 |
-| 8 / 9 / 10 | T3 | 保持检查 / 只规划 / 确认后执行 |
+| 8 | T3 | Controller 与 joint state 保持检查 |
+| 9 / 10 | T3 | 只规划 / 检查后执行 |
 | 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
+| 13 | T3 | CSP 启动后查看实时模型 TCP |
+| 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
 
-实机终端协作方式：
-
-1. T1 输入 `4`，保持 Homing bridge 前台运行，不再操作 T1。
-2. T2 输入 `6`；完成且显示 `CSP handoff armed` 后，菜单会回来，再输入 `7`。
-3. T2 的 CSP launch 保持前台运行；T3 依次输入 `8`、`9`、`10`。
-4. T1/T2 分别保留 bridge 和 ros2_control 日志；脚本不会跨终端发送命令。
-
-下面保留展开后的原始命令用于排错。
+日常实机顺序以本指南最前面的
+`T1:4 → T2:6→7 → T3:8→13→14→9→10` 为准。下面保留原始命令用于排错。
 
 ## 2. 编译与软件测试
 
 脚本：`T1` 选择组 `1`。
+
+组 `1` 还会确认 ROS 能找到 `rascl_wp3_ss26_group8` 和执行入口 `wp3_tsk1`；
+未完成该组时，后面的组 `3/9/10` 不能运行。
 
 在 `T1` 确认没有旧进程：
 
@@ -336,6 +431,15 @@ error 或 SAFE-OP + Error，禁止重试运动；按第 10 节处理。
 
 脚本：`T3` 选择组 `8`。
 
+Homing 后选择组 `13` 可直接查看实时模型 TCP。脚本读取 TF
+`base_link -> spur_gear`；其中 `Translation` 的 `x/y/z` 单位为米。名义 Home 值为：
+
+```text
+[0.20756, -0.00177, 0.293001] m
+```
+
+该值由实时 joint state 和 URDF 正运动学计算，不是对实体夹爪位置的外部测量。
+
 `T3`：
 
 ```bash
@@ -358,7 +462,8 @@ following error。结束 `topic hz` 时只在 `T3` 按 `Ctrl-C`。
 
 ## 9. 小幅 minimum-jerk 轨迹
 
-脚本：`T3` 先选择组 `9`；检查结果后再选择组 `10` 并输入 `MOVE` 确认。
+脚本：`T3` 先选择组 `14` 设置目标，再选择组 `9`；检查结果后选择组 `10`
+并输入 `MOVE`。每个新目标都必须重新执行 `14 → 9 → 10`。
 
 `T3` 先只规划：
 

@@ -8,6 +8,11 @@ set -Eeuo pipefail
 WORKSPACE="${RASCL_WS:-/root/ws}"
 INTERFACE="${RASCL_INTERFACE:-enx3c18a026488a}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-88}"
+TARGET_X="${RASCL_TARGET_X:-0.2108}"
+TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
+TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
+TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
+PLANNED_TARGET=""
 
 die() {
   echo "ERROR: $*" >&2
@@ -40,6 +45,48 @@ confirm_exact() {
   [[ "$answer" == "$expected" ]] || die "Cancelled"
 }
 
+require_wp3_package() {
+  if ! ros2 pkg prefix rascl_wp3_ss26_group8 >/dev/null 2>&1; then
+    die "找不到 ROS 包 rascl_wp3_ss26_group8；请停止实机流程，先在 T1 成功执行组 1"
+  fi
+  if ! ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk1'; then
+    die "包已找到，但未安装 wp3_tsk1 可执行入口；请重新执行组 1 并检查编译输出"
+  fi
+}
+
+require_real_packages() {
+  local package
+  for package in rascl_description rascl_hardware_interface rascl_wp3_ss26_group8 tf2_ros; do
+    ros2 pkg prefix "$package" >/dev/null 2>&1 ||
+      die "找不到 ROS 包 $package；请在没有实机进程时先成功执行组 1"
+  done
+  require_wp3_package
+  command -v timeout >/dev/null 2>&1 || die "容器缺少 timeout 命令，无法执行受限时检查"
+}
+
+require_active_controllers() {
+  local controllers
+  controllers="$(ros2 control list_controllers)"
+  printf '%s\n' "$controllers"
+  grep -Eq '^[[:space:]]*joint_state_broadcaster[[:space:]].*[[:space:]]active([[:space:]]|$)' \
+    <<<"$controllers" ||
+    die "joint_state_broadcaster 不是 active，禁止继续"
+  grep -Eq '^[[:space:]]*rascl_position_controller[[:space:]].*[[:space:]]active([[:space:]]|$)' \
+    <<<"$controllers" ||
+    die "rascl_position_controller 不是 active，禁止继续"
+}
+
+is_number() {
+  [[ "$1" =~ ^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]
+}
+
+is_positive_number() {
+  [[ "$1" =~ ^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || return 1
+  local digits="${1#+}"
+  digits="${digits//./}"
+  [[ "$digits" =~ [1-9] ]]
+}
+
 group_build_test() {
   load_ros allow_unbuilt
   echo "[1/2] Building workspace..."
@@ -48,6 +95,8 @@ group_build_test() {
   # shellcheck disable=SC1091
   source install/local_setup.bash
   set -u
+  ros2 pkg prefix rascl_wp3_ss26_group8 >/dev/null
+  ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk1'
   echo "[2/2] Running functional hardware-interface tests..."
   ctest --test-dir build/rascl_hardware_interface \
     -R '^(test_generic_system|test_faulhaber_bridge)$' \
@@ -62,6 +111,7 @@ group_fake_launch() {
 
 group_fake_check() {
   load_ros
+  require_wp3_package
   ros2 control list_controllers
   ros2 topic echo --once /joint_states
   ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
@@ -76,6 +126,7 @@ group_fake_check() {
 
 group_homing_bridge() {
   load_ros
+  require_real_packages
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 3 已忽略，并保持 Disable Voltage。"
   ros2 launch rascl_description homing.launch.py \
@@ -129,7 +180,7 @@ group_csp_launch() {
 
 group_csp_check() {
   load_ros
-  ros2 control list_controllers
+  require_active_controllers
   ros2 control list_hardware_interfaces
   timeout 10s ros2 topic echo --once /joint_states
   echo "测量 /joint_states 频率 10 秒……"
@@ -138,20 +189,51 @@ group_csp_check() {
 
 group_real_plan() {
   load_ros
-  ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-    -p target_x:=0.2108 -p target_y:=-0.00177 -p target_z:=0.2913 \
-    -p duration:=12.0 -p rate_hz:=50.0 -p execute:=false
+  require_wp3_package
+  PLANNED_TARGET=""
+  rm -f /tmp/rascl_wp3_tsk1_last_trajectory.csv
+  if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
+    -p target_x:="$TARGET_X" -p target_y:="$TARGET_Y" -p target_z:="$TARGET_Z" \
+    -p duration:="$TRAJECTORY_DURATION" -p rate_hz:=50.0 -p execute:=false; then
+    echo "规划命令失败；未解锁组 10。CSP/controller 正常时可重新选择组 14、9。" >&2
+    return 0
+  fi
+  if [[ ! -s /tmp/rascl_wp3_tsk1_last_trajectory.csv ]]; then
+    echo "规划未生成轨迹 CSV；未解锁组 10。" >&2
+    return 0
+  fi
+  if grep -Eiq '(^|,)(nan|[-+]?inf)(,|$)' /tmp/rascl_wp3_tsk1_last_trajectory.csv; then
+    echo "轨迹 CSV 包含 nan/inf；未解锁组 10。" >&2
+    return 0
+  fi
   head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
   tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
+  PLANNED_TARGET="$TARGET_X,$TARGET_Y,$TARGET_Z,$TRAJECTORY_DURATION"
+  echo "规划已通过；当前目标可由组 10 执行：[$TARGET_X, $TARGET_Y, $TARGET_Z] m"
 }
 
 group_real_execute() {
   load_ros
+  require_wp3_package
+  local current_target="$TARGET_X,$TARGET_Y,$TARGET_Z,$TRAJECTORY_DURATION"
+  [[ -n "$PLANNED_TARGET" && "$PLANNED_TARGET" == "$current_target" ]] ||
+    die "当前目标尚未在本 T3 菜单中通过组 9 规划；禁止执行"
+  require_active_controllers
+  timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
+    die "3 秒内没有 /joint_states，禁止执行"
   echo "该命令会运动实机；Drive 3 继续保持失能。"
-  confirm_exact MOVE "确认 IK、支撑、空间和急停；输入 MOVE 执行："
-  ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-    -p target_x:=0.2108 -p target_y:=-0.00177 -p target_z:=0.2913 \
-    -p duration:=12.0 -p rate_hz:=50.0 -p execute:=true
+  confirm_exact MOVE "确认目标 [$TARGET_X, $TARGET_Y, $TARGET_Z] m、支撑、空间和急停；输入 MOVE 执行："
+  if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
+    -p target_x:="$TARGET_X" -p target_y:="$TARGET_Y" -p target_z:="$TARGET_Z" \
+    -p duration:="$TRAJECTORY_DURATION" -p rate_hz:=50.0 -p execute:=true; then
+    PLANNED_TARGET=""
+    die "运动节点失败；停止发送目标并按指南执行完整 EtherCAT 会话重启"
+  fi
+  PLANNED_TARGET=""
+  require_active_controllers
+  timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
+    die "运动后 /joint_states 丢失；按指南执行完整 EtherCAT 会话重启"
+  echo "运动命令结束；下一个目标必须重新执行组 14、9、10。"
 }
 
 group_process_check() {
@@ -171,6 +253,36 @@ group_pack_logs() {
   echo "可直接从共享工作区拖出该 tar.gz 文件，无需手动复制日志文本。"
 }
 
+group_tcp_pose() {
+  load_ros
+  echo "当前模型 TCP：base_link -> spur_gear（读取实时 /joint_states）"
+  echo "Translation 的 x/y/z 单位为米；以下显示约 3 秒。"
+  timeout 3s ros2 run tf2_ros tf2_echo base_link spur_gear || [[ "$?" -eq 124 ]]
+}
+
+group_set_target() {
+  local x y z duration
+  read -r -p "目标 x [m]（当前 $TARGET_X）：" x
+  read -r -p "目标 y [m]（当前 $TARGET_Y）：" y
+  read -r -p "目标 z [m]（当前 $TARGET_Z）：" z
+  read -r -p "运动时间 [s]（当前 $TRAJECTORY_DURATION）：" duration
+  x="${x:-$TARGET_X}"
+  y="${y:-$TARGET_Y}"
+  z="${z:-$TARGET_Z}"
+  duration="${duration:-$TRAJECTORY_DURATION}"
+  is_number "$x" || die "x 不是合法数字：$x"
+  is_number "$y" || die "y 不是合法数字：$y"
+  is_number "$z" || die "z 不是合法数字：$z"
+  is_positive_number "$duration" || die "运动时间必须是大于 0 的普通十进制数字"
+  TARGET_X="$x"
+  TARGET_Y="$y"
+  TARGET_Z="$z"
+  TRAJECTORY_DURATION="$duration"
+  PLANNED_TARGET=""
+  echo "目标已设置为 [$TARGET_X, $TARGET_Y, $TARGET_Z] m，时间 $TRAJECTORY_DURATION s。"
+  echo "下一步必须执行组 9，只规划成功后才能执行组 10。"
+}
+
 print_menu() {
   printf '%s\n' \
     "" \
@@ -178,6 +290,7 @@ print_menu() {
     "工作区   : $WORKSPACE" \
     "网卡     : $INTERFACE" \
     "ROS 域   : $ROS_DOMAIN_ID" \
+    "目标 TCP : [$TARGET_X, $TARGET_Y, $TARGET_Z] m / $TRAJECTORY_DURATION s" \
     "" \
     "  1  编译 + 功能测试                                  [T1]" \
     "  2  启动 fake ros2_control（前台持续运行）            [T1]" \
@@ -191,10 +304,12 @@ print_menu() {
     " 10  执行实机 minimum-jerk 轨迹                        [T3，会运动]" \
     " 11  检查残留进程和 TCP 端口                           [T3]" \
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
+    " 13  查看当前模型 TCP 坐标                              [T3]" \
+    " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "实机推荐顺序：T1=4，T2=6，保持 T1，再 T2=7，最后 T3=8,9,10。"
+    "实机推荐顺序：T1=4；T2=6→7；T3=8→13→14→9→10。"
 }
 
 run_group() {
@@ -211,6 +326,8 @@ run_group() {
     10) group_real_execute ;;
     11) group_process_check ;;
     12) group_pack_logs ;;
+    13) group_tcp_pose ;;
+    14) group_set_target ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac
@@ -224,6 +341,6 @@ else
     read -r -p "请输入组号: " selection
     selection="${selection//$'\r'/}"
     run_group "$selection"
-    echo "命令组 $selection 已完成。"
+    echo "命令组 $selection 已返回菜单；是否成功以上方输出为准。"
   done
 fi
