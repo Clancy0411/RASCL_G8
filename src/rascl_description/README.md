@@ -78,12 +78,17 @@ ros2 launch rascl_description ros2_control.launch.py use_fake_hardware:=true
 For the real robot:
 
 ```bash
+# Keep homing.launch.py running after a successful home_all.
 ros2 launch rascl_description ros2_control.launch.py \
   interface:=robot_interface \
-  use_fake_hardware:=false
+  use_fake_hardware:=false \
+  start_bridge:=false
 ```
 
 If the EtherCAT network interface is not named `robot_interface`, replace it with the actual interface name.
+`start_bridge:=false` reuses the Homing bridge and avoids a drive-disable gap.
+This is the safe default. Use `start_bridge:=true` only for an explicit
+standalone non-Homing diagnostic when no other EtherCAT master is running.
 
 ### `launch/display.launch.py`
 
@@ -110,12 +115,14 @@ Start fake hardware:
 ros2 launch rascl_description ros2_control.launch.py use_fake_hardware:=true
 ```
 
-Start real hardware:
+After `homing.launch.py` reports a successful `home_all`, keep it running and
+start real hardware in another terminal:
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
   interface:=robot_interface \
-  use_fake_hardware:=false
+  use_fake_hardware:=false \
+  start_bridge:=false
 ```
 
 Open RViz in another terminal inside the same container:
@@ -137,13 +144,17 @@ Commands are sent to:
 /rascl_position_controller/commands
 ```
 
-Example:
+After automatic Home, first read `/joint_states`. A nominal hold-position
+example is:
 
 ```bash
 ros2 topic pub --once /rascl_position_controller/commands \
   std_msgs/msg/Float64MultiArray \
-  "{data: [0.0, 0.0, 0.0, 0.0]}"
+  "{data: [0.0, 1.5708, 1.5708, 0.0]}"
 ```
+
+Do not send `[0,0,0,0]` as the first real-hardware command; it requests the
+physically different URDF-zero pose.
 
 The values correspond to:
 

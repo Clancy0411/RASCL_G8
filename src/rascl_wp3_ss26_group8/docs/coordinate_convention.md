@@ -37,3 +37,7 @@ guarded `GET_ALL` measurement procedure is documented in
 `WP3_Task1_MinJerk_Debug_Guide_CN.md`.
 Changing a homing method, reference input, direction, or either offset layer can
 invalidate the relationship between Cartesian targets and the real robot.
+
+The Homing bridge must remain running for the CSP transition. ros2_control is
+started with `start_bridge:=false`, so it reuses the same EtherCAT master and
+initializes CSP targets from the measured Home positions.

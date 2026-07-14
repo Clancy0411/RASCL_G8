@@ -125,18 +125,27 @@ Homing must run without an active CSP/PDO loop. Start the dedicated bridge:
 ros2 launch rascl_description homing.launch.py interface:=robot_interface
 ```
 
-Validate each drive with `home_one`, then call `home_all`. Stop the homing launch
-before starting ros2_control.
+Validate each drive with `home_one`, then call `home_all`. Keep the Homing launch
+running until the complete CSP session has ended. For a gravity-loaded arm,
+stopping it between Homing and CSP removes drive voltage.
 
 ## Running with Real Hardware (CSP/PDO)
 
-Real hardware mode requires the correct EtherCAT network interface:
+After `home_all`, keep that bridge running and start ros2_control without a
+second bridge:
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
   interface:=robot_interface \
-  use_fake_hardware:=false
+  use_fake_hardware:=false \
+  start_bridge:=false
 ```
+
+The existing bridge defers PDO mapping until this activation, initializes every
+CSP target from `0x6064`, and requests OP using only Enable Operation. CSP is
+rejected if `home_all` did not finish or any drive stopped being Operation
+Enabled. Support the arm before stopping ros2_control because shutdown disables
+the drives.
 
 The defaults select `control_mode:=csp`, `controllers_csp.yaml`, a 20 ms PDO
 cycle, and SM-Sync. Profile Position remains available only as a regression

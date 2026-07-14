@@ -1,8 +1,8 @@
 """Start the RASCL ros2_control stack and the EtherCAT bridge."""
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
-from launch.conditions import UnlessCondition
+from launch.actions import DeclareLaunchArgument, GroupAction, TimerAction
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -67,6 +67,11 @@ def generate_launch_description():
         "gripper_counts_per_revolution",
         default_value="1323008",
         description="Joint output counts per revolution for the end-effector drive: 4096 * 323 by default.",
+    )
+    start_bridge_arg = DeclareLaunchArgument(
+        "start_bridge",
+        default_value="false",
+        description="Reuse homing.launch.py by default; true starts a standalone bridge.",
     )
     shoulder_home_offset_arg = DeclareLaunchArgument(
         "shoulder_home_offset_counts",
@@ -204,7 +209,11 @@ def generate_launch_description():
             upperarm_home_offset_arg,
             lowerarm_home_offset_arg,
             spur_gear_home_offset_arg,
-            bridge_node,
+            start_bridge_arg,
+            GroupAction(
+                condition=IfCondition(LaunchConfiguration("start_bridge")),
+                actions=[bridge_node],
+            ),
             robot_state_publisher_node,
             TimerAction(period=2.0, actions=[ros2_control_node]),
             TimerAction(period=4.0, actions=[joint_state_broadcaster_spawner]),

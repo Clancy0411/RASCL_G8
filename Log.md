@@ -3,6 +3,8 @@
 已实装 ROS 硬件层名义 `home_offset_counts=[0,-802816,-802816,0]`。自动 Home 的 raw 开关位置保持约 `[0,0,0,0] counts`，但 ROS/URDF 应显示约 `[0,+pi/2,+pi/2,0] rad`。原 `3588dc98` 的 URDF `q=0` 与 TCP `[0.29756,-0.00177,0.043001] m` 保持不变。名义值基于两个关节恰好 90°，仍须在原物理 URDF 零姿态读取 `0x6064` 做最终实机精标。
 
 原 7.7 “初始位置调整未实装”事项至此由软件 count offset 完成；CSP/PDO 与最终 offset 数值仍需按新 Debug Guide 逐步实机验证。
+
+补充修正 Homing→CSP 流程：不能在 Home 后停止 bridge，否则清理过程会 Disable Operation/Voltage。现在 `homing.launch.py` 保持同一 EtherCAT master，`home_all` 成功后由 `ros2_control.launch.py start_bridge:=false` 延迟配置 PDO 并进入 CSP；交接只发送 Enable Operation，初始 target 使用当前 actual counts。
 新的调试说明在README_RASCL_Group8.md
 
 

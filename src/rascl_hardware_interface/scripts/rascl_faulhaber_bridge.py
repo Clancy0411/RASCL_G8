@@ -315,8 +315,15 @@ class FaulhaberBus:
         self.latest_states: List[PDOState] = []
         self.pdo_error: Optional[str] = None
         self.last_working_counter = 0
+        self.homing_complete = False
+        self.deferred_csp_prepared = False
 
         self._validate_cycle_configuration()
+
+    def mark_homing_complete(self, complete: bool) -> None:
+        """Gate the no-disable Homing-to-CSP handoff on a full home_all run."""
+
+        self.homing_complete = bool(complete)
 
     def _validate_cycle_configuration(self) -> None:
         if self.pdo_timeout_us <= 0:
@@ -447,7 +454,13 @@ class FaulhaberBus:
             # Preserve the auto_homing branch's proven mailbox-only PRE-OP
             # workflow. Profile Position and Homing use SDOs and do not need a
             # process image or an EtherCAT OP transition.
-            print("[EtherCAT] Profile/Homing uses SDO-only PRE-OP; PDO mapping skipped")
+            if self.control_mode == "homing_csp":
+                print(
+                    "[EtherCAT] Homing-to-CSP session starts SDO-only in PRE-OP; "
+                    "PDO mapping is deferred until home_all succeeds"
+                )
+            else:
+                print("[EtherCAT] Profile/Homing uses SDO-only PRE-OP; PDO mapping skipped")
 
         self.drives = []
         for drive_id, slave_index in enumerate(self.slave_indices):
@@ -507,7 +520,50 @@ class FaulhaberBus:
         self.latest_states = states
         return states
 
-    def _request_operational_locked(self) -> None:
+    def _prepare_deferred_csp_locked(self) -> None:
+        """Configure PDOs in the existing master after SDO-only Homing."""
+
+        if self.control_mode == "csp":
+            return
+        if self.control_mode != "homing_csp":
+            raise RuntimeError("Deferred CSP preparation requires control_mode:=homing_csp")
+        if not self.homing_complete:
+            raise RuntimeError("CSP handoff rejected: home_all has not completed successfully")
+        if self.master is None:
+            raise RuntimeError("EtherCAT master is not connected")
+
+        statuses = [drive.read_status() for drive in self.drives]
+        if any(
+            (status & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE
+            for status in statuses
+        ):
+            raise RuntimeError(
+                "CSP handoff requires every homed drive to remain Operation Enabled: "
+                + " ".join(f"drive{i}=0x{status:04X}" for i, status in enumerate(statuses))
+            )
+
+        if self.deferred_csp_prepared:
+            return
+
+        for slave_index in self.slave_indices:
+            slave = self.master.slaves[slave_index]
+            self._assign_factory_position_pdos(slave, slave_index)
+            if not self.enable_dc_sync:
+                self._configure_sm_cycle_monitoring(slave, slave_index)
+
+        mapped_bytes = self.master.config_map()
+        print(f"[EtherCAT] Deferred process image mapped ({mapped_bytes} bytes)")
+        if self.enable_dc_sync:
+            self.master.config_dc()
+            for slave_index in self.slave_indices:
+                self.master.slaves[slave_index].dc_sync(True, self.pdo_cycle_ns, 0)
+            print(f"[EtherCAT] DC-Sync configured with cycle {self.pdo_cycle_ns} ns")
+        else:
+            print(f"[EtherCAT] SM-Sync selected with cycle {self.pdo_cycle_ns} ns")
+
+        self.deferred_csp_prepared = True
+
+    def _request_operational_locked(self, controlword: int = CMD_SHUTDOWN) -> None:
         if self.master is None:
             raise RuntimeError("EtherCAT master is not connected")
         safe_state = self.master.state_check(pysoem.SAFEOP_STATE, 100_000)
@@ -515,13 +571,13 @@ class FaulhaberBus:
             raise RuntimeError(f"EtherCAT master did not reach SAFE-OP; state=0x{safe_state:02X}")
 
         # A valid output image must be present before requesting OP.
-        self._exchange_pdo_locked(CMD_SHUTDOWN)
+        self._exchange_pdo_locked(controlword)
         self.master.state = pysoem.OP_STATE
         self.master.write_state()
 
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
-            self._exchange_pdo_locked(CMD_SHUTDOWN)
+            self._exchange_pdo_locked(controlword)
             if self.master.state_check(pysoem.OP_STATE, 5_000) == pysoem.OP_STATE:
                 print("[EtherCAT] Master reached OP state")
                 return
@@ -555,12 +611,16 @@ class FaulhaberBus:
         )
 
     def enter_csp(self, target_counts: Optional[Sequence[int]] = None) -> List[PDOState]:
-        if self.control_mode != "csp":
+        if self.control_mode not in ("csp", "homing_csp"):
             raise RuntimeError("Bridge was not started with control_mode:=csp")
         if self.csp_active:
             return self.get_csp_states()
 
         with self.pdo_lock:
+            preserve_homing_hold = self.control_mode == "homing_csp"
+            if preserve_homing_hold and not self.homing_complete:
+                raise RuntimeError("CSP handoff rejected: home_all has not completed successfully")
+
             initial_targets = (
                 [drive.read_actual_position_counts() for drive in self.drives]
                 if target_counts is None
@@ -569,10 +629,28 @@ class FaulhaberBus:
             if len(initial_targets) != len(self.drives):
                 raise RuntimeError(f"Expected {len(self.drives)} CSP targets, got {len(initial_targets)}")
 
+            if preserve_homing_hold:
+                self._prepare_deferred_csp_locked()
+
             for drive in self.drives:
                 drive.reset_fault_if_needed()
                 if drive.set_operation_mode(MODE_CYCLIC_SYNC_POSITION) != MODE_CYCLIC_SYNC_POSITION:
                     raise RuntimeError(f"Drive {drive.drive_id} rejected CSP mode")
+
+            if preserve_homing_hold:
+                handoff_statuses = [drive.read_status() for drive in self.drives]
+                if any(
+                    (status & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE
+                    for status in handoff_statuses
+                ):
+                    raise RuntimeError(
+                        "A drive lost Operation Enabled while selecting CSP; "
+                        "continuous-hold handoff is not supported by this drive state: "
+                        + " ".join(
+                            f"drive{i}=0x{status:04X}"
+                            for i, status in enumerate(handoff_statuses)
+                        )
+                    )
 
             self.target_counts = initial_targets
             modes = [drive.read_mode_display() for drive in self.drives]
@@ -580,14 +658,29 @@ class FaulhaberBus:
             self.pdo_error = None
 
             try:
-                self._request_operational_locked()
-                self._wait_cia402_state_locked(CMD_SHUTDOWN, STATUS_READY_TO_SWITCH_ON)
-                self._wait_cia402_state_locked(CMD_SWITCH_ON, STATUS_SWITCHED_ON)
-                states = self._wait_cia402_state_locked(
-                    CMD_ENABLE_OPERATION,
-                    STATUS_OPERATION_ENABLED_STATE,
-                    require_csp_accept=True,
-                )
+                if preserve_homing_hold:
+                    # The homing procedure leaves every drive Operation Enabled.
+                    # Keep 0x000F on the first valid PDO and use actual positions
+                    # as targets; never send Shutdown/Disable during the handoff.
+                    self._request_operational_locked(CMD_ENABLE_OPERATION)
+                    states = self._wait_cia402_state_locked(
+                        CMD_ENABLE_OPERATION,
+                        STATUS_OPERATION_ENABLED_STATE,
+                        require_csp_accept=True,
+                    )
+                    print(
+                        "[EtherCAT] Homing-to-CSP handoff completed without "
+                        "Shutdown/Disable controlwords"
+                    )
+                else:
+                    self._request_operational_locked()
+                    self._wait_cia402_state_locked(CMD_SHUTDOWN, STATUS_READY_TO_SWITCH_ON)
+                    self._wait_cia402_state_locked(CMD_SWITCH_ON, STATUS_SWITCHED_ON)
+                    states = self._wait_cia402_state_locked(
+                        CMD_ENABLE_OPERATION,
+                        STATUS_OPERATION_ENABLED_STATE,
+                        require_csp_accept=True,
+                    )
             except Exception:
                 self._safeop_locked()
                 raise
@@ -683,6 +776,15 @@ class FaulhaberBus:
             print(f"[EtherCAT] WARNING: could not request SAFE-OP: {exc}")
 
     def exit_csp(self) -> List[int]:
+        if (
+            not self.csp_active
+            and (self.pdo_thread is None or not self.pdo_thread.is_alive())
+            and not self.target_counts
+        ):
+            # An activation rejected before PDO preparation must not move the
+            # Homing master out of PRE-OP or remove its Profile hold.
+            return [drive.read_status() for drive in self.drives]
+
         self.pdo_stop_event.set()
         thread = self.pdo_thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
@@ -771,8 +873,8 @@ class RASCLFaulhaberBridge(Node):
         self.host = str(self.get_parameter("host").value)
         self.port = int(self.get_parameter("port").value)
         self.control_mode = str(self.get_parameter("control_mode").value).lower()
-        if self.control_mode not in ("profile", "csp"):
-            raise ValueError("control_mode must be 'profile' or 'csp'")
+        if self.control_mode not in ("profile", "csp", "homing_csp"):
+            raise ValueError("control_mode must be 'profile', 'csp', or 'homing_csp'")
         self.sdo_delay_s = float(self.get_parameter("sdo_delay_s").value)
         self.motion_timeout_s = float(self.get_parameter("motion_timeout_s").value)
         self.verbose = bool(self.get_parameter("verbose").value)
@@ -857,8 +959,18 @@ class RASCLFaulhaberBridge(Node):
                 f"Cannot {operation} while CSP/PDO is active. Stop ros2_control and use "
                 "the homing launch first."
             )
+        if self.control_mode == "csp":
+            raise RuntimeError(
+                f"Cannot {operation} from a standalone CSP bridge. Use homing.launch.py."
+            )
+        if self.bus.deferred_csp_prepared:
+            raise RuntimeError(
+                f"Cannot {operation} after PDO preparation. Support the arm, stop both "
+                "launches, and start a new Homing session."
+            )
 
     def _home_drive(self, drive_index: int) -> int:
+        self.bus.mark_homing_complete(False)
         drive = self.bus.drives[drive_index]
         return drive.home_to_reference_switch(
             method=self.homing_methods[drive_index],
@@ -878,9 +990,11 @@ class RASCLFaulhaberBridge(Node):
     def on_enable_all(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         try:
             with self.lock:
-                if self.control_mode == "csp":
+                if self.bus.csp_active or self.control_mode == "csp":
                     states = self.bus.enter_csp()
                     statuses = [state[1] for state in states]
+                elif self.bus.deferred_csp_prepared:
+                    raise RuntimeError("Restart the Homing session after CSP has exited")
                 else:
                     statuses = [drive.enable_operation() for drive in self.bus.drives]
             response.success = True
@@ -929,10 +1043,12 @@ class RASCLFaulhaberBridge(Node):
             with self.lock:
                 self._ensure_non_csp_operation("home")
                 positions = [self._home_drive(index) for index in range(len(self.bus.drives))]
+                self.bus.mark_homing_complete(True)
             self.publish_home_done()
             response.success = True
-            response.message = "Homing completed for all drives: " + " ".join(
-                str(position) for position in positions
+            response.message = (
+                "Homing completed for all drives; CSP handoff armed: "
+                + " ".join(str(position) for position in positions)
             )
         except Exception as exc:
             response.success = False
@@ -1048,8 +1164,10 @@ class RASCLFaulhaberBridge(Node):
                     return "OK"
 
                 if operation == "ENABLE_ALL":
-                    if self.control_mode == "csp":
+                    if self.bus.csp_active or self.control_mode == "csp":
                         return "ERR use ENTER_CSP_ALL when control_mode=csp"
+                    if self.bus.deferred_csp_prepared:
+                        return "ERR restart the Homing session after CSP has exited"
                     statuses = [drive.enable_operation() for drive in self.bus.drives]
                     return "OK " + " ".join(f"0x{status:04X}" for status in statuses)
 

@@ -18,6 +18,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     start_robot = LaunchConfiguration("start_robot")
+    start_bridge = LaunchConfiguration("start_bridge")
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
     interface = LaunchConfiguration("interface")
     control_mode = LaunchConfiguration("control_mode")
@@ -51,6 +52,7 @@ def generate_launch_description():
             "interface": interface,
             "control_mode": control_mode,
             "controller_config": controller_config,
+            "start_bridge": start_bridge,
             "shoulder_home_offset_counts": shoulder_home_offset_counts,
             "upperarm_home_offset_counts": upperarm_home_offset_counts,
             "lowerarm_home_offset_counts": lowerarm_home_offset_counts,
@@ -107,6 +109,11 @@ def generate_launch_description():
             "controller_config",
             default_value="controllers_csp.yaml",
             description="Controller YAML passed to rascl_description. Use controllers_csp.yaml for CSP tests.",
+        ),
+        DeclareLaunchArgument(
+            "start_bridge",
+            default_value="false",
+            description="Passed to rascl_description; false reuses the Homing bridge.",
         ),
         DeclareLaunchArgument("shoulder_home_offset_counts", default_value="0"),
         DeclareLaunchArgument("upperarm_home_offset_counts", default_value="-802816"),

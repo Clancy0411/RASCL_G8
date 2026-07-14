@@ -1,56 +1,9 @@
-# WP3 四轴 Homing + CSP 实机快速测试
+# WP3 Homing→CSP 实机快速流程
 
-本说明书用于已经确认四轴 Homing 方向、传感器和参数正确的机器人。流程只有：
+只用于代码、逐轴 Homing 和 offset 已验证后的实机测试。需要 `T1/T2/T3` 三个
+容器终端。急停在手边，并使用能承重的机械支撑。
 
-```text
-进入 Docker -> 编译 -> 四轴 home_all -> 停止 Homing
--> 启动 CSP/PDO -> 保持测试 -> 发送几毫米 minimum-jerk 运动
-```
-
-测试时急停必须在手边，机械臂周围不得有人或障碍物。
-
----
-
-## 1. Terminal 1：启动 Docker 并编译
-
-在实验室电脑的第一个 Ubuntu Terminal 中，进入仓库目录：
-
-```bash
-cd ~/RASCL_G8  # 实际目录不同时替换这一行
-ip link show enx94bdbe9565bc
-sudo ip link set enx94bdbe9565bc up
-bash ./rosws.sh
-```
-
-前两条 `ip` 命令在 Ubuntu 主机执行，用于确认并启用实机 EtherCAT 网卡。运行 `rosws.sh` 进入 Docker 后，不再执行 `ip link`。
-
-进入容器、看到 `rascl-container:/root/ws$` 后执行：
-
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-
-rm -rf build install log
-colcon build --symlink-install --cmake-args -DBUILD_TESTING=OFF
-
-source install/local_setup.bash
-export ROS_DOMAIN_ID=88
-```
-
-保持这个窗口打开，后面称为 `Terminal 1`。
-
----
-
-## 2. Terminal 2：进入同一个 Docker
-
-保持 Terminal 1 和容器运行，新开实验室电脑的第二个 Ubuntu Terminal：
-
-```bash
-cd ~/RASCL_G8  # 必须进入同一个仓库目录
-bash ./rosws.sh
-```
-
-看到 `Attaching to running container...` 后执行：
+## 1. 三个终端初始化
 
 ```bash
 cd /root/ws
@@ -59,191 +12,97 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
-保持这个窗口打开，后面称为 `Terminal 2`。
-
----
-
-## 3. Terminal 1：启动四轴 Homing bridge
-
-在 `Terminal 1`：
+## 2. T1：启动唯一 bridge
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
   interface:=enx94bdbe9565bc
 ```
 
-期望看到：
+确认显示 SDO-only PRE-OP，PDO mapping deferred。`T1` 从现在到停机不得关闭。
 
-```text
-Profile/Homing uses SDO-only PRE-OP; PDO mapping skipped
-TCP bridge listening on 127.0.0.1:15001
-```
-
-保持该命令运行，不要关闭 Terminal 1。
-
----
-
-## 4. Terminal 2：直接执行四轴 home_all
-
-确认机器人位于已验证的安全 Homing 起始区域，然后在 `Terminal 2`：
+## 3. T2：Homing
 
 ```bash
+ros2 service call /rascl_faulhaber_bridge/read_digital_inputs \
+  std_srvs/srv/Trigger "{}"
+
 ros2 service call /rascl_faulhaber_bridge/home_all \
   std_srvs/srv/Trigger "{}"
 ```
 
-四轴按 Drive 0 -> 1 -> 2 -> 3 顺序 Homing。必须等待返回：
+必须返回：
 
 ```text
 success=True
+Homing completed for all drives; CSP handoff armed
 ```
 
-任何轴方向错误、碰到限位、出现 fault/Homing Error 或找不到传感器时，立即急停，不要继续 CSP。
+不要停止 `T1`，不要调用 `disable_all`。
 
----
-
-## 5. Terminal 1：停止 Homing
-
-`home_all` 成功后，回到 `Terminal 1` 按一次 `Ctrl-C`。
-
-等待重新出现：
-
-```text
-rascl-container:/root/ws$
-```
-
-bridge 会执行 Disable Operation / Disable Voltage。不要关闭 Docker。
-
-在 `Terminal 2` 确认旧 bridge 已退出：
-
-```bash
-ps -ef | grep rascl_faulhaber_bridge | grep -v grep
-ss -ltnp | grep 15001
-```
-
-正常情况两条命令都没有输出。
-
----
-
-## 6. Terminal 1：启动 CSP/PDO
-
-仍在同一个 `Terminal 1`：
+## 4. T2：复用同一 bridge 启动 CSP
 
 ```bash
 ros2 launch rascl_description ros2_control.launch.py \
   interface:=enx94bdbe9565bc \
-  use_fake_hardware:=false
+  use_fake_hardware:=false \
+  start_bridge:=false \
+  shoulder_home_offset_counts:=0 \
+  upperarm_home_offset_counts:=-802816 \
+  lowerarm_home_offset_counts:=-802816 \
+  spur_gear_home_offset_counts:=0
 ```
 
-期望日志包含：
+`T1` 必须出现：
 
 ```text
-assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
-SM2 cycle monitoring configured for 20000000 ns
-Process image mapped
-SM-Sync selected with cycle 20000000 ns
+Deferred process image mapped
 Master reached OP state
-Activated real RASCL hardware in csp mode
+Homing-to-CSP handoff completed without Shutdown/Disable controlwords
 ```
 
-如果出现 `WkcError`、`CSP/PDO loop stopped`、following error 或 SAFE-OP + Error，停止测试，不要发送运动命令。
-
----
-
-## 7. Terminal 2：检查 CSP 保持状态
-
-在 `Terminal 2`：
+## 5. T3：保持测试
 
 ```bash
 ros2 control list_controllers
 ros2 topic echo --once /joint_states
+ros2 topic hz /joint_states
 ```
 
-期望：
+要求 controller active、关节约为 `[0,+1.5708,+1.5708,0]`、保持 10 秒无跳动，
+且没有 WKC/following error。只在 `T3` 按 `Ctrl-C` 停止 `topic hz`。
 
-```text
-joint_state_broadcaster active
-rascl_position_controller active
-```
-
-四轴位置应接近 `[0,+1.5708,+1.5708,0] rad`。这是自动 Home 的开关姿态；URDF `q=0` 和原 TCP `[0.29756,-0.00177,0.043001]` 没有改变。确认实机与 RViz 一致后，保持 10 秒，不发送运动目标；机械臂不应跳动，Terminal 1 不应出现 PDO/WKC/following error。
-
----
-
-## 8. Terminal 2：先计算几毫米轨迹
-
-在 `Terminal 2`：
+## 6. T3：先规划，再执行
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.2108 \
-  -p target_y:=-0.00177 \
-  -p target_z:=0.2913 \
-  -p duration:=12.0 \
-  -p rate_hz:=50.0 \
-  -p execute:=false
-```
+  -p target_x:=0.2108 -p target_y:=-0.00177 -p target_z:=0.2913 \
+  -p duration:=12.0 -p rate_hz:=50.0 -p execute:=false
 
-必须看到：
-
-```text
-IK result: success=True
-```
-
-快速检查轨迹：
-
-```bash
 head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
 ```
 
-确认 `Current joints` 接近 `[0,+1.5708,+1.5708,0]`，IK 结果仍在该姿态附近、CSV 没有 `nan`，目标方向和空间安全后再执行下一步。旧目标 `[0.295,0,0.048]` 靠近 URDF `q=0`，不能作为自动 Home 后的首次小运动。
-
----
-
-## 9. Terminal 2：发送真实 CSP 运动指令
-
-在 `Terminal 2`：
+确认 IK success、结果接近 `[0,1.5527,1.5550]`、CSV 无 `nan`，再执行：
 
 ```bash
 ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-  -p target_x:=0.2108 \
-  -p target_y:=-0.00177 \
-  -p target_z:=0.2913 \
-  -p duration:=12.0 \
-  -p rate_hz:=50.0 \
-  -p execute:=true
+  -p target_x:=0.2108 -p target_y:=-0.00177 -p target_z:=0.2913 \
+  -p duration:=12.0 -p rate_hz:=50.0 -p execute:=true
 ```
 
-运动期间观察 `Terminal 1`。成功标准：
+## 7. 停机
 
-1. 机械臂平滑移动，没有突然跳变；
-2. Terminal 1 没有 WKC、following error 或 PDO loop 错误；
-3. 轨迹结束后命令自动退出；
-4. `/joint_states` 持续更新。
+先支撑机械臂，然后：
 
-运动结束后检查：
+1. `T2` 按 `Ctrl-C`，等待 ros2_control 完全退出；该步骤会失能。
+2. `T1` 按 `Ctrl-C`，关闭 bridge。
+3. `T3` 检查：
 
 ```bash
-ros2 topic echo --once /joint_states
+ps -ef | grep -E "ros2_control_node|rascl_faulhaber_bridge|wp3_tsk1" | grep -v grep
+ss -ltnp | grep 15001
 ```
 
----
-
-## 10. 结束测试
-
-回到 `Terminal 1` 按 `Ctrl-C`，等待 CSP launch 完全退出。
-
-先在 `Terminal 2`：
-
-```bash
-exit
-```
-
-最后在 `Terminal 1`：
-
-```bash
-exit
-```
-
-不要在 CSP 或 Homing 仍运行时直接关闭 Terminal 1。
+若出现 `home_all has not completed`、`lost Operation Enabled`、WKC、following
+error 或 SAFE-OP，禁止重试运动，立即支撑/急停并保留完整日志。

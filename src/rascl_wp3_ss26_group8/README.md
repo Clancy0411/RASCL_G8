@@ -23,7 +23,8 @@ Calibration convention for real hardware:
 
 1. Place the real robot in the validated safe starting region for the reference search.
 2. Run the dedicated `homing.launch.py`, validate each axis with `home_one`, then call `home_all`.
-3. Start ros2_control and check that the calibrated automatic-Home pose reads approximately `[0,+pi/2,+pi/2,0] rad`.
+3. Keep that bridge running and start ros2_control with `start_bridge:=false`.
+4. Check that the calibrated automatic-Home pose reads approximately `[0,+pi/2,+pi/2,0] rad`.
 
 The original `3588dc98` convention is preserved: `q=[0,0,0,0]` still
 corresponds to the physical URDF zero pose, with nominal TCP:
@@ -112,11 +113,11 @@ ros2 launch rascl_wp3_ss26_group8 wp3_tsk1.launch.py \
   execute:=true
 ```
 
-For real hardware, first validate in fake hardware. Run reference-switch homing
-with `rascl_description homing.launch.py`, stop that launch, and then start
-`ros2_control.launch.py`, whose default real-hardware mode is CSP with a 20 ms
-Position PDO cycle. Start with conservative Cartesian targets near the current
-automatic-Home TCP, not near the physically different URDF-zero TCP.
+For real hardware, first validate in fake hardware. Run reference-switch Homing
+with `rascl_description homing.launch.py` and do not stop it after `home_all`.
+Start `ros2_control.launch.py` with `start_bridge:=false`; the same EtherCAT
+master then maps PDOs and enters CSP without a Shutdown/Disable controlword.
+Start with targets near the automatic-Home TCP.
 
 ## CSP/PDO execution path
 

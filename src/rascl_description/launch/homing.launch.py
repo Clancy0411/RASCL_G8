@@ -1,8 +1,8 @@
-"""Start only the FAULHABER bridge for safe reference-switch homing.
+"""Start one bridge for reference Homing and the later CSP handoff.
 
-The ros2_control CSP client is deliberately not started here.  Homing changes
-the CiA 402 mode and controlword through SDO, which must not race the cyclic PDO
-thread.  Stop this launch after homing, then start ros2_control.launch.py.
+The master starts with the proven SDO-only PRE-OP Homing path.  After home_all,
+ros2_control reuses this bridge; its first ENTER_CSP_ALL lazily maps PDOs and
+enters CSP without closing the master or sending a disable controlword.
 """
 
 from launch import LaunchDescription
@@ -30,6 +30,9 @@ def generate_launch_description():
         default_value="0",
         description="Drive selected by the home_one service (0..3).",
     )
+    pdo_cycle_ns_arg = DeclareLaunchArgument("pdo_cycle_ns", default_value="20000000")
+    pdo_timeout_us_arg = DeclareLaunchArgument("pdo_timeout_us", default_value="5000")
+    enable_dc_sync_arg = DeclareLaunchArgument("enable_dc_sync", default_value="false")
 
     bridge_node = Node(
         package="rascl_hardware_interface",
@@ -41,13 +44,22 @@ def generate_launch_description():
                 "interface": LaunchConfiguration("interface"),
                 "host": LaunchConfiguration("host"),
                 "port": ParameterValue(LaunchConfiguration("port"), value_type=int),
-                "control_mode": "profile",
+                "control_mode": "homing_csp",
                 "slave_indices": [0, 1, 2, 3],
                 "sdo_delay_s": 0.05,
                 "motion_timeout_s": ParameterValue(
                     LaunchConfiguration("motion_timeout_s"), value_type=float
                 ),
                 "verbose": True,
+                "pdo_cycle_ns": ParameterValue(
+                    LaunchConfiguration("pdo_cycle_ns"), value_type=int
+                ),
+                "pdo_timeout_us": ParameterValue(
+                    LaunchConfiguration("pdo_timeout_us"), value_type=int
+                ),
+                "enable_dc_sync": ParameterValue(
+                    LaunchConfiguration("enable_dc_sync"), value_type=bool
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -68,6 +80,9 @@ def generate_launch_description():
             port_arg,
             motion_timeout_arg,
             test_drive_index_arg,
+            pdo_cycle_ns_arg,
+            pdo_timeout_us_arg,
+            enable_dc_sync_arg,
             bridge_node,
         ]
     )
