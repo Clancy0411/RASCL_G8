@@ -76,7 +76,6 @@ group_fake_check() {
 
 group_homing_bridge() {
   load_ros
-  ip link show "$INTERFACE" || die "EtherCAT interface $INTERFACE not found"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 3 已忽略，并保持 Disable Voltage。"
   ros2 launch rascl_description homing.launch.py \
