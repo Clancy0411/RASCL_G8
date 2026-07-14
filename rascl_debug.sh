@@ -90,6 +90,16 @@ is_positive_number() {
   [[ "$digits" =~ [1-9] ]]
 }
 
+ros_double_literal() {
+  # ROS 2 parses an integer-looking command-line override as INTEGER.  All
+  # wp3_tsk1 coordinate and duration parameters are declared as DOUBLE.
+  if [[ "$1" == *.* ]]; then
+    printf '%s' "$1"
+  else
+    printf '%s.0' "$1"
+  fi
+}
+
 ensure_state_dir() {
   mkdir -p "$STATE_DIR"
 }
@@ -277,10 +287,15 @@ group_real_plan() {
   require_csp_session
   require_active_controllers
   clear_plan_state
+  local ros_x ros_y ros_z ros_duration
+  ros_x="$(ros_double_literal "$TARGET_X")"
+  ros_y="$(ros_double_literal "$TARGET_Y")"
+  ros_z="$(ros_double_literal "$TARGET_Z")"
+  ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
   rm -f /tmp/rascl_wp3_tsk1_last_trajectory.csv
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-    -p target_x:="$TARGET_X" -p target_y:="$TARGET_Y" -p target_z:="$TARGET_Z" \
-    -p duration:="$TRAJECTORY_DURATION" -p rate_hz:=50.0 -p execute:=false; then
+    -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
+    -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=false; then
     echo "规划命令失败；未解锁组 10。CSP/controller 正常时可重新选择组 14、9。" >&2
     return 0
   fi
@@ -303,13 +318,18 @@ group_real_execute() {
   require_wp3_package
   require_matching_plan
   require_active_controllers
+  local ros_x ros_y ros_z ros_duration
+  ros_x="$(ros_double_literal "$TARGET_X")"
+  ros_y="$(ros_double_literal "$TARGET_Y")"
+  ros_z="$(ros_double_literal "$TARGET_Z")"
+  ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
     die "3 秒内没有 /joint_states，禁止执行"
   echo "该命令会运动实机；Drive 3 继续保持失能。"
   confirm_exact MOVE "确认目标 [$TARGET_X, $TARGET_Y, $TARGET_Z] m、支撑、空间和急停；输入 MOVE 执行："
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
-    -p target_x:="$TARGET_X" -p target_y:="$TARGET_Y" -p target_z:="$TARGET_Z" \
-    -p duration:="$TRAJECTORY_DURATION" -p rate_hz:=50.0 -p execute:=true; then
+    -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
+    -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true; then
     clear_plan_state
     die "运动节点失败；停止发送目标并按指南执行完整 EtherCAT 会话重启"
   fi
