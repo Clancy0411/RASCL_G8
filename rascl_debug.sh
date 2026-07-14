@@ -12,7 +12,10 @@ TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
-PLANNED_TARGET=""
+STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
+TARGET_STATE_FILE="$STATE_DIR/target.state"
+CSP_SESSION_FILE="$STATE_DIR/csp_session.state"
+PLAN_STATE_FILE="$STATE_DIR/plan.state"
 
 die() {
   echo "ERROR: $*" >&2
@@ -87,6 +90,72 @@ is_positive_number() {
   [[ "$digits" =~ [1-9] ]]
 }
 
+ensure_state_dir() {
+  mkdir -p "$STATE_DIR"
+}
+
+target_signature() {
+  printf '%s,%s,%s,%s' "$TARGET_X" "$TARGET_Y" "$TARGET_Z" "$TRAJECTORY_DURATION"
+}
+
+save_target_state() {
+  ensure_state_dir
+  printf '%s\n%s\n%s\n%s\n' \
+    "$TARGET_X" "$TARGET_Y" "$TARGET_Z" "$TRAJECTORY_DURATION" >"$TARGET_STATE_FILE"
+}
+
+load_target_state() {
+  [[ -f "$TARGET_STATE_FILE" ]] || return 0
+  local values=()
+  mapfile -t values <"$TARGET_STATE_FILE"
+  if [[ "${#values[@]}" -ne 4 ]] ||
+    ! is_number "${values[0]}" ||
+    ! is_number "${values[1]}" ||
+    ! is_number "${values[2]}" ||
+    ! is_positive_number "${values[3]}"; then
+    rm -f "$TARGET_STATE_FILE" "$PLAN_STATE_FILE"
+    die "目标状态文件无效，已清除；请重新执行组 14"
+  fi
+  TARGET_X="${values[0]}"
+  TARGET_Y="${values[1]}"
+  TARGET_Z="${values[2]}"
+  TRAJECTORY_DURATION="${values[3]}"
+}
+
+clear_plan_state() {
+  rm -f "$PLAN_STATE_FILE"
+}
+
+require_csp_session() {
+  [[ -f "$CSP_SESSION_FILE" ]] ||
+    die "没有有效的组 7 CSP 会话；请按 T1:4 → T2:6→7 启动"
+  local session_pid
+  IFS= read -r session_pid <"$CSP_SESSION_FILE"
+  [[ "$session_pid" =~ ^[0-9]+$ ]] && kill -0 "$session_pid" 2>/dev/null ||
+    die "组 7 CSP 会话已结束；禁止复用旧状态，请完整重启"
+}
+
+save_plan_state() {
+  ensure_state_dir
+  local session_pid
+  IFS= read -r session_pid <"$CSP_SESSION_FILE"
+  printf '%s\n%s\n' "$session_pid" "$(target_signature)" >"$PLAN_STATE_FILE"
+}
+
+require_matching_plan() {
+  require_csp_session
+  [[ -f "$PLAN_STATE_FILE" ]] || die "当前 CSP 会话没有通过组 9 的规划；禁止执行"
+  local planned=()
+  mapfile -t planned <"$PLAN_STATE_FILE"
+  [[ "${#planned[@]}" -eq 2 ]] || die "规划授权文件无效；请重新执行组 9"
+  local session_pid
+  IFS= read -r session_pid <"$CSP_SESSION_FILE"
+  [[ "${planned[0]}" == "$session_pid" ]] ||
+    die "规划属于旧 CSP 会话；请在当前会话重新执行组 9"
+  [[ "${planned[1]}" == "$(target_signature)" ]] ||
+    die "当前目标与组 9 规划目标不同；请重新执行组 9"
+}
+
 group_build_test() {
   load_ros allow_unbuilt
   echo "[1/2] Building workspace..."
@@ -127,6 +196,8 @@ group_fake_check() {
 group_homing_bridge() {
   load_ros
   require_real_packages
+  ensure_state_dir
+  rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 3 已忽略，并保持 Disable Voltage。"
   ros2 launch rascl_description homing.launch.py \
@@ -167,7 +238,15 @@ group_home_all() {
 
 group_csp_launch() {
   load_ros
+  ensure_state_dir
+  clear_plan_state
+  printf '%s\n' "$$" >"$CSP_SESSION_FILE"
+  cleanup_csp_state() {
+    rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
+  }
+  trap cleanup_csp_state EXIT
   echo "保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。"
+  set +e
   ros2 launch rascl_description ros2_control.launch.py \
     interface:="$INTERFACE" \
     use_fake_hardware:=false \
@@ -176,6 +255,11 @@ group_csp_launch() {
     upperarm_home_offset_counts:=-802816 \
     lowerarm_home_offset_counts:=-802816 \
     spur_gear_home_offset_counts:=0
+  local launch_status=$?
+  set -e
+  cleanup_csp_state
+  trap - EXIT
+  return "$launch_status"
 }
 
 group_csp_check() {
@@ -190,7 +274,9 @@ group_csp_check() {
 group_real_plan() {
   load_ros
   require_wp3_package
-  PLANNED_TARGET=""
+  require_csp_session
+  require_active_controllers
+  clear_plan_state
   rm -f /tmp/rascl_wp3_tsk1_last_trajectory.csv
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$TARGET_X" -p target_y:="$TARGET_Y" -p target_z:="$TARGET_Z" \
@@ -208,16 +294,14 @@ group_real_plan() {
   fi
   head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
   tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
-  PLANNED_TARGET="$TARGET_X,$TARGET_Y,$TARGET_Z,$TRAJECTORY_DURATION"
+  save_plan_state
   echo "规划已通过；当前目标可由组 10 执行：[$TARGET_X, $TARGET_Y, $TARGET_Z] m"
 }
 
 group_real_execute() {
   load_ros
   require_wp3_package
-  local current_target="$TARGET_X,$TARGET_Y,$TARGET_Z,$TRAJECTORY_DURATION"
-  [[ -n "$PLANNED_TARGET" && "$PLANNED_TARGET" == "$current_target" ]] ||
-    die "当前目标尚未在本 T3 菜单中通过组 9 规划；禁止执行"
+  require_matching_plan
   require_active_controllers
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
     die "3 秒内没有 /joint_states，禁止执行"
@@ -226,10 +310,10 @@ group_real_execute() {
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$TARGET_X" -p target_y:="$TARGET_Y" -p target_z:="$TARGET_Z" \
     -p duration:="$TRAJECTORY_DURATION" -p rate_hz:=50.0 -p execute:=true; then
-    PLANNED_TARGET=""
+    clear_plan_state
     die "运动节点失败；停止发送目标并按指南执行完整 EtherCAT 会话重启"
   fi
-  PLANNED_TARGET=""
+  clear_plan_state
   require_active_controllers
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
     die "运动后 /joint_states 丢失；按指南执行完整 EtherCAT 会话重启"
@@ -278,7 +362,8 @@ group_set_target() {
   TARGET_Y="$y"
   TARGET_Z="$z"
   TRAJECTORY_DURATION="$duration"
-  PLANNED_TARGET=""
+  save_target_state
+  clear_plan_state
   echo "目标已设置为 [$TARGET_X, $TARGET_Y, $TARGET_Z] m，时间 $TRAJECTORY_DURATION s。"
   echo "下一步必须执行组 9，只规划成功后才能执行组 10。"
 }
@@ -334,8 +419,10 @@ run_group() {
 }
 
 if [[ $# -gt 0 ]]; then
+  load_target_state
   run_group "$1"
 else
+  load_target_state
   while true; do
     print_menu
     read -r -p "请输入组号: " selection
