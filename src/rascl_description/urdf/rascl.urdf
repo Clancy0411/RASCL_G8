@@ -74,7 +74,7 @@
     <child link="upperarm"/>
     <origin xyz="-0.0116 -0.0057 0.06556" rpy="-1.570796327 0 0"/>
     <axis xyz="0 0 -1"/>
-    <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
+    <limit lower="-3.141592654" upper="3.141592654" effort="100" velocity="1.0"/>
   </joint>
 
   <link name="upperarm">
@@ -97,7 +97,7 @@
     <child link="lowerarm"/>
     <origin xyz="0.17 0.08 0.02183" rpy="-3.141592654 0 0"/>
     <axis xyz="0 0 -1"/>
-    <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
+    <limit lower="-3.141592654" upper="3.141592654" effort="100" velocity="1.0"/>
   </joint>
 
   <link name="lowerarm">
@@ -224,8 +224,8 @@
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg upperarm_direction)</param>
       <param name="home_offset_counts">$(arg upperarm_home_offset_counts)</param>
-      <param name="min_position">-1.570796327</param>
-      <param name="max_position">1.570796327</param>
+      <param name="min_position">-3.141592654</param>
+      <param name="max_position">3.141592654</param>
       <param name="initial_position">0.0</param>
     </joint>
 
@@ -239,8 +239,8 @@
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg lowerarm_direction)</param>
       <param name="home_offset_counts">$(arg lowerarm_home_offset_counts)</param>
-      <param name="min_position">-1.570796327</param>
-      <param name="max_position">1.570796327</param>
+      <param name="min_position">-3.141592654</param>
+      <param name="max_position">3.141592654</param>
       <param name="initial_position">0.0</param>
     </joint>
 

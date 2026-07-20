@@ -21,8 +21,8 @@ ARM_JOINT_NAMES = JOINT_NAMES[:3]
 # Joint limits are intentionally kept identical to the URDF ros2_control block.
 ARM_LIMITS = [
     (-1.570796327, 1.570796327),
-    (-1.570796327, 1.570796327),
-    (-1.570796327, 1.570796327),
+    (-3.141592654, 3.141592654),
+    (-3.141592654, 3.141592654),
 ]
 SPUR_GEAR_LIMIT = (-3.1415, 3.1415)
 
