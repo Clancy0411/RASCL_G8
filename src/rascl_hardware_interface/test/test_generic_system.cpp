@@ -123,10 +123,7 @@ TEST(RASCLHardwareInterfaceTest, RejectsJointWithoutVelocityStateInterface) {
 
 TEST(RASCLHardwareInterfaceTest, AppliesReferenceSwitchToUrdfZeroCalibration) {
   auto info = MakeFakeHardwareInfo();
-  // Drive 1 is inverted relative to its original encoder convention.  Its
-  // paired offset keeps raw Home zero at +pi/2 in the unchanged URDF model.
-  info.joints[1].parameters["direction"] = "-1.0";
-  info.joints[1].parameters["home_offset_counts"] = "802816";
+  info.joints[1].parameters["home_offset_counts"] = "-802816";
   // Drive 2 uses the physical lowerarm URDF sign.  The direction and offset
   // are paired so raw Home zero still maps to +pi/2.
   info.joints[2].parameters["direction"] = "1.0";
@@ -142,7 +139,7 @@ TEST(RASCLHardwareInterfaceTest, AppliesReferenceSwitchToUrdfZeroCalibration) {
   EXPECT_NEAR(Peer::CountsToRadians(hardware, 3, 0), 0.0, 1e-12);
 
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 0, 0.0), 0);
-  EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, 0.0), 802816);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, 0.0), -802816);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, 0.0), -802816);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 3, 0.0), 0);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, kHalfPi), 0);

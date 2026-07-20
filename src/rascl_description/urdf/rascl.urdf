@@ -8,11 +8,7 @@
   <xacro:arg name="axis_counts_per_revolution" default="3211264"/>
   <xacro:arg name="gripper_counts_per_revolution" default="1323008"/>
   <xacro:arg name="shoulder_direction" default="1"/>
-  <!--
-    Drive 1 is calibrated with the opposite encoder-to-URDF sign so its
-    positive ROS command follows the physical upperarm motion direction.
-  -->
-  <xacro:arg name="upperarm_direction" default="-1"/>
+  <xacro:arg name="upperarm_direction" default="1"/>
   <!--
     Drive 2 is calibrated with the same positive encoder-to-URDF sign as the
     commanded lowerarm motion.  Its offset keeps the reference-switch pose at
@@ -24,12 +20,12 @@
     Software calibration between the reference-switch position and the URDF
     joint-zero convention.  The proven automatic homing procedure keeps the
     drive-level 0x607C offsets at zero.  At its switch pose Drive 1/2 report
-    approximately zero counts while the URDF angles are both +pi/2.  Drive 1
-    uses the opposite encoder sign, so its paired offset is positive; Drive 2
-    uses the same sign, so its paired offset is negative.
+    approximately zero counts while the URDF angles are both +pi/2.  Drive 2
+    uses the opposite encoder sign, so its paired offset is positive while
+    Drive 1's remains negative.
   -->
   <xacro:arg name="shoulder_home_offset_counts" default="0"/>
-  <xacro:arg name="upperarm_home_offset_counts" default="802816"/>
+  <xacro:arg name="upperarm_home_offset_counts" default="-802816"/>
   <xacro:arg name="lowerarm_home_offset_counts" default="-802816"/>
   <xacro:arg name="spur_gear_home_offset_counts" default="0"/>
 

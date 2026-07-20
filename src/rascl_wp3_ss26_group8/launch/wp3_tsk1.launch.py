@@ -23,7 +23,6 @@ def generate_launch_description():
     interface = LaunchConfiguration("interface")
     control_mode = LaunchConfiguration("control_mode")
     controller_config = LaunchConfiguration("controller_config")
-    upperarm_direction = LaunchConfiguration("upperarm_direction")
     lowerarm_direction = LaunchConfiguration("lowerarm_direction")
     shoulder_home_offset_counts = LaunchConfiguration("shoulder_home_offset_counts")
     upperarm_home_offset_counts = LaunchConfiguration("upperarm_home_offset_counts")
@@ -55,7 +54,6 @@ def generate_launch_description():
             "control_mode": control_mode,
             "controller_config": controller_config,
             "start_bridge": start_bridge,
-            "upperarm_direction": upperarm_direction,
             "lowerarm_direction": lowerarm_direction,
             "shoulder_home_offset_counts": shoulder_home_offset_counts,
             "upperarm_home_offset_counts": upperarm_home_offset_counts,
@@ -120,17 +118,12 @@ def generate_launch_description():
             description="Passed to rascl_description; false reuses the Homing bridge.",
         ),
         DeclareLaunchArgument(
-            "upperarm_direction",
-            default_value="-1",
-            description="Drive 1 encoder-to-URDF sign; pair -1 with home offset +802816.",
-        ),
-        DeclareLaunchArgument(
             "lowerarm_direction",
             default_value="1",
             description="Drive 2 encoder-to-URDF sign; pair +1 with home offset -802816.",
         ),
         DeclareLaunchArgument("shoulder_home_offset_counts", default_value="0"),
-        DeclareLaunchArgument("upperarm_home_offset_counts", default_value="802816"),
+        DeclareLaunchArgument("upperarm_home_offset_counts", default_value="-802816"),
         DeclareLaunchArgument("lowerarm_home_offset_counts", default_value="-802816"),
         DeclareLaunchArgument("spur_gear_home_offset_counts", default_value="0"),
         DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),

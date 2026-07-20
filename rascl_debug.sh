@@ -10,6 +10,10 @@ WORKSPACE="${RASCL_WS:-/root/ws}"
 # using another workstation: RASCL_INTERFACE=<nic> bash ./rascl_debug.sh.
 INTERFACE="${RASCL_INTERFACE:-enx3c18a0256deb}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-88}"
+# Drive 2's physical motion follows the positive lowerarm URDF direction.
+# This paired offset preserves automatic Home at q=[0,+pi/2,+pi/2,0].
+LOWERARM_DIRECTION="${RASCL_LOWERARM_DIRECTION:-1}"
+LOWERARM_HOME_OFFSET_COUNTS="${RASCL_LOWERARM_HOME_OFFSET_COUNTS:--802816}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
@@ -258,13 +262,18 @@ group_csp_launch() {
   }
   trap cleanup_csp_state EXIT
   echo "保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。"
-  echo "关节 encoder direction 与 Home offset 使用已构建 URDF/launch 默认值。"
-  echo "进入 CSP 后，Home 的 upperarm/lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。"
+  echo "Drive 2 映射：lowerarm_direction=$LOWERARM_DIRECTION，lowerarm_home_offset_counts=$LOWERARM_HOME_OFFSET_COUNTS"
+  echo "进入 CSP 后，Home 的 lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。"
   set +e
   ros2 launch rascl_description ros2_control.launch.py \
     interface:="$INTERFACE" \
     use_fake_hardware:=false \
-    start_bridge:=false
+    start_bridge:=false \
+    lowerarm_direction:="$LOWERARM_DIRECTION" \
+    shoulder_home_offset_counts:=0 \
+    upperarm_home_offset_counts:=-802816 \
+    lowerarm_home_offset_counts:="$LOWERARM_HOME_OFFSET_COUNTS" \
+    spur_gear_home_offset_counts:=0
   local launch_status=$?
   set -e
   cleanup_csp_state
