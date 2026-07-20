@@ -386,8 +386,10 @@ ros2 service call /rascl_faulhaber_bridge/disable_all \
 支撑机械臂并手动移动到旧版本验证过的物理 URDF `q=[0,0,0,0]` 姿态，然后：
 
 ```bash
-printf 'GET_ALL\n' | nc 127.0.0.1 15001
+python3 -c "import socket; s=socket.create_connection(('127.0.0.1',15001),2); s.sendall(b'GET_ALL\\n'); print(s.recv(4096).decode().strip()); s.close()"
 ```
+
+该容器不保证安装 `nc`；以上 Python 标准库命令不需要额外安装软件。
 
 响应格式：
 
