@@ -783,22 +783,58 @@ class FaulhaberBus:
             self.pdo_thread.start()
             return states
 
+    def _format_csp_snapshot(self, states: Sequence[PDOState]) -> str:
+        """Format the last cyclic target/feedback values for a fault report.
+
+        Values are deliberately kept in the native drive-count domain: this is
+        the only representation shared by the EtherCAT PDO and the drive's
+        following-error monitor.  The helper is called only on an invalid CSP
+        state, so normal 50 Hz operation does not produce diagnostic output.
+        """
+
+        entries: List[str] = []
+        for drive_id, (actual, statusword, mode) in enumerate(states):
+            target: Optional[int] = None
+            if drive_id < len(self.target_counts):
+                target = int(self.target_counts[drive_id])
+
+            if target is None:
+                target_text = "?"
+                error_text = "?"
+            else:
+                target_text = str(target)
+                error_text = str(target - actual)
+
+            entries.append(
+                f"D{drive_id}(target={target_text},actual={actual},"
+                f"error={error_text},status=0x{statusword:04X},mode={mode})"
+            )
+        return "CSP_SNAPSHOT " + "; ".join(entries)
+
     def _validate_running_states(self, states: Sequence[PDOState]) -> None:
         for drive_id, (_, statusword, mode) in enumerate(states):
             if drive_id in self.ignored_csp_drive_ids:
                 continue
             if statusword & STATUS_FAULT:
-                raise RuntimeError(f"Drive {drive_id} fault; statusword=0x{statusword:04X}")
+                raise RuntimeError(
+                    f"Drive {drive_id} fault; statusword=0x{statusword:04X}; "
+                    f"{self._format_csp_snapshot(states)}"
+                )
             if statusword & STATUS_FOLLOWING_OR_HOMING_ERROR:
                 raise RuntimeError(
-                    f"Drive {drive_id} CSP following error; statusword=0x{statusword:04X}"
+                    f"Drive {drive_id} CSP following error; statusword=0x{statusword:04X}; "
+                    f"{self._format_csp_snapshot(states)}"
                 )
             if (statusword & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE:
                 raise RuntimeError(
-                    f"Drive {drive_id} left Operation Enabled; statusword=0x{statusword:04X}"
+                    f"Drive {drive_id} left Operation Enabled; statusword=0x{statusword:04X}; "
+                    f"{self._format_csp_snapshot(states)}"
                 )
             if mode != MODE_CYCLIC_SYNC_POSITION:
-                raise RuntimeError(f"Drive {drive_id} mode display changed to {mode}")
+                raise RuntimeError(
+                    f"Drive {drive_id} mode display changed to {mode}; "
+                    f"{self._format_csp_snapshot(states)}"
+                )
 
     def _pdo_loop(self) -> None:
         next_cycle_ns = time.monotonic_ns()

@@ -380,6 +380,28 @@ class BridgePDOTest(unittest.TestCase):
         self.assertEqual(bus.target_counts, [])
         self.assertEqual(bus.latest_states, [])
 
+    def test_following_error_includes_target_and_actual_pdo_snapshot(self):
+        bus = make_bus()
+        bus.target_counts = [100, 200, 300, 400]
+        states = [
+            (90, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
+            (210, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
+            (
+                250,
+                bridge.STATUS_OPERATION_ENABLED_STATE
+                | bridge.STATUS_FOLLOWING_OR_HOMING_ERROR,
+                bridge.MODE_CYCLIC_SYNC_POSITION,
+            ),
+            (390, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
+        ]
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"Drive 2 CSP following error; statusword=0x2027; "
+            r"CSP_SNAPSHOT .*D2\(target=300,actual=250,error=50,status=0x2027,mode=8\)",
+        ):
+            bus._validate_running_states(states)
+
 
 if __name__ == "__main__":
     unittest.main()

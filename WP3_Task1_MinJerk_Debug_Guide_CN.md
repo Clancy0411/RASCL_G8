@@ -528,7 +528,10 @@ ss -ltnp | grep 15001
 - `lost Operation Enabled while selecting CSP`：驱动状态不支持当前无失能交接。
   立即支撑/急停，不得循环重试。
 - `following error`、WKC、SAFE-OP：controller 可能自动失能，立即支撑/急停；
-  记录 `T1/T2` 完整日志，不再发送命令。
+  不再发送命令。following error 的 `ros2_control_node` 日志会自动含
+  `CSP_SNAPSHOT`：每个 Drive 的 PDO `target`、`actual`、`error=target-actual`、
+  `status` 和 `mode`，均为原始 counts。停止 T1/T2 后选择组 `12` 打包并提交该
+  `tar.gz`；无需手动复制终端。
 - controller inactive：
 
 ```bash
