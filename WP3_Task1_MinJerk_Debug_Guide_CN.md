@@ -390,6 +390,8 @@ python3 -c "import socket; s=socket.create_connection(('127.0.0.1',15001),2); s.
 ```
 
 该容器不保证安装 `nc`；以上 Python 标准库命令不需要额外安装软件。
+必须在启动第 7 节 CSP 前执行：CSP 运行时 ros2_control 会持续占用 bridge 唯一的 TCP
+客户端连接，外部 `GET_ALL` 查询会超时；此时只用 `/joint_states` 读取反馈。
 
 响应格式：
 
