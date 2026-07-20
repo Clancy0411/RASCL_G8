@@ -182,8 +182,9 @@ value and position commands for it are ignored by the bridge.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search. The ros2_control parameters
-`home_offset_counts=[0,-802816,-802816,0]` map the switch pose to the URDF
-angles above. The conversion is:
+`direction=[+1,+1,-1,+1]` and `home_offset_counts=[0,-802816,+802816,0]`
+map the switch pose to the URDF angles above. Drive 2's direction and offset
+are a paired encoder-direction correction. The conversion is:
 
 ```text
 q = direction * (raw_counts - home_offset_counts) / counts_per_rad

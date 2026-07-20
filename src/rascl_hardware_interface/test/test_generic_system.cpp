@@ -121,10 +121,14 @@ TEST(RASCLHardwareInterfaceTest, RejectsJointWithoutVelocityStateInterface) {
   EXPECT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::ERROR);
 }
 
-TEST(RASCLHardwareInterfaceTest, AppliesReferenceSwitchToUrdfZeroOffsets) {
+TEST(RASCLHardwareInterfaceTest, AppliesReferenceSwitchToUrdfZeroCalibration) {
   auto info = MakeFakeHardwareInfo();
   info.joints[1].parameters["home_offset_counts"] = "-802816";
-  info.joints[2].parameters["home_offset_counts"] = "-802816";
+  // Drive 2 encoder counts run opposite to the lowerarm URDF axis.  The
+  // direction and offset signs must be changed together so raw Home zero still
+  // maps to +pi/2.
+  info.joints[2].parameters["direction"] = "-1.0";
+  info.joints[2].parameters["home_offset_counts"] = "802816";
 
   rascl_hardware_interface::RASCLHardwareInterface hardware;
   ASSERT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::SUCCESS);
@@ -137,10 +141,11 @@ TEST(RASCLHardwareInterfaceTest, AppliesReferenceSwitchToUrdfZeroOffsets) {
 
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 0, 0.0), 0);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, 0.0), -802816);
-  EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, 0.0), -802816);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, 0.0), 802816);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 3, 0.0), 0);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 1, kHalfPi), 0);
   EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, kHalfPi), 0);
+  EXPECT_EQ(Peer::RadiansToCounts(hardware, 2, -kHalfPi), 1605632);
 }
 
 TEST(RASCLHardwareInterfaceTest, RejectsUnsupportedControlMode) {

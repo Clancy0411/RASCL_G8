@@ -68,6 +68,14 @@ def generate_launch_description():
         default_value="1323008",
         description="Joint output counts per revolution for the end-effector drive: 4096 * 323 by default.",
     )
+    lowerarm_direction_arg = DeclareLaunchArgument(
+        "lowerarm_direction",
+        default_value="-1",
+        description=(
+            "Drive 2 encoder-to-URDF sign. -1 is the physical lowerarm direction "
+            "correction and must be paired with lowerarm_home_offset_counts:=802816."
+        ),
+    )
     start_bridge_arg = DeclareLaunchArgument(
         "start_bridge",
         default_value="false",
@@ -85,8 +93,11 @@ def generate_launch_description():
     )
     lowerarm_home_offset_arg = DeclareLaunchArgument(
         "lowerarm_home_offset_counts",
-        default_value="-802816",
-        description="Raw count at the physical URDF zero pose for lowerarm_joint.",
+        default_value="802816",
+        description=(
+            "Raw count at the physical URDF zero pose for lowerarm_joint when "
+            "lowerarm_direction:=-1."
+        ),
     )
     spur_gear_home_offset_arg = DeclareLaunchArgument(
         "spur_gear_home_offset_counts",
@@ -109,6 +120,7 @@ def generate_launch_description():
             " control_mode:=", LaunchConfiguration("control_mode"),
             " axis_counts_per_revolution:=", LaunchConfiguration("axis_counts_per_revolution"),
             " gripper_counts_per_revolution:=", LaunchConfiguration("gripper_counts_per_revolution"),
+            " lowerarm_direction:=", LaunchConfiguration("lowerarm_direction"),
             " shoulder_home_offset_counts:=", LaunchConfiguration("shoulder_home_offset_counts"),
             " upperarm_home_offset_counts:=", LaunchConfiguration("upperarm_home_offset_counts"),
             " lowerarm_home_offset_counts:=", LaunchConfiguration("lowerarm_home_offset_counts"),
@@ -205,6 +217,7 @@ def generate_launch_description():
             enable_dc_sync_arg,
             axis_counts_arg,
             gripper_counts_arg,
+            lowerarm_direction_arg,
             shoulder_home_offset_arg,
             upperarm_home_offset_arg,
             lowerarm_home_offset_arg,

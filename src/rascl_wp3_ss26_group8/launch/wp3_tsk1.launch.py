@@ -23,6 +23,7 @@ def generate_launch_description():
     interface = LaunchConfiguration("interface")
     control_mode = LaunchConfiguration("control_mode")
     controller_config = LaunchConfiguration("controller_config")
+    lowerarm_direction = LaunchConfiguration("lowerarm_direction")
     shoulder_home_offset_counts = LaunchConfiguration("shoulder_home_offset_counts")
     upperarm_home_offset_counts = LaunchConfiguration("upperarm_home_offset_counts")
     lowerarm_home_offset_counts = LaunchConfiguration("lowerarm_home_offset_counts")
@@ -53,6 +54,7 @@ def generate_launch_description():
             "control_mode": control_mode,
             "controller_config": controller_config,
             "start_bridge": start_bridge,
+            "lowerarm_direction": lowerarm_direction,
             "shoulder_home_offset_counts": shoulder_home_offset_counts,
             "upperarm_home_offset_counts": upperarm_home_offset_counts,
             "lowerarm_home_offset_counts": lowerarm_home_offset_counts,
@@ -115,9 +117,14 @@ def generate_launch_description():
             default_value="false",
             description="Passed to rascl_description; false reuses the Homing bridge.",
         ),
+        DeclareLaunchArgument(
+            "lowerarm_direction",
+            default_value="-1",
+            description="Drive 2 encoder-to-URDF sign; pair -1 with home offset +802816.",
+        ),
         DeclareLaunchArgument("shoulder_home_offset_counts", default_value="0"),
         DeclareLaunchArgument("upperarm_home_offset_counts", default_value="-802816"),
-        DeclareLaunchArgument("lowerarm_home_offset_counts", default_value="-802816"),
+        DeclareLaunchArgument("lowerarm_home_offset_counts", default_value="802816"),
         DeclareLaunchArgument("spur_gear_home_offset_counts", default_value="0"),
         DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),
         DeclareLaunchArgument("target_y", default_value="0.00", description="TCP target y in base_link [m]."),
