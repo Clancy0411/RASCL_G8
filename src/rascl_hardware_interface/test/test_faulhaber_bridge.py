@@ -204,6 +204,33 @@ class BridgePDOTest(unittest.TestCase):
             int(20_000_000).to_bytes(4, "little"),
         )
 
+    def test_csp_interpolation_rate_matches_twenty_ms_pdo_cycle(self):
+        slave = FakeSlave()
+        bus = make_bus(pdo_cycle_ns=20_000_000)
+        bus._configure_cyclic_interpolation_rate(slave, slave_index=0)
+
+        self.assertEqual(
+            slave.values[(bridge.CYCLIC_MODE_INTERPOLATION_RATE, 0)],
+            int(200).to_bytes(2, "little"),
+        )
+
+    def test_csp_connect_configures_interpolation_for_required_drives_only(self):
+        slaves = [FakeSlave() for _ in range(4)]
+        master = FakeMaster(slaves)
+        original_master = bridge.pysoem.Master
+        bridge.pysoem.Master = lambda: master
+        try:
+            make_bus(ignored_csp_drive_indices=[3]).connect()
+        finally:
+            bridge.pysoem.Master = original_master
+
+        for slave in slaves[:3]:
+            self.assertEqual(
+                slave.values[(bridge.CYCLIC_MODE_INTERPOLATION_RATE, 0)],
+                int(200).to_bytes(2, "little"),
+            )
+        self.assertNotIn((bridge.CYCLIC_MODE_INTERPOLATION_RATE, 0), slaves[3].values)
+
     def test_profile_homing_connection_stays_sdo_only_in_preop(self):
         master = FakeMaster([FakeSlave() for _ in range(4)])
         original_master = bridge.pysoem.Master

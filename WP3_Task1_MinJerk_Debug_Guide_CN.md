@@ -426,6 +426,7 @@ ros2 launch rascl_description ros2_control.launch.py \
 `T1` 应依次看到：
 
 ```text
+CSP interpolation 0x2332.00 configured to 200 x 100 us (20000000 ns PDO cycle)
 assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
 Deferred process image mapped
 Master reached OP state
@@ -579,6 +580,7 @@ source install/local_setup.bash
 | ROS offset（名义） | `[0,-802816,-802816,0]` |
 | CSP mode | 8 |
 | PDO cycle | `20 ms / 50 Hz` |
+| CSP interpolation `0x2332:00` | `200` (`20 ms / 100 us`，由 bridge 写入并回读) |
 | RxPDO2 | `0x6040 + 0x607A`, 6 bytes |
 | TxPDO2 | `0x6041 + 0x6064`, 6 bytes |
 | TCP bridge | `127.0.0.1:15001` |

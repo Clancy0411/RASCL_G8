@@ -37,6 +37,12 @@ HOMING_SEARCH_SPEED = 0x01
 HOMING_ZERO_SPEED = 0x02
 HOMING_ACCELERATION = 0x609A
 
+# FAULHABER CSP target-position interpolation.  The value is the desired
+# target refresh interval expressed as multiples of the drive's fixed 100 us
+# internal position-control update.
+CYCLIC_MODE_INTERPOLATION_RATE = 0x2332
+INTERPOLATION_QUANTUM_NS = 100_000
+
 # FAULHABER digital I/O objects used by the tested automatic-homing workflow.
 DIGITAL_INPUT_SETTINGS = 0x2310
 DIGITAL_IO_STATUS = 0x2311
@@ -377,6 +383,23 @@ class FaulhaberBus:
             and self.pdo_cycle_ns % 1_000_000 == 0
         ):
             raise ValueError("SM-Sync cycle must be a 1 ms multiple between 1 ms and 100 ms")
+        self._cyclic_interpolation_rate()
+
+    def _cyclic_interpolation_rate(self) -> int:
+        """Return the FAULHABER 0x2332.00 value for the configured PDO period."""
+
+        if self.pdo_cycle_ns % INTERPOLATION_QUANTUM_NS != 0:
+            raise ValueError(
+                "PDO cycle must be an exact multiple of 100000 ns for "
+                "FAULHABER CSP interpolation"
+            )
+        interpolation_rate = self.pdo_cycle_ns // INTERPOLATION_QUANTUM_NS
+        if not 1 <= interpolation_rate <= 0xFFFF:
+            raise ValueError(
+                "FAULHABER CSP interpolation rate must fit the U16 range: "
+                f"{interpolation_rate}"
+            )
+        return int(interpolation_rate)
 
     @staticmethod
     def _sdo_write_int_raw(
@@ -392,6 +415,31 @@ class FaulhaberBus:
     @staticmethod
     def _sdo_read_int_raw(slave, index: int, subindex: int, signed: bool = False) -> int:
         return int.from_bytes(slave.sdo_read(index, subindex), "little", signed=signed)
+
+    def _configure_cyclic_interpolation_rate(self, slave, slave_index: int) -> None:
+        """Match target interpolation in the drive to the CSP PDO refresh period."""
+
+        interpolation_rate = self._cyclic_interpolation_rate()
+        self._sdo_write_int_raw(
+            slave,
+            CYCLIC_MODE_INTERPOLATION_RATE,
+            0,
+            interpolation_rate,
+            size=2,
+        )
+        configured_rate = self._sdo_read_int_raw(
+            slave, CYCLIC_MODE_INTERPOLATION_RATE, 0
+        )
+        if configured_rate != interpolation_rate:
+            raise RuntimeError(
+                f"Slave {slave_index}: 0x2332.00 readback is {configured_rate}, "
+                f"expected {interpolation_rate}"
+            )
+        print(
+            f"[EtherCAT] Slave {slave_index}: CSP interpolation 0x2332.00 "
+            f"configured to {configured_rate} x 100 us "
+            f"({self.pdo_cycle_ns} ns PDO cycle)"
+        )
 
     def _verify_factory_position_pdos(self, slave, slave_index: int) -> None:
         rx_count = self._sdo_read_int_raw(slave, POSITION_RXPDO, 0)
@@ -468,6 +516,10 @@ class FaulhaberBus:
                     f"{len(self.master.slaves)} slave(s) were found"
                 )
             if self.control_mode == "csp":
+                if drive_id not in self.ignored_csp_drive_ids:
+                    self._configure_cyclic_interpolation_rate(
+                        self.master.slaves[slave_index], slave_index
+                    )
                 self._assign_factory_position_pdos(self.master.slaves[slave_index], slave_index)
                 if not self.enable_dc_sync:
                     self._configure_sm_cycle_monitoring(
@@ -593,8 +645,10 @@ class FaulhaberBus:
         if self.deferred_csp_prepared:
             return
 
-        for slave_index in self.slave_indices:
+        for drive_id, slave_index in enumerate(self.slave_indices):
             slave = self.master.slaves[slave_index]
+            if drive_id not in self.ignored_csp_drive_ids:
+                self._configure_cyclic_interpolation_rate(slave, slave_index)
             self._assign_factory_position_pdos(slave, slave_index)
             if not self.enable_dc_sync:
                 self._configure_sm_cycle_monitoring(slave, slave_index)

@@ -156,7 +156,11 @@ Operation Enabled. Support the arm before stopping ros2_control because
 shutdown disables the drives.
 
 The defaults select `control_mode:=csp`, `controllers_csp.yaml`, a 20 ms PDO
-cycle, and SM-Sync. Profile Position remains available only as a regression
+cycle, and SM-Sync. Before entering CSP, the bridge writes and reads back the
+FAULHABER U16 `0x2332:00` Cyclic Mode Interpolation Rate as `200`
+(`20 ms / 100 us`) for Drives 0-2; an ignored Drive 3 is left untouched. This
+interpolates each 20 ms target update inside the drive instead of applying it
+as a 100 us step. Profile Position remains available only as a regression
 fallback by explicitly selecting both the profile mode and controller config.
 
 If the network interface has a different name, replace `robot_interface` with the actual interface name.
