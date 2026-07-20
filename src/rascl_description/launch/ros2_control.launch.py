@@ -70,10 +70,10 @@ def generate_launch_description():
     )
     lowerarm_direction_arg = DeclareLaunchArgument(
         "lowerarm_direction",
-        default_value="-1",
+        default_value="1",
         description=(
-            "Drive 2 encoder-to-URDF sign. -1 is the physical lowerarm direction "
-            "correction and must be paired with lowerarm_home_offset_counts:=802816."
+            "Drive 2 encoder-to-URDF sign. +1 matches the validated lowerarm motion "
+            "direction and must be paired with lowerarm_home_offset_counts:=-802816."
         ),
     )
     start_bridge_arg = DeclareLaunchArgument(
@@ -93,10 +93,10 @@ def generate_launch_description():
     )
     lowerarm_home_offset_arg = DeclareLaunchArgument(
         "lowerarm_home_offset_counts",
-        default_value="802816",
+        default_value="-802816",
         description=(
             "Raw count at the physical URDF zero pose for lowerarm_joint when "
-            "lowerarm_direction:=-1."
+            "lowerarm_direction:=1."
         ),
     )
     spur_gear_home_offset_arg = DeclareLaunchArgument(

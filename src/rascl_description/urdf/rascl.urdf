@@ -10,11 +10,11 @@
   <xacro:arg name="shoulder_direction" default="1"/>
   <xacro:arg name="upperarm_direction" default="1"/>
   <!--
-    Drive 2 encoder counts are opposite to the physical lowerarm direction.
-    Keep the URDF/IK convention unchanged and correct only its count-to-radian
-    conversion.
+    Drive 2 is calibrated with the same positive encoder-to-URDF sign as the
+    commanded lowerarm motion.  Its offset keeps the reference-switch pose at
+    lowerarm_joint=+pi/2 without changing the URDF/IK geometry.
   -->
-  <xacro:arg name="lowerarm_direction" default="-1"/>
+  <xacro:arg name="lowerarm_direction" default="1"/>
   <xacro:arg name="gripper_direction" default="1"/>
   <!--
     Software calibration between the reference-switch position and the URDF
@@ -26,7 +26,7 @@
   -->
   <xacro:arg name="shoulder_home_offset_counts" default="0"/>
   <xacro:arg name="upperarm_home_offset_counts" default="-802816"/>
-  <xacro:arg name="lowerarm_home_offset_counts" default="802816"/>
+  <xacro:arg name="lowerarm_home_offset_counts" default="-802816"/>
   <xacro:arg name="spur_gear_home_offset_counts" default="0"/>
 
   <link name="world"/>

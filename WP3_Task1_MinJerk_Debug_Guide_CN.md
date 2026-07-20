@@ -133,13 +133,13 @@ IK/规划失败但 T1/T2 没有 PDO、WKC、following error，且两个 controll
 ```text
 URDF q=[0,0,0,0] TCP              = [0.29756,-0.00177,0.043001] m
 自动 Home q~=[0,+pi/2,+pi/2,0] TCP = [0.20756,-0.00177,0.293001] m
-direction（D0–D3）                 = [+1,+1,-1,+1]
-home_offset_counts 名义值          = [0,-802816,+802816,0]
+direction（D0–D3）                 = [+1,+1,+1,+1]
+home_offset_counts 名义值          = [0,-802816,-802816,0]
 ```
 
 `homing_offsets=[0,0,0,0]` 是驱动器 `0x607C`，不得用来补偿 URDF 零位。Drive 2
-的 `direction=-1` 与 `home_offset_counts=+802816` 是必须成对使用的编码器方向校正；
-这样其自动 Home 仍显示为 `+pi/2`，URDF、IK 与 TCP 定义不变。
+使用 `direction=+1` 与 `home_offset_counts=-802816` 的配对，使正向规划对应实机正向，
+同时自动 Home 仍显示为 `+pi/2`；URDF、IK 与 TCP 定义不变。
 
 ## 1. 启动容器
 
@@ -416,10 +416,10 @@ ros2 launch rascl_description ros2_control.launch.py \
   interface:=enx3c18a0256deb \
   use_fake_hardware:=false \
   start_bridge:=false \
-  lowerarm_direction:=-1 \
+  lowerarm_direction:=1 \
   shoulder_home_offset_counts:=0 \
   upperarm_home_offset_counts:=-802816 \
-  lowerarm_home_offset_counts:=802816 \
+  lowerarm_home_offset_counts:=-802816 \
   spur_gear_home_offset_counts:=0
 ```
 
@@ -572,8 +572,8 @@ source install/local_setup.bash
 | Homing method | `[28,28,24,24]` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]` |
-| ROS direction（名义） | `[+1,+1,-1,+1]` |
-| ROS offset（名义） | `[0,-802816,+802816,0]` |
+| ROS direction（名义） | `[+1,+1,+1,+1]` |
+| ROS offset（名义） | `[0,-802816,-802816,0]` |
 | CSP mode | 8 |
 | PDO cycle | `20 ms / 50 Hz` |
 | RxPDO2 | `0x6040 + 0x607A`, 6 bytes |

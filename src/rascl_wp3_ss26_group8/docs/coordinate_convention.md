@@ -30,9 +30,9 @@ TCP in base_link = [0.29756, -0.00177, 0.043001] m
 ```
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
-interface applies nominal `direction=[+1,+1,-1,+1]` and
-`home_offset_counts=[0,-802816,+802816,0]`; Drive 2's sign and offset are a
-paired encoder-direction correction. Final values must be replaced by raw
+interface applies nominal `direction=[+1,+1,+1,+1]` and
+`home_offset_counts=[0,-802816,-802816,0]`; Drive 2's sign and offset are a
+paired mapping so positive lowerarm commands match physical motion. Final values must be replaced by raw
 counts measured in the physical URDF-zero pose after a successful Home, with
 the drives disabled and the links supported. The guarded `GET_ALL` measurement
 procedure is documented in `WP3_Task1_MinJerk_Debug_Guide_CN.md`.

@@ -48,15 +48,15 @@ nominal defaults are:
 
 ```text
 [shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
-direction          = [+1, +1, -1, +1]
-home_offset_counts = [0, -802816, +802816, 0] counts
+direction          = [+1, +1, +1, +1]
+home_offset_counts = [0, -802816, -802816, 0] counts
 ```
 
 Therefore raw zero after automatic Homing is represented as
 `[0,+pi/2,+pi/2,0] rad`. These parameters do not change URDF joint origins, the
 IK geometry, or fake hardware's initial `q=[0,0,0,0]` pose. Drive 2 uses the
-paired `lowerarm_direction:=-1` and `lowerarm_home_offset_counts:=802816`
-correction so that its physical motion agrees with the lowerarm URDF sign.
+paired `lowerarm_direction:=1` and `lowerarm_home_offset_counts:=-802816`
+mapping so that positive lowerarm commands agree with its physical motion.
 Override the direction/offset pair only together when recalibrating Drive 2.
 
 ### `config/controllers.yaml`
