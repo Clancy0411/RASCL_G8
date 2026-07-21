@@ -132,6 +132,14 @@ and state checks, and receives Disable Voltage in every PDO cycle. Do not rely
 on it to hold a load. After its Homing fault is repaired, restore four-axis mode
 with `ignore_spur_gear_in_csp:=false`.
 
+For stand-alone Drive 3/gripper diagnostics before its Homing procedure is
+validated, the TCP bridge also accepts `MOVE_SPUR_REL <delta_counts>`. It reads
+Drive 3's current raw `0x6064` value, moves by that signed encoder-count delta
+in Profile Position, waits for Target Reached, then disables Drive 3. The
+command is rejected while CSP/PDO is active and must not be used as a calibrated
+joint-position interface. `rascl_debug.sh` group `15` wraps this command with a
+small default step limit and confirmation.
+
 Validate Drives 0–2 with `home_one`, or call `home_all` once. Keep the Homing
 launch running until the complete CSP session has ended. For a gravity-loaded
 arm, stopping it between Homing and CSP removes drive voltage.
@@ -182,7 +190,8 @@ positions should be:
 ```
 
 Drive 3 is unhomed in this mode, so its reported position is not an acceptance
-value and position commands for it are ignored by the bridge.
+value and CSP position targets for it are ignored by the bridge. Its separate
+pre-CSP `MOVE_SPUR_REL` diagnostic is described above.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search. The ros2_control parameters

@@ -77,6 +77,25 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
    - 运动结束后脚本再次检查 controller 和 `/joint_states`；失败时必须完整重启。
    - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
 
+### Drive 3 / gripper 独立测试（暂不 Homing）
+
+此测试只验证 Drive 3 `spur_gear_joint` 能按编码器增量运动；不使用 Home、不使用
+URDF 角度、不进入 CSP，也不会命令 Drive 0–2。必须与上面的 CSP 流程分开：
+
+```text
+T1：4（保持 bridge 运行）
+T2 或 T3：15 → 输入 2000 → SPUR
+T2 或 T3：15 → 输入 -2000 → SPUR
+完成后：T1 Ctrl-C；需要恢复三轴 CSP 时，从 T1:4 → T2:6→7 完整重启。
+```
+
+组 `15` 的数值单位是 Drive 3 原始 encoder counts，不是弧度或米。它读取当前
+`0x6064`，执行 `target = current + delta`，等待 Target Reached，然后自动发送
+Disable Voltage。第一次用 `+2000`，观察实际夹爪方向；第二次用 `-2000` 验证反向。
+单次默认限制为 `±20000` counts；若已确认机械范围且确需更大步长，才显式使用
+`RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS=<正整数> bash ./rascl_debug.sh 15`。组 `7` 或
+任意 `ros2_control_node` 正在运行时，脚本和 bridge 都会拒绝该命令。
+
 ### C. CSP 正常时反复发送新坐标
 
 T1 的组 `4` 和 T2 的组 `7` 保持原样运行。只在 T3 重复：
@@ -124,9 +143,10 @@ IK/规划失败但 T1/T2 没有 PDO、WKC、following error，且两个 controll
 4. 任一 controller inactive、WKC/following error、方向异常时禁止发目标。
 5. 停机前先支撑机械臂；正常停机会 Disable Voltage。
 
-当前临时使用三轴模式：Drive 3 `spur_gear_joint` 不执行 Homing，不参与 CSP
-准入和状态检查，并在每个 PDO 周期保持 Disable Voltage。不得向该关节施加载荷或
-依赖其保持位置。修复后用 `ignore_spur_gear_in_csp:=false` 恢复四轴模式。
+当前临时使用三轴 CSP 模式：Drive 3 `spur_gear_joint` 不执行 Homing，不参与 CSP
+准入和状态检查，并在每个 PDO 周期保持 Disable Voltage。CSP 期间不得向该关节施加
+载荷或依赖其保持位置。仅在 CSP 未启动时，才可按上文组 `15` 做独立的相对运动测试。
+修复后用 `ignore_spur_gear_in_csp:=false` 恢复四轴模式。
 
 坐标约定：
 
@@ -203,6 +223,7 @@ bash ./rascl_debug.sh
 | 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
 | 13 | T3 | CSP 启动后查看实时模型 TCP |
 | 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
+| 15 | T2/T3 | 独立 Drive 3 相对运动测试；只能在未启动 CSP 时使用 |
 
 日常实机顺序以本指南最前面的
 `T1:4 → T2:6→7 → T3:8→13→14→9→10` 为准。下面保留原始命令用于排错。

@@ -18,6 +18,9 @@ TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
+# Stand-alone Drive 3/gripper diagnostics use raw encoder-count increments.
+# It has no validated Home yet, so a deliberately small default limit is used.
+SPUR_GEAR_STEP_LIMIT_COUNTS="${RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS:-20000}"
 STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
 TARGET_STATE_FILE="$STATE_DIR/target.state"
 CSP_SESSION_FILE="$STATE_DIR/csp_session.state"
@@ -89,6 +92,10 @@ is_number() {
   [[ "$1" =~ ^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]
 }
 
+is_integer() {
+  [[ "$1" =~ ^[-+]?[0-9]+$ ]]
+}
+
 is_positive_number() {
   [[ "$1" =~ ^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || return 1
   local digits="${1#+}"
@@ -149,6 +156,42 @@ require_csp_session() {
   IFS= read -r session_pid <"$CSP_SESSION_FILE"
   [[ "$session_pid" =~ ^[0-9]+$ ]] && kill -0 "$session_pid" 2>/dev/null ||
     die "组 7 CSP 会话已结束；禁止复用旧状态，请完整重启"
+}
+
+require_spur_gear_standalone_session() {
+  if [[ -f "$CSP_SESSION_FILE" ]]; then
+    local session_pid
+    IFS= read -r session_pid <"$CSP_SESSION_FILE" || true
+    if [[ "$session_pid" =~ ^[0-9]+$ ]] && kill -0 "$session_pid" 2>/dev/null; then
+      die "组 7 CSP 会话仍在运行；禁止单独运动 Drive 3。先在 T2 按 Ctrl-C，再关闭 T1 并重新启动组 4。"
+    fi
+    rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
+  fi
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f 'ros2_control_node' >/dev/null 2>&1; then
+    die "检测到 ros2_control_node；Drive 3 独立测试只能在未启动组 7 时进行。"
+  fi
+}
+
+tcp_bridge_command() {
+  local command="$1"
+  python3 - "$command" <<'PY'
+import socket
+import sys
+
+command = sys.argv[1]
+with socket.create_connection(("127.0.0.1", 15001), timeout=3) as sock:
+    sock.settimeout(12)
+    sock.sendall((command + "\n").encode("utf-8"))
+    reply = b""
+    while b"\n" not in reply:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        reply += chunk
+if not reply:
+    raise RuntimeError("TCP bridge returned no response")
+print(reply.decode("utf-8", errors="replace").strip())
+PY
 }
 
 save_plan_state() {
@@ -373,6 +416,38 @@ group_tcp_pose() {
   timeout 3s ros2 run tf2_ros tf2_echo base_link spur_gear || [[ "$?" -eq 124 ]]
 }
 
+group_spur_gear_step() {
+  load_ros
+  require_spur_gear_standalone_session
+  is_integer "$SPUR_GEAR_STEP_LIMIT_COUNTS" && (( SPUR_GEAR_STEP_LIMIT_COUNTS > 0 )) ||
+    die "RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS 必须是正整数"
+
+  local ping
+  if ! ping="$(tcp_bridge_command "PING")"; then
+    die "无法连接 T1 的 bridge；先在 T1 启动组 4，并等待 TCP bridge listening。"
+  fi
+  [[ "$ping" == "OK" ]] || die "T1 bridge PING 失败：$ping"
+
+  echo "Drive 3 standalone gripper test: raw relative encoder counts, no Homing."
+  echo "每次命令完成后会自动 Disable Voltage；+/- 的实际夹爪方向尚未标定。"
+  echo "本次最大允许步长：±$SPUR_GEAR_STEP_LIMIT_COUNTS counts。建议首次输入 2000。"
+  local delta response
+  read -r -p "Drive 3 相对步长 counts（正/负，默认 2000）: " delta
+  delta="${delta:-2000}"
+  is_integer "$delta" || die "步长必须是整数 counts：$delta"
+  (( delta != 0 )) || die "步长不能为 0"
+  (( delta >= -SPUR_GEAR_STEP_LIMIT_COUNTS && delta <= SPUR_GEAR_STEP_LIMIT_COUNTS )) ||
+    die "步长超出 ±$SPUR_GEAR_STEP_LIMIT_COUNTS counts；如确有必要，显式设置 RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS 后重试。"
+
+  confirm_exact SPUR "确认只有 Drive 3/gripper 将运动，T2 组 7 未运行；输入 SPUR 执行："
+  if ! response="$(tcp_bridge_command "MOVE_SPUR_REL $delta")"; then
+    die "Drive 3 TCP 命令无响应；停止测试并检查 T1 输出。"
+  fi
+  [[ "$response" == OK* ]] || die "Drive 3 未完成运动：$response"
+  echo "$response"
+  echo "已自动 Disable Voltage。观察夹爪实际方向；需要反向时再次选择组 15 并输入相反数。"
+}
+
 group_set_target() {
   local x y z duration
   read -r -p "目标 x [m]（当前 $TARGET_X）：" x
@@ -420,10 +495,11 @@ print_menu() {
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
     " 13  查看当前模型 TCP 坐标                              [T3]" \
     " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
+    " 15  独立测试 Drive 3 spur gear 相对运动（无 CSP）       [T2/T3，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "实机推荐顺序：T1=4；T2=6→7；T3=8→13→14→9→10。"
+    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3 单测：T1=4；T2/T3=15。"
 }
 
 run_group() {
@@ -442,6 +518,7 @@ run_group() {
     12) group_pack_logs ;;
     13) group_tcp_pose ;;
     14) group_set_target ;;
+    15) group_spur_gear_step ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac
