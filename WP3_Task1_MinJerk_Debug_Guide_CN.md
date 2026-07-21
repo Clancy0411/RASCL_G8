@@ -32,11 +32,11 @@ bash ./rascl_debug.sh
 ```text
 T1：4
     ↓ bridge 保持运行，不能 Ctrl-C
-T2：6 → HOME
+T2：6
     ↓ 必须显示 success=True 和 CSP handoff armed
 T2：7
     ↓ ros2_control 保持运行，不能 Ctrl-C
-T3：8 → 13 → 14 → 9 → 10 → MOVE
+T3：8 → 13 → 14 → 9 → 10
 ```
 
 详细检查点：
@@ -48,7 +48,7 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
-   - 脚本先读取数字输入；确认机械支撑、急停和活动空间后输入 `HOME`。
+   - 脚本不再要求输入二次确认，选择组 `6` 后立即开始 Home。
    - 只运动 Drive 0–2；Drive 3 保持原安装位置，不执行 Homing。
    - 必须返回 `success=True` 和 `Homing completed for required drives; CSP handoff armed`。
    - 未看到这两项时禁止进入组 7。
@@ -73,7 +73,7 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
      `bash ./rascl_debug.sh 10` 中执行。
 8. **T3 组 10：执行。**
    - 脚本再次确认两个 controller 为 `active` 且 `/joint_states` 可用。
-   - 核对目标后输入 `MOVE`，机械臂才会运动。
+   - 组 `10` 不再要求输入二次确认，执行后立即开始已规划的轨迹。
    - 运动结束后脚本再次检查 controller 和 `/joint_states`；失败时必须完整重启。
    - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
 
@@ -81,9 +81,15 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
 
 完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。输入的是 Drive 3 **相对**
 encoder 增量：输入 `2000` 就在当前值基础上沿已配置方向移动 2000 counts；输入
-`-2000` 则反向移动。该换算不依赖 Drive 3 的 Home 或绝对零位。脚本通过现有
-`rascl_position_controller` 和 CSP/PDO 发送四轴命令；前三轴使用刚读到的
-`/joint_states` 保持不动。
+`-2000` 则反向移动。该换算不依赖 Drive 3 的 Home 或绝对零位。脚本不会再一次性
+发送最终目标：它以 50 Hz minimum-jerk CSP 轨迹平滑发送，前三轴使用刚读到的
+`/joint_states` 保持不动。默认平均速度为 `10000 counts/s`，因此大位移会自动延长；
+脚本可输入更长运动时间，不能缩短到安全下限以下。每次组 `15` 会等待运动和 1 秒
+稳定期结束后才返回，因此可连续执行两次组 `15`。
+
+每次组 `15` 会在 ROS 日志中写入 `SPUR_TRACE`：相对 counts、源/目标估算 raw counts、
+每秒实际位置和剩余 counts、完成时误差。组 `12` 打包的日志包含这些记录；若再次故障，
+同时会有 bridge 的 `CSP_SNAPSHOT D3(target=...,actual=...,error=...,status=...)`。
 
 组 `15` 只能在组 `7` 的 controller 都为 `active`、且 `wp3_tsk1` 没有执行时使用。
 它会清除旧组 `9` 的规划授权，因此之后运行 Task 1 必须重新执行 `14 → 9 → 10`。
@@ -95,7 +101,7 @@ Task 1 会从实时 `/joint_states` 读取新的 spur gear 位置，并在其 Ca
 T1 的组 `4` 和 T2 的组 `7` 保持原样运行。只在 T3 重复：
 
 ```text
-14 → 9 → 10 → MOVE
+14 → 9 → 10
 ```
 
 组 `14`、`9`、`10` 可以分别用 `bash ./rascl_debug.sh <组号>` 运行；目标和规划授权会
@@ -497,8 +503,8 @@ RViz 必须一致。结束 `topic hz` 时只在 `T3` 按 `Ctrl-C`。
 
 ## 9. 小幅 minimum-jerk 轨迹
 
-脚本：`T3` 先选择组 `14` 设置目标，再选择组 `9`；检查结果后选择组 `10`
-并输入 `MOVE`。每个新目标都必须重新执行 `14 → 9 → 10`。
+脚本：`T3` 先选择组 `14` 设置目标，再选择组 `9`；检查结果后选择组 `10`。
+每个新目标都必须重新执行 `14 → 9 → 10`。
 
 `T3` 先只规划：
 

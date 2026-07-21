@@ -19,6 +19,12 @@ SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
 SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
 SPUR_GEAR_MIN_POSITION_RAD="${RASCL_SPUR_GEAR_MIN_POSITION_RAD:--3.1415}"
 SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-3.1415}"
+# Group 15 limits the average Drive 3 speed instead of sending one large CSP
+# setpoint step.  Override deliberately per invocation when characterising the
+# gripper, for example RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S=5000.
+SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-10000}"
+SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
+SPUR_GEAR_SETTLE_DURATION_S="${RASCL_SPUR_GEAR_SETTLE_DURATION_S:-1.0}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
@@ -49,14 +55,6 @@ load_ros() {
     die "install/local_setup.bash not found; run group 1 first"
   fi
   export ROS_DOMAIN_ID
-}
-
-confirm_exact() {
-  local expected="$1"
-  local prompt="$2"
-  local answer
-  read -r -p "$prompt" answer
-  [[ "$answer" == "$expected" ]] || die "Cancelled"
 }
 
 require_wp3_package() {
@@ -288,11 +286,8 @@ home_one() {
 group_home_individual() {
   load_ros
   read_inputs
-  confirm_exact HOME "检查传感器并支撑机械臂；输入 HOME 启动 Drive 0："
   home_one 0
-  confirm_exact HOME "确认 Drive 0 成功；输入 HOME 启动 Drive 1："
   home_one 1
-  confirm_exact HOME "确认 Drive 1 成功；输入 HOME 启动 Drive 2："
   home_one 2
   echo "Drive 0-2 Homing 已结束；Drive 3 不执行 Home。确认最后响应包含 CSP handoff armed。"
 }
@@ -301,7 +296,6 @@ group_home_all() {
   load_ros
   read_inputs
   echo "home_all 只会运动 Drive 0-2；预装的 Drive 3 不执行 Home，随后仍会进入 CSP。"
-  confirm_exact HOME "检查传感器、支撑和空间；输入 HOME 继续："
   ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
 }
 
@@ -391,7 +385,6 @@ group_real_execute() {
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
     die "3 秒内没有 /joint_states，禁止执行"
   echo "该命令会运动实机；Drive 3 也处于 CSP，Task 1 会保持 spur gear 当前角度。"
-  confirm_exact MOVE "确认目标 [$TARGET_X, $TARGET_Y, $TARGET_Z] m、支撑、空间和急停；输入 MOVE 执行："
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true; then
@@ -438,10 +431,16 @@ group_spur_gear_relative_counts() {
     die "RASCL_SPUR_GEAR_DIRECTION 必须是非零数字"
   is_positive_number "$SPUR_GEAR_COUNTS_PER_REVOLUTION" ||
     die "RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION 必须是正数"
+  is_positive_number "$SPUR_GEAR_SPEED_COUNTS_PER_S" ||
+    die "RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S 必须是正数"
+  is_positive_number "$SPUR_GEAR_MIN_MOTION_DURATION_S" ||
+    die "RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S 必须是正数"
+  is_positive_number "$SPUR_GEAR_SETTLE_DURATION_S" ||
+    die "RASCL_SPUR_GEAR_SETTLE_DURATION_S 必须是正数"
   is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
     die "Drive 3 URDF 限位必须是数字"
 
-  local snapshot shoulder upperarm lowerarm spur delta_counts target_rad
+  local snapshot shoulder upperarm lowerarm spur delta_counts target_rad minimum_duration motion_duration entered_duration
   if ! snapshot="$(read_csp_joint_snapshot)"; then
     die "3 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
@@ -451,10 +450,19 @@ group_spur_gear_relative_counts() {
   delta_counts="${delta_counts:-2000}"
   is_integer "$delta_counts" || die "相对步长必须是整数 counts：$delta_counts"
   (( delta_counts != 0 )) || die "相对步长不能为 0"
-  if ! target_rad="$(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" <<'PY'
+  if ! read -r target_rad minimum_duration < <(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" "$SPUR_GEAR_SPEED_COUNTS_PER_S" "$SPUR_GEAR_MIN_MOTION_DURATION_S" <<'PY'
 import math
 import sys
-current_rad, delta_counts, direction, counts_per_revolution, minimum, maximum = map(float, sys.argv[1:])
+(
+    current_rad,
+    delta_counts,
+    direction,
+    counts_per_revolution,
+    minimum,
+    maximum,
+    speed_counts_per_s,
+    minimum_duration,
+) = map(float, sys.argv[1:])
 target_rad = current_rad + direction * delta_counts * 2.0 * math.pi / counts_per_revolution
 if minimum > maximum:
     raise ValueError("minimum position exceeds maximum position")
@@ -463,20 +471,152 @@ if not minimum <= target_rad <= maximum:
         f"relative move {int(delta_counts)} counts requests {target_rad:.6f} rad, outside "
         f"URDF range [{minimum:.6f}, {maximum:.6f}] rad"
     )
-print(f"{target_rad:.17g}")
+minimum_duration = max(abs(delta_counts) / speed_counts_per_s, minimum_duration)
+print(f"{target_rad:.17g} {minimum_duration:.17g}")
 PY
-)"; then
+); then
     die "Drive 3 相对 counts 指令被 URDF 软件限位拒绝"
   fi
 
+  read -r -p "Drive 3 运动时长 [s]（至少 ${minimum_duration}；直接回车使用此安全时长）: " entered_duration
+  motion_duration="${entered_duration:-$minimum_duration}"
+  is_positive_number "$motion_duration" || die "运动时长必须是正数秒：$motion_duration"
+  if ! python3 - "$motion_duration" "$minimum_duration" <<'PY'
+import sys
+
+duration, minimum = map(float, sys.argv[1:])
+if duration + 1e-9 < minimum:
+    raise ValueError(f"duration {duration:g} s is below safe minimum {minimum:g} s")
+PY
+  then
+    die "运动时长低于安全下限 ${minimum_duration} s；请使用更长时间"
+  fi
+
   clear_plan_state
-  echo "将通过 CSP 发布 [shoulder, upperarm, lowerarm, spur] = [$shoulder, $upperarm, $lowerarm, $target_rad] rad。"
+  echo "Drive 3 将以 50 Hz minimum-jerk CSP 轨迹运动 $delta_counts counts，时长 $motion_duration s。"
   echo "前三轴保持当前 joint_state；此操作已清除旧组 9 规划授权。"
-  confirm_exact SPUR "确认没有 wp3_tsk1 正在执行、夹爪路径清空；输入 SPUR 发送："
-  ros2 topic pub --once /rascl_position_controller/commands \
-    std_msgs/msg/Float64MultiArray \
-    "{data: [$shoulder, $upperarm, $lowerarm, $target_rad]}"
-  echo "Drive 3 CSP 相对目标已发布：delta=$delta_counts counts。到位后再运行组 9，Task 1 会保持此 spur gear 角度。"
+  if ! python3 - "$shoulder" "$upperarm" "$lowerarm" "$spur" "$target_rad" \
+    "$delta_counts" "$motion_duration" "$SPUR_GEAR_DIRECTION" \
+    "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" \
+    "$SPUR_GEAR_SETTLE_DURATION_S" <<'PY'
+import math
+import sys
+import time
+
+import rclpy
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64MultiArray
+
+(
+    shoulder,
+    upperarm,
+    lowerarm,
+    source_spur,
+    target_spur,
+    delta_counts,
+    duration_s,
+    direction,
+    counts_per_revolution,
+    home_offset_counts,
+    settle_s,
+) = map(float, sys.argv[1:])
+
+JOINTS = ("shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint")
+TAU = 2.0 * math.pi
+latest_spur = None
+last_feedback_time = None
+
+
+def rad_to_counts(angle):
+    return int(round(home_offset_counts + direction * angle * counts_per_revolution / TAU))
+
+
+def callback(message):
+    global latest_spur, last_feedback_time
+    by_name = dict(zip(message.name, message.position))
+    if all(name in by_name for name in JOINTS):
+        latest_spur = float(by_name["spur_gear_joint"])
+        last_feedback_time = time.monotonic()
+
+
+def publish(publisher, spur_command):
+    message = Float64MultiArray()
+    message.data = [shoulder, upperarm, lowerarm, spur_command]
+    publisher.publish(message)
+
+
+def log_feedback(logger, phase):
+    if latest_spur is None:
+        logger.warning(f"SPUR_TRACE {phase}: no /joint_states feedback yet")
+        return
+    actual_counts = rad_to_counts(latest_spur)
+    remaining_counts = rad_to_counts(target_spur) - actual_counts
+    logger.info(
+        f"SPUR_TRACE {phase}: actual_rad={latest_spur:.6f} "
+        f"actual_counts={actual_counts} remaining_counts={remaining_counts}"
+    )
+
+
+rclpy.init()
+node = rclpy.create_node("rascl_spur_relative_motion")
+publisher = node.create_publisher(Float64MultiArray, "/rascl_position_controller/commands", 10)
+subscription = node.create_subscription(JointState, "/joint_states", callback, 10)
+logger = node.get_logger()
+source_counts = rad_to_counts(source_spur)
+target_counts = rad_to_counts(target_spur)
+logger.info(
+    f"SPUR_TRACE start: delta_counts={int(delta_counts)} source_rad={source_spur:.6f} "
+    f"source_counts={source_counts} target_rad={target_spur:.6f} "
+    f"target_counts={target_counts} duration_s={duration_s:.3f} rate_hz=50"
+)
+
+try:
+    feedback_deadline = time.monotonic() + 1.0
+    while latest_spur is None and time.monotonic() < feedback_deadline:
+        rclpy.spin_once(node, timeout_sec=0.05)
+    if latest_spur is None:
+        raise RuntimeError("No Drive 3 /joint_states feedback before CSP motion")
+
+    period_s = 0.02
+    start = time.monotonic()
+    next_tick = start
+    next_log = start
+    while True:
+        now = time.monotonic()
+        elapsed = now - start
+        u = min(1.0, elapsed / duration_s)
+        # Fifth-order minimum jerk: zero velocity and acceleration at both ends.
+        blend = 10.0 * u**3 - 15.0 * u**4 + 6.0 * u**5
+        publish(publisher, source_spur + (target_spur - source_spur) * blend)
+        rclpy.spin_once(node, timeout_sec=0.0)
+        if now >= next_log:
+            log_feedback(logger, "progress")
+            next_log += 1.0
+        if last_feedback_time is not None and now - last_feedback_time > 0.5:
+            raise RuntimeError("/joint_states stopped during Drive 3 CSP motion")
+        if u >= 1.0:
+            break
+        next_tick += period_s
+        time.sleep(max(0.0, next_tick - time.monotonic()))
+
+    settle_deadline = time.monotonic() + settle_s
+    while time.monotonic() < settle_deadline:
+        publish(publisher, target_spur)
+        rclpy.spin_once(node, timeout_sec=0.0)
+        if last_feedback_time is not None and time.monotonic() - last_feedback_time > 0.5:
+            raise RuntimeError("/joint_states stopped while Drive 3 was settling")
+        time.sleep(period_s)
+    log_feedback(logger, "complete")
+finally:
+    node.destroy_subscription(subscription)
+    node.destroy_node()
+    rclpy.shutdown()
+PY
+  then
+    die "Drive 3 CSP 轨迹中断；请立即执行组 12 并提交日志"
+  fi
+  require_active_controllers
+  echo "Drive 3 CSP 相对运动完成：delta=$delta_counts counts。随后执行组 9 时，Task 1 会保持此 spur gear 角度。"
 }
 
 group_set_target() {

@@ -173,10 +173,12 @@ The values correspond to:
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported way to command
 `spur_gear_joint` by a signed **relative** Drive 3 encoder increment in counts.
-It adds the increment to the current spur joint state, publishes a four-joint
-controller command that preserves the measured arm pose, and does not require
-Drive 3 Homing. Do not send a direct Profile Position command while ros2_control
-owns the CSP connection.
+It adds the increment to the current spur joint state, then publishes a 50 Hz
+minimum-jerk four-joint CSP trajectory that preserves the measured arm pose.
+Its default average speed is 10000 counts/s, with a per-command duration that
+cannot be shorter than the derived safe minimum. It does not require Drive 3
+Homing. Do not send a direct Profile Position command while ros2_control owns
+the CSP connection.
 
 ## Notes
 
