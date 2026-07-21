@@ -20,7 +20,7 @@ TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
 # Stand-alone Drive 3/gripper diagnostics use raw encoder-count increments.
 # It has no validated Home yet, so a deliberately small default limit is used.
-SPUR_GEAR_STEP_LIMIT_COUNTS="${RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS:-20000}"
+SPUR_GEAR_STEP_LIMIT_COUNTS="${RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS:-500000}"
 STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
 TARGET_STATE_FILE="$STATE_DIR/target.state"
 CSP_SESSION_FILE="$STATE_DIR/csp_session.state"

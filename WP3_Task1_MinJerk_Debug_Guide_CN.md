@@ -92,7 +92,7 @@ T2 或 T3：15 → 输入 -2000 → SPUR
 组 `15` 的数值单位是 Drive 3 原始 encoder counts，不是弧度或米。它读取当前
 `0x6064`，执行 `target = current + delta`，等待 Target Reached，然后自动发送
 Disable Voltage。第一次用 `+2000`，观察实际夹爪方向；第二次用 `-2000` 验证反向。
-单次默认限制为 `±20000` counts；若已确认机械范围且确需更大步长，才显式使用
+单次默认限制为 `±500000` counts；若已确认机械范围且确需更大步长，才显式使用
 `RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS=<正整数> bash ./rascl_debug.sh 15`。组 `7` 或
 任意 `ros2_control_node` 正在运行时，脚本和 bridge 都会拒绝该命令。
 
