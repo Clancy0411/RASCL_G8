@@ -33,6 +33,13 @@ def generate_launch_description():
     pdo_cycle_ns_arg = DeclareLaunchArgument("pdo_cycle_ns", default_value="20000000")
     pdo_timeout_us_arg = DeclareLaunchArgument("pdo_timeout_us", default_value="5000")
     enable_dc_sync_arg = DeclareLaunchArgument("enable_dc_sync", default_value="false")
+    csp_torque_limit_arg = DeclareLaunchArgument(
+        "csp_torque_limit_per_mille",
+        default_value="1000",
+        description=(
+            "Symmetric CSP torque limit for Drives 0-3; 1000 is 100% rated torque."
+        ),
+    )
     drive2_following_error_window_arg = DeclareLaunchArgument(
         "drive2_following_error_window_counts",
         default_value="25000",
@@ -84,6 +91,9 @@ def generate_launch_description():
                 "enable_dc_sync": ParameterValue(
                     LaunchConfiguration("enable_dc_sync"), value_type=bool
                 ),
+                "csp_torque_limit_per_mille": ParameterValue(
+                    LaunchConfiguration("csp_torque_limit_per_mille"), value_type=int
+                ),
                 "drive2_following_error_window_counts": ParameterValue(
                     LaunchConfiguration("drive2_following_error_window_counts"), value_type=int
                 ),
@@ -119,6 +129,7 @@ def generate_launch_description():
             pdo_cycle_ns_arg,
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
+            csp_torque_limit_arg,
             drive2_following_error_window_arg,
             drive2_following_error_timeout_arg,
             ignore_spur_gear_arg,

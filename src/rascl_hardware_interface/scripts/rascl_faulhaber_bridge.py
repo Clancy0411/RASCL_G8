@@ -82,6 +82,12 @@ ERROR_REGISTER_FLAGS = {
 }
 POSITION_CONTROL_PARAMETER_SET = 0x2348
 
+# CiA-402 torque values are expressed in per-mille of the motor rated torque.
+# The manual lists 6000 as the factory value for these objects; the bridge uses
+# that as its explicit override ceiling.  The 1000 default gives every CSP axis
+# full rated torque without requesting an over-rated peak.
+MAX_TORQUE_PER_MILLE = 6000
+
 # FAULHABER CSP target-position interpolation.  The value is the desired
 # target refresh interval expressed as multiples of the drive's fixed 100 us
 # internal position-control update.
@@ -429,6 +435,52 @@ class FaulhaberDrive:
                 f"window={configured_window} counts, timeout={configured_timeout} ms"
             )
 
+    def read_torque_limits(self, retry: bool = True) -> dict[str, int]:
+        """Read the three CiA-402 torque limit objects in rated-torque per-mille."""
+
+        read = self.sdo_read_int_retry if retry else self.sdo_read_int
+        return {
+            "maximum_torque": read(MAX_TORQUE, 0, signed=False),
+            "positive_torque_limit": read(
+                POSITIVE_TORQUE_LIMIT, 0, signed=False
+            ),
+            "negative_torque_limit": read(
+                NEGATIVE_TORQUE_LIMIT, 0, signed=False
+            ),
+        }
+
+    def configure_csp_torque_limit(
+        self, limit_per_mille: int
+    ) -> Tuple[dict[str, int], dict[str, int]]:
+        """Apply and verify one symmetric, session-only CSP torque limit.
+
+        ``1000`` is 100% of rated motor torque.  No CiA-301 parameter-store
+        request is issued, so power-cycling restores the controller's stored
+        configuration.
+        """
+
+        limit = int(limit_per_mille)
+        if not 1 <= limit <= MAX_TORQUE_PER_MILLE:
+            raise ValueError(
+                f"CSP torque limit must be 1..{MAX_TORQUE_PER_MILLE} per-mille"
+            )
+
+        before = self.read_torque_limits(retry=True)
+        for index in (MAX_TORQUE, POSITIVE_TORQUE_LIMIT, NEGATIVE_TORQUE_LIMIT):
+            self.sdo_write_int_retry(index, 0, limit, size=2, signed=False)
+        after = self.read_torque_limits(retry=True)
+        expected = {
+            "maximum_torque": limit,
+            "positive_torque_limit": limit,
+            "negative_torque_limit": limit,
+        }
+        if after != expected:
+            raise RuntimeError(
+                f"Drive {self.drive_id} CSP torque-limit readback mismatch: "
+                f"expected={expected}, actual={after}"
+            )
+        return before, after
+
     @staticmethod
     def _decode_flags(value: int, definitions: dict[int, str]) -> str:
         flags = [name for bit, name in definitions.items() if value & (1 << bit)]
@@ -465,7 +517,9 @@ class FaulhaberDrive:
 
         position_demand = read("position_demand", POSITION_DEMAND_VALUE, signed=True)
         position_actual = read("position_actual", ACTUAL_POSITION, signed=True)
-        following_actual = read("following_error_actual", FOLLOWING_ERROR_ACTUAL_VALUE)
+        following_actual = read(
+            "following_error_actual", FOLLOWING_ERROR_ACTUAL_VALUE, signed=True
+        )
         velocity_actual = read("velocity_actual", VELOCITY_ACTUAL_VALUE, signed=True)
         torque_actual = read("torque_actual", ACTUAL_TORQUE, signed=True)
         maximum_torque = read("maximum_torque", MAX_TORQUE)
@@ -517,6 +571,7 @@ class FaulhaberBus:
         pdo_cycle_ns: int,
         pdo_timeout_us: int,
         enable_dc_sync: bool,
+        csp_torque_limit_per_mille: int = 1000,
         ignored_csp_drive_indices: Optional[Sequence[int]] = None,
         required_homing_drive_indices: Optional[Sequence[int]] = None,
     ) -> None:
@@ -528,6 +583,12 @@ class FaulhaberBus:
         self.pdo_cycle_ns = pdo_cycle_ns
         self.pdo_timeout_us = pdo_timeout_us
         self.enable_dc_sync = enable_dc_sync
+        self.csp_torque_limit_per_mille = int(csp_torque_limit_per_mille)
+        if not 1 <= self.csp_torque_limit_per_mille <= MAX_TORQUE_PER_MILLE:
+            raise ValueError(
+                "csp_torque_limit_per_mille must be "
+                f"1..{MAX_TORQUE_PER_MILLE}"
+            )
         self.ignored_csp_drive_ids = {
             int(index) for index in (ignored_csp_drive_indices or [])
         }
@@ -906,6 +967,62 @@ class FaulhaberBus:
 
         self.deferred_csp_prepared = True
 
+    @staticmethod
+    def _format_torque_limits(values: dict[str, int]) -> str:
+        return (
+            f"{values['maximum_torque']}/"
+            f"{values['positive_torque_limit']}/"
+            f"{values['negative_torque_limit']}"
+        )
+
+    def _configure_csp_torque_limits_locked(self) -> None:
+        """Set and verify CSP torque limits on every participating drive."""
+
+        changes: List[str] = []
+        for drive in self.drives:
+            if drive.drive_id not in self.required_csp_drive_ids:
+                continue
+            before, after = drive.configure_csp_torque_limit(
+                self.csp_torque_limit_per_mille
+            )
+            changes.append(
+                f"D{drive.drive_id} "
+                f"{self._format_torque_limits(before)} -> "
+                f"{self._format_torque_limits(after)}"
+            )
+        print(
+            "[EtherCAT] CSP torque limits verified for this session only "
+            "(0x6072/0x60E0/0x60E1; 1000=rated torque): "
+            + "; ".join(changes)
+        )
+
+    def _capture_torque_snapshot(self) -> str:
+        """Capture actual torque and limits for all drives after a CSP fault."""
+
+        entries: List[str] = []
+        for drive in self.drives:
+            unavailable: List[str] = []
+
+            def read(label: str, index: int, signed: bool = False) -> Optional[int]:
+                try:
+                    return drive.sdo_read_int(index, 0, signed=signed)
+                except Exception as exc:
+                    unavailable.append(f"{label}:{type(exc).__name__}")
+                    return None
+
+            actual = read("actual", ACTUAL_TORQUE, signed=True)
+            maximum = read("max", MAX_TORQUE)
+            positive = read("pos", POSITIVE_TORQUE_LIMIT)
+            negative = read("neg", NEGATIVE_TORQUE_LIMIT)
+            entry = (
+                f"D{drive.drive_id}(actual={actual},max/pos/neg="
+                f"{maximum}/{positive}/{negative}"
+            )
+            if unavailable:
+                entry += ",unavailable=" + ",".join(unavailable)
+            entries.append(entry + ")")
+        return "TORQUE_SNAPSHOT " + "; ".join(entries)
+
     def _request_operational_locked(self, controlword: int = CMD_SHUTDOWN) -> None:
         if self.master is None:
             raise RuntimeError("EtherCAT master is not connected")
@@ -988,6 +1105,11 @@ class FaulhaberBus:
             )
             if len(initial_targets) != len(self.drives):
                 raise RuntimeError(f"Expected {len(self.drives)} CSP targets, got {len(initial_targets)}")
+
+            # Keep the proven Homing search parameters untouched.  Torque is
+            # raised only at the CSP handoff, then every object is read back
+            # before PDO motion is allowed to start.
+            self._configure_csp_torque_limits_locked()
 
             if preserve_homing_hold:
                 self._prepare_deferred_csp_locked()
@@ -1111,16 +1233,22 @@ class FaulhaberBus:
             if drive_id in self.ignored_csp_drive_ids:
                 continue
             if statusword & STATUS_FAULT:
+                # Capture the four compact torque states first; some drives
+                # stop answering less critical SDOs shortly after a fault.
+                torque_snapshot = self._capture_torque_snapshot()
                 diagnostics = self.drives[drive_id].capture_fault_diagnostics()
                 raise RuntimeError(
                     f"Drive {drive_id} fault; statusword=0x{statusword:04X}; "
-                    f"{self._format_csp_snapshot(states)}; {diagnostics}"
+                    f"{self._format_csp_snapshot(states)}; {diagnostics}; "
+                    f"{torque_snapshot}"
                 )
             if statusword & STATUS_FOLLOWING_OR_HOMING_ERROR:
+                torque_snapshot = self._capture_torque_snapshot()
                 diagnostics = self.drives[drive_id].capture_fault_diagnostics()
                 raise RuntimeError(
                     f"Drive {drive_id} CSP following error; statusword=0x{statusword:04X}; "
-                    f"{self._format_csp_snapshot(states)}; {diagnostics}"
+                    f"{self._format_csp_snapshot(states)}; {diagnostics}; "
+                    f"{torque_snapshot}"
                 )
             if (statusword & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE:
                 raise RuntimeError(
@@ -1280,6 +1408,7 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("pdo_cycle_ns", 20_000_000)
         self.declare_parameter("pdo_timeout_us", 5_000)
         self.declare_parameter("enable_dc_sync", False)
+        self.declare_parameter("csp_torque_limit_per_mille", 1000)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
         # Drive 2's factory 32-count / 48-ms monitor is far below the normal
@@ -1313,6 +1442,9 @@ class RASCLFaulhaberBridge(Node):
         self.pdo_cycle_ns = int(self.get_parameter("pdo_cycle_ns").value)
         self.pdo_timeout_us = int(self.get_parameter("pdo_timeout_us").value)
         self.enable_dc_sync = bool(self.get_parameter("enable_dc_sync").value)
+        self.csp_torque_limit_per_mille = int(
+            self.get_parameter("csp_torque_limit_per_mille").value
+        )
         self.ignore_spur_gear_in_csp = bool(
             self.get_parameter("ignore_spur_gear_in_csp").value
         )
@@ -1345,6 +1477,7 @@ class RASCLFaulhaberBridge(Node):
             self.pdo_cycle_ns,
             self.pdo_timeout_us,
             self.enable_dc_sync,
+            self.csp_torque_limit_per_mille,
             [len(self.slave_indices) - 1] if self.ignore_spur_gear_in_csp else [],
             (
                 list(range(len(self.slave_indices) - 1))

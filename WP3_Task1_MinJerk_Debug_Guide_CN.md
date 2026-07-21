@@ -49,6 +49,9 @@ T3：8 → 13 → 14 → 9 → 10
      Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
      `0x607B/0x607D`；不会改写内部行程限位。若 PRE-OP 第一次限位读取出现临时
      `WkcError`，bridge 会短重试；仍失败时只警告并继续，组 `6` 会再次读取。
+   - CSP 转矩限制不会影响这一阶段的 Homing。组 `7` 交接 CSP 时，Drive 0–3 的
+     `0x6072/0x60E0/0x60E1` 才会统一设为 `1000`（100% 额定转矩）并逐项回读。
+     这些值只在当前上电会话生效，不写入永久存储。
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
@@ -60,6 +63,8 @@ T3：8 → 13 → 14 → 9 → 10
    - 未看到这两项时禁止进入组 7。
 3. **仍在 T2 选择组 7：启动 CSP ros2_control。**
    - 组 7 必须复用仍在 T1 运行的 bridge，不能另开 bridge。
+   - T1 必须先出现 `CSP torque limits verified for this session only`，且 D0–D3
+     都显示 `1000/1000/1000`。任何 Drive 回读不一致都会拒绝进入 CSP。
    - T1 必须出现 `Master reached OP state` 和 Homing-to-CSP handoff 成功信息。
    - T2 必须出现 `Activated real RASCL hardware in csp mode`；组 7 随后持续占住 T2。
 4. **T3 组 8：检查 controller 和 joint state。**
@@ -370,6 +375,7 @@ ros2 daemon start
 ```bash
 ros2 launch rascl_description homing.launch.py \
   interface:=enx3c18a0256deb \
+  csp_torque_limit_per_mille:=1000 \
   drive2_following_error_window_counts:=25000 \
   drive2_following_error_timeout_ms:=250 \
   skip_spur_gear_homing:=true
@@ -593,7 +599,9 @@ ss -ltnp | grep 15001
   `0x2324.01`（软件/硬件限位、转矩/电压/速度限制、温度等状态）、`0x1001`、
   `0x1003`、位置/速度/转矩实际值、`0x60F4` 跟随偏差、转矩/速度限值及
   `0x2348.01` 位置环 Kv。快照为只读 SDO，任何单项读取失败都会标为
-  `unavailable`，不会覆盖原始 PDO 故障。停止 T1/T2 后选择组 `12` 打包并提交该
+  `unavailable`，不会覆盖原始 PDO 故障。随后还会记录 `TORQUE_SNAPSHOT`，一次
+  列出 D0–D3 的实际转矩及 `0x6072/0x60E0/0x60E1` 回读值。停止 T1/T2 后选择
+  组 `12` 打包并提交该
   `tar.gz`；无需手动复制终端。
 - controller inactive：
 

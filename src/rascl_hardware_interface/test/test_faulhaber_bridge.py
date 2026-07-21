@@ -282,6 +282,67 @@ class BridgePDOTest(unittest.TestCase):
             {index for index, _subindex, _payload in slave.writes},
         )
 
+    def test_csp_torque_limit_is_written_and_read_back(self):
+        slave = FakeSlave()
+        for index in (
+            bridge.MAX_TORQUE,
+            bridge.POSITIVE_TORQUE_LIMIT,
+            bridge.NEGATIVE_TORQUE_LIMIT,
+        ):
+            slave.values[(index, 0)] = int(200).to_bytes(2, "little")
+        drive = bridge.FaulhaberDrive(slave, 2, sdo_delay_s=0.0, verbose=False)
+
+        before, after = drive.configure_csp_torque_limit(1000)
+
+        self.assertEqual(
+            before,
+            {
+                "maximum_torque": 200,
+                "positive_torque_limit": 200,
+                "negative_torque_limit": 200,
+            },
+        )
+        self.assertEqual(
+            after,
+            {
+                "maximum_torque": 1000,
+                "positive_torque_limit": 1000,
+                "negative_torque_limit": 1000,
+            },
+        )
+        self.assertEqual(
+            {
+                (index, int.from_bytes(payload, "little"))
+                for index, subindex, payload in slave.writes
+                if subindex == 0
+            },
+            {
+                (bridge.MAX_TORQUE, 1000),
+                (bridge.POSITIVE_TORQUE_LIMIT, 1000),
+                (bridge.NEGATIVE_TORQUE_LIMIT, 1000),
+            },
+        )
+
+    def test_csp_torque_limit_readback_mismatch_is_rejected(self):
+        slave = FakeSlave()
+        original_write = slave.sdo_write
+
+        def discard_negative_limit(index, subindex, payload):
+            if (index, subindex) == (bridge.NEGATIVE_TORQUE_LIMIT, 0):
+                slave.writes.append((index, subindex, bytes(payload)))
+                return
+            original_write(index, subindex, payload)
+
+        slave.sdo_write = discard_negative_limit
+        drive = bridge.FaulhaberDrive(slave, 2, sdo_delay_s=0.0, verbose=False)
+
+        with self.assertRaisesRegex(RuntimeError, "readback mismatch"):
+            drive.configure_csp_torque_limit(1000)
+
+    def test_above_bridge_csp_torque_ceiling_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "1..6000"):
+            make_bus(csp_torque_limit_per_mille=6001)
+
     def test_position_protection_read_retries_a_transient_mailbox_error(self):
         slave = FakeSlave()
         original_read = slave.sdo_read
@@ -440,6 +501,23 @@ class BridgePDOTest(unittest.TestCase):
         enable_spur.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
         self.assertTrue(bus.csp_active)
         self.assertEqual([state[0] for state in states], [10, 20, 30, 40])
+        for slave in slaves:
+            self.assertEqual(
+                int.from_bytes(slave.values[(bridge.MAX_TORQUE, 0)], "little"),
+                1000,
+            )
+            self.assertEqual(
+                int.from_bytes(
+                    slave.values[(bridge.POSITIVE_TORQUE_LIMIT, 0)], "little"
+                ),
+                1000,
+            )
+            self.assertEqual(
+                int.from_bytes(
+                    slave.values[(bridge.NEGATIVE_TORQUE_LIMIT, 0)], "little"
+                ),
+                1000,
+            )
         bus.exit_csp()
 
     def test_homing_csp_handoff_keeps_enable_operation_controlword(self):
@@ -528,6 +606,15 @@ class BridgePDOTest(unittest.TestCase):
         states = bus.enter_csp()
         time.sleep(0.005)
         self.assertEqual(len(states), 4)
+        for slave in slaves[:3]:
+            self.assertEqual(
+                int.from_bytes(slave.values[(bridge.MAX_TORQUE, 0)], "little"),
+                1000,
+            )
+        self.assertEqual(
+            int.from_bytes(slaves[3].values[(bridge.MAX_TORQUE, 0)], "little"),
+            6000,
+        )
         self.assertEqual(
             bridge.struct.unpack("<Hi", slaves[3].output)[0],
             bridge.CMD_DISABLE_VOLTAGE,
@@ -594,7 +681,9 @@ class BridgePDOTest(unittest.TestCase):
             r"Drive 2 CSP following error; statusword=0x2027; "
             r"CSP_SNAPSHOT .*D2\(target=300,actual=250,error=50,status=0x2027,mode=8\).*; "
             r"DRIVE_DIAG D2; 0x2324\.01=0x00004020\[following_error,torque_limited\]; "
-            r"0x1001=0x20\[device_profile\]; 0x1003=\[0x00008611\]",
+            r"0x1001=0x20\[device_profile\]; 0x1003=\[0x00008611\].*; "
+            r"TORQUE_SNAPSHOT D0\(actual=0,max/pos/neg=6000/6000/6000\).*"
+            r"D2\(actual=0,max/pos/neg=6000/6000/6000\)",
         ):
             bus._validate_running_states(states)
 

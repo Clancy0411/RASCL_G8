@@ -174,12 +174,24 @@ Transient PRE-OP mailbox WKC errors are retried. Failure to read the optional
 write/readback remains mandatory, and the service retries limit reporting
 after Homing.
 
+At the CSP handoff, every participating drive is configured with the symmetric
+session-only torque limit `0x6072 = 0x60E0 = 0x60E1 = 1000`, where `1000` is
+100% of rated motor torque. This replaces the observed 200-per-mille setting
+that saturated Drive 2 during loaded downward motion. The setting is applied
+only after Homing, so the validated reference-search behavior is unchanged.
+Every write is read back before PDO motion is allowed; a mismatch rejects CSP.
+The limit is exposed as `csp_torque_limit_per_mille` (valid range 1--6000), but
+the default deliberately stops at rated torque and no parameter-store request
+is issued.
+
 When the PDO loop detects a drive fault or following error, it also captures a
 best-effort read-only `DRIVE_DIAG` SDO snapshot before requesting SAFE-OP. It
 includes `0x2324:01`, `0x1001`, `0x1003`, following error, actual velocity and
 torque, torque/speed limits, and the position-loop gain `0x2348:01`. The
 snapshot is appended to the existing CSP fault text, so normal log collection
-captures it without a second TCP client.
+captures it without a second TCP client. A `TORQUE_SNAPSHOT` is appended as
+well, recording actual torque and all three torque limits for Drives 0--3 at
+the same fault boundary.
 
 If the network interface has a different name, replace `robot_interface` with the actual interface name.
 
