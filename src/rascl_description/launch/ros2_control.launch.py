@@ -61,7 +61,7 @@ def generate_launch_description():
         "csp_torque_limit_per_mille",
         default_value="1000",
         description=(
-            "Symmetric CSP torque limit for Drives 0-3; 1000 is 100% rated torque."
+            "Symmetric CSP directional torque limit for Drives 0-3; 1000 is rated."
         ),
     )
     drive2_following_error_window_arg = DeclareLaunchArgument(

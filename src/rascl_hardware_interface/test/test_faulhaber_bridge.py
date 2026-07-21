@@ -100,6 +100,8 @@ class FakeSlave:
             4, "little", signed=True
         )
         self.values[(bridge.ACTUAL_TORQUE, 0)] = int(0).to_bytes(2, "little", signed=True)
+        self.values[(bridge.TORQUE_DEMAND, 0)] = int(0).to_bytes(2, "little", signed=True)
+        self.values[(bridge.ACTUAL_CURRENT, 0)] = int(0).to_bytes(2, "little", signed=True)
         self.values[(bridge.MAX_TORQUE, 0)] = int(6000).to_bytes(2, "little")
         self.values[(bridge.POSITIVE_TORQUE_LIMIT, 0)] = int(6000).to_bytes(2, "little")
         self.values[(bridge.NEGATIVE_TORQUE_LIMIT, 0)] = int(6000).to_bytes(2, "little")
@@ -107,6 +109,9 @@ class FakeSlave:
         self.values[(bridge.POSITION_CONTROL_PARAMETER_SET, 1)] = int(30).to_bytes(
             1, "little"
         )
+        self.values[(bridge.MOTOR_APPLICATION_DATA, 1)] = int(1000).to_bytes(2, "little")
+        self.values[(bridge.MOTOR_APPLICATION_DATA, 2)] = int(1000).to_bytes(2, "little")
+        self.values[(bridge.MOTOR_APPLICATION_DATA, 3)] = int(2000).to_bytes(2, "little")
 
     def sdo_read(self, index, subindex):
         return self.values[(index, subindex)]
@@ -305,7 +310,7 @@ class BridgePDOTest(unittest.TestCase):
         self.assertEqual(
             after,
             {
-                "maximum_torque": 1000,
+                "maximum_torque": 200,
                 "positive_torque_limit": 1000,
                 "negative_torque_limit": 1000,
             },
@@ -317,10 +322,13 @@ class BridgePDOTest(unittest.TestCase):
                 if subindex == 0
             },
             {
-                (bridge.MAX_TORQUE, 1000),
                 (bridge.POSITIVE_TORQUE_LIMIT, 1000),
                 (bridge.NEGATIVE_TORQUE_LIMIT, 1000),
             },
+        )
+        self.assertNotIn(
+            bridge.MAX_TORQUE,
+            {index for index, _subindex, _payload in slave.writes},
         )
 
     def test_csp_torque_limit_readback_mismatch_is_rejected(self):
@@ -504,7 +512,7 @@ class BridgePDOTest(unittest.TestCase):
         for slave in slaves:
             self.assertEqual(
                 int.from_bytes(slave.values[(bridge.MAX_TORQUE, 0)], "little"),
-                1000,
+                6000,
             )
             self.assertEqual(
                 int.from_bytes(
@@ -609,6 +617,18 @@ class BridgePDOTest(unittest.TestCase):
         for slave in slaves[:3]:
             self.assertEqual(
                 int.from_bytes(slave.values[(bridge.MAX_TORQUE, 0)], "little"),
+                6000,
+            )
+            self.assertEqual(
+                int.from_bytes(
+                    slave.values[(bridge.POSITIVE_TORQUE_LIMIT, 0)], "little"
+                ),
+                1000,
+            )
+            self.assertEqual(
+                int.from_bytes(
+                    slave.values[(bridge.NEGATIVE_TORQUE_LIMIT, 0)], "little"
+                ),
                 1000,
             )
         self.assertEqual(
@@ -682,8 +702,8 @@ class BridgePDOTest(unittest.TestCase):
             r"CSP_SNAPSHOT .*D2\(target=300,actual=250,error=50,status=0x2027,mode=8\).*; "
             r"DRIVE_DIAG D2; 0x2324\.01=0x00004020\[following_error,torque_limited\]; "
             r"0x1001=0x20\[device_profile\]; 0x1003=\[0x00008611\].*; "
-            r"TORQUE_SNAPSHOT D0\(actual=0,max/pos/neg=6000/6000/6000\).*"
-            r"D2\(actual=0,max/pos/neg=6000/6000/6000\)",
+            r"TORQUE_SNAPSHOT D0\(demand/actual=0/0,max/pos/neg=6000/6000/6000\).*"
+            r"D2\(demand/actual=0/0,max/pos/neg=6000/6000/6000\)",
         ):
             bus._validate_running_states(states)
 

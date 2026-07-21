@@ -49,9 +49,10 @@ T3：8 → 13 → 14 → 9 → 10
      Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
      `0x607B/0x607D`；不会改写内部行程限位。若 PRE-OP 第一次限位读取出现临时
      `WkcError`，bridge 会短重试；仍失败时只警告并继续，组 `6` 会再次读取。
-   - CSP 转矩限制不会影响这一阶段的 Homing。组 `7` 交接 CSP 时，Drive 0–3 的
-     `0x6072/0x60E0/0x60E1` 才会统一设为 `1000`（100% 额定转矩）并逐项回读。
-     这些值只在当前上电会话生效，不写入永久存储。
+   - CSP 转矩限制不会影响这一阶段的 Homing。组 `7` 交接 CSP 时，Drive 0–3
+     可写的正/负方向限制 `0x60E0/0x60E1` 才会设为 `1000`（100% 额定转矩）并
+     回读。实机 EtherCAT 固件把 `0x6072` 暴露为只读，因此只记录、不写入。
+     `0x60E0/0x60E1` 只在当前上电会话生效，不写入永久存储。
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
@@ -63,8 +64,13 @@ T3：8 → 13 → 14 → 9 → 10
    - 未看到这两项时禁止进入组 7。
 3. **仍在 T2 选择组 7：启动 CSP ros2_control。**
    - 组 7 必须复用仍在 T1 运行的 bridge，不能另开 bridge。
-   - T1 必须先出现 `CSP torque limits verified for this session only`，且 D0–D3
-     都显示 `1000/1000/1000`。任何 Drive 回读不一致都会拒绝进入 CSP。
+   - T1 必须先出现 `CSP directional torque limits verified for this session only`。
+     D0–D3 的每项输出格式为 `max/pos/neg 原值 -> 新值`；新值中的 `pos/neg`
+     必须是 `1000/1000`，`max` 是只读 `0x6072`，允许保持原值。任何可写对象
+     回读不一致都会拒绝进入 CSP。
+   - 若紧接着出现 `read-only effective maximum remains below`，组 `7` 可以启动，
+     但先不要发运动目标；保存该警告和同一行的 `motor_mA=额定/持续/峰值`，用于
+     判断是否需要修正电机参数 `0x2329`。不要直接尝试写只读 `0x6072`。
    - T1 必须出现 `Master reached OP state` 和 Homing-to-CSP handoff 成功信息。
    - T2 必须出现 `Activated real RASCL hardware in csp mode`；组 7 随后持续占住 T2。
 4. **T3 组 8：检查 controller 和 joint state。**
@@ -597,10 +603,11 @@ ss -ltnp | grep 15001
   `CSP_SNAPSHOT`：每个 Drive 的 PDO `target`、`actual`、`error=target-actual`、
   `status` 和 `mode`，均为原始 counts。故障 Drive 还会紧接着记录 `DRIVE_DIAG`：
   `0x2324.01`（软件/硬件限位、转矩/电压/速度限制、温度等状态）、`0x1001`、
-  `0x1003`、位置/速度/转矩实际值、`0x60F4` 跟随偏差、转矩/速度限值及
+  `0x1003`、位置/速度、`0x6074/0x6077` 转矩需求/实际值、`0x6078` 实际电流、
+  `0x60F4` 跟随偏差、转矩/速度限值、`0x2329.01/.02/.03` 额定/持续/峰值电流及
   `0x2348.01` 位置环 Kv。快照为只读 SDO，任何单项读取失败都会标为
   `unavailable`，不会覆盖原始 PDO 故障。随后还会记录 `TORQUE_SNAPSHOT`，一次
-  列出 D0–D3 的实际转矩及 `0x6072/0x60E0/0x60E1` 回读值。停止 T1/T2 后选择
+  列出 D0–D3 的转矩需求/实际值及 `0x6072/0x60E0/0x60E1` 回读值。停止 T1/T2 后选择
   组 `12` 打包并提交该
   `tar.gz`；无需手动复制终端。
 - controller inactive：

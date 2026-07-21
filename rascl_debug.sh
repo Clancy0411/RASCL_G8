@@ -271,7 +271,7 @@ group_homing_bridge() {
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 0-2 自动 Homing；预装的 Drive 3 不 Homing，但会参与后续 CSP。"
   echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；内部限位只读取、不改写。"
-  echo "Drive 0-3 进入 CSP 前会把 0x6072/0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读验证；不写入永久存储。"
+  echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
     csp_torque_limit_per_mille:="$CSP_TORQUE_LIMIT_PER_MILLE" \

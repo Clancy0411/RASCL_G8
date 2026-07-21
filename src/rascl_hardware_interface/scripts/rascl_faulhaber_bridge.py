@@ -32,7 +32,9 @@ TARGET_POSITION = 0x607A
 ACTUAL_POSITION = 0x6064
 VELOCITY_ACTUAL_VALUE = 0x606C
 MAX_TORQUE = 0x6072
+TORQUE_DEMAND = 0x6074
 ACTUAL_TORQUE = 0x6077
+ACTUAL_CURRENT = 0x6078
 HOMING_OFFSET = 0x607C
 HOMING_METHOD = 0x6098
 PROFILE_VELOCITY = 0x6081
@@ -81,6 +83,7 @@ ERROR_REGISTER_FLAGS = {
     7: "manufacturer",
 }
 POSITION_CONTROL_PARAMETER_SET = 0x2348
+MOTOR_APPLICATION_DATA = 0x2329
 
 # CiA-402 torque values are expressed in per-mille of the motor rated torque.
 # The manual lists 6000 as the factory value for these objects; the bridge uses
@@ -452,11 +455,13 @@ class FaulhaberDrive:
     def configure_csp_torque_limit(
         self, limit_per_mille: int
     ) -> Tuple[dict[str, int], dict[str, int]]:
-        """Apply and verify one symmetric, session-only CSP torque limit.
+        """Apply and verify the writable directional CSP torque limits.
 
         ``1000`` is 100% of rated motor torque.  No CiA-301 parameter-store
         request is issued, so power-cycling restores the controller's stored
-        configuration.
+        configuration.  The MC5004 EtherCAT firmware used by this robot exposes
+        ``0x6072`` as read-only, so it is observed before/after but never
+        written; ``0x60E0`` and ``0x60E1`` are the writable application limits.
         """
 
         limit = int(limit_per_mille)
@@ -466,20 +471,35 @@ class FaulhaberDrive:
             )
 
         before = self.read_torque_limits(retry=True)
-        for index in (MAX_TORQUE, POSITIVE_TORQUE_LIMIT, NEGATIVE_TORQUE_LIMIT):
+        for index in (POSITIVE_TORQUE_LIMIT, NEGATIVE_TORQUE_LIMIT):
             self.sdo_write_int_retry(index, 0, limit, size=2, signed=False)
         after = self.read_torque_limits(retry=True)
-        expected = {
-            "maximum_torque": limit,
-            "positive_torque_limit": limit,
-            "negative_torque_limit": limit,
-        }
-        if after != expected:
+        if (
+            after["positive_torque_limit"] != limit
+            or after["negative_torque_limit"] != limit
+        ):
             raise RuntimeError(
-                f"Drive {self.drive_id} CSP torque-limit readback mismatch: "
-                f"expected={expected}, actual={after}"
+                f"Drive {self.drive_id} CSP directional torque-limit readback "
+                f"mismatch: expected positive/negative={limit}/{limit}, "
+                f"actual={after['positive_torque_limit']}/"
+                f"{after['negative_torque_limit']}"
             )
         return before, after
+
+    def read_motor_current_parameters(self) -> dict[str, int]:
+        """Read rated, continuous and peak motor currents from 0x2329 in mA."""
+
+        return {
+            "rated_current_ma": self.sdo_read_int_retry(
+                MOTOR_APPLICATION_DATA, 1, signed=False
+            ),
+            "continuous_current_ma": self.sdo_read_int_retry(
+                MOTOR_APPLICATION_DATA, 2, signed=False
+            ),
+            "peak_current_ma": self.sdo_read_int_retry(
+                MOTOR_APPLICATION_DATA, 3, signed=False
+            ),
+        }
 
     @staticmethod
     def _decode_flags(value: int, definitions: dict[int, str]) -> str:
@@ -521,12 +541,17 @@ class FaulhaberDrive:
             "following_error_actual", FOLLOWING_ERROR_ACTUAL_VALUE, signed=True
         )
         velocity_actual = read("velocity_actual", VELOCITY_ACTUAL_VALUE, signed=True)
+        torque_demand = read("torque_demand", TORQUE_DEMAND, signed=True)
         torque_actual = read("torque_actual", ACTUAL_TORQUE, signed=True)
+        current_actual = read("current_actual", ACTUAL_CURRENT, signed=True)
         maximum_torque = read("maximum_torque", MAX_TORQUE)
         positive_torque_limit = read("positive_torque_limit", POSITIVE_TORQUE_LIMIT)
         negative_torque_limit = read("negative_torque_limit", NEGATIVE_TORQUE_LIMIT)
         maximum_motor_speed = read("maximum_motor_speed", MAX_MOTOR_SPEED)
         position_gain = read("position_gain", POSITION_CONTROL_PARAMETER_SET, 1)
+        rated_current = read("rated_current", MOTOR_APPLICATION_DATA, 1)
+        continuous_current = read("continuous_current", MOTOR_APPLICATION_DATA, 2)
+        peak_current = read("peak_current", MOTOR_APPLICATION_DATA, 3)
 
         parts = [f"DRIVE_DIAG D{self.drive_id}"]
         if device_status is not None:
@@ -546,11 +571,16 @@ class FaulhaberDrive:
         parts.append(f"0x6064={position_actual}")
         parts.append(f"0x60F4={following_actual}")
         parts.append(f"0x606C={velocity_actual}")
-        parts.append(f"0x6077={torque_actual}")
+        parts.append(f"0x6074/0x6077(demand/actual)={torque_demand}/{torque_actual}")
+        parts.append(f"0x6078(current_actual)={current_actual}")
         parts.append(
             "limits(0x6072/0x60E0/0x60E1/0x6080)="
             f"{maximum_torque}/{positive_torque_limit}/{negative_torque_limit}/"
             f"{maximum_motor_speed}"
+        )
+        parts.append(
+            "motor_mA(0x2329.01/.02/.03 rated/continuous/peak)="
+            f"{rated_current}/{continuous_current}/{peak_current}"
         )
         parts.append(f"0x2348.01(Kv)={position_gain}")
         if unavailable:
@@ -976,25 +1006,49 @@ class FaulhaberBus:
         )
 
     def _configure_csp_torque_limits_locked(self) -> None:
-        """Set and verify CSP torque limits on every participating drive."""
+        """Set and verify writable CSP torque limits on participating drives."""
 
         changes: List[str] = []
+        effective_limit_warnings: List[str] = []
         for drive in self.drives:
             if drive.drive_id not in self.required_csp_drive_ids:
                 continue
             before, after = drive.configure_csp_torque_limit(
                 self.csp_torque_limit_per_mille
             )
+            try:
+                current_parameters = drive.read_motor_current_parameters()
+                current_text = (
+                    f"; motor_mA="
+                    f"{current_parameters['rated_current_ma']}/"
+                    f"{current_parameters['continuous_current_ma']}/"
+                    f"{current_parameters['peak_current_ma']}"
+                )
+            except Exception as exc:
+                current_text = f"; motor_mA=unavailable({type(exc).__name__})"
             changes.append(
-                f"D{drive.drive_id} "
+                f"D{drive.drive_id} max/pos/neg "
                 f"{self._format_torque_limits(before)} -> "
                 f"{self._format_torque_limits(after)}"
+                f"{current_text}"
             )
+            if after["maximum_torque"] < self.csp_torque_limit_per_mille:
+                effective_limit_warnings.append(
+                    f"D{drive.drive_id} 0x6072={after['maximum_torque']}"
+                )
         print(
-            "[EtherCAT] CSP torque limits verified for this session only "
-            "(0x6072/0x60E0/0x60E1; 1000=rated torque): "
+            "[EtherCAT] CSP directional torque limits verified for this session only "
+            "(0x6072 read-only; 0x60E0/0x60E1 writable; 1000=rated torque): "
             + "; ".join(changes)
         )
+        if effective_limit_warnings:
+            print(
+                "[EtherCAT] WARNING: writable directional limits were raised, but "
+                "the read-only effective maximum remains below the requested limit: "
+                + "; ".join(effective_limit_warnings)
+                + ". Inspect motor_mA (0x2329 rated/continuous/peak) before changing "
+                "motor parameters."
+            )
 
     def _capture_torque_snapshot(self) -> str:
         """Capture actual torque and limits for all drives after a CSP fault."""
@@ -1010,12 +1064,13 @@ class FaulhaberBus:
                     unavailable.append(f"{label}:{type(exc).__name__}")
                     return None
 
+            demand = read("demand", TORQUE_DEMAND, signed=True)
             actual = read("actual", ACTUAL_TORQUE, signed=True)
             maximum = read("max", MAX_TORQUE)
             positive = read("pos", POSITIVE_TORQUE_LIMIT)
             negative = read("neg", NEGATIVE_TORQUE_LIMIT)
             entry = (
-                f"D{drive.drive_id}(actual={actual},max/pos/neg="
+                f"D{drive.drive_id}(demand/actual={demand}/{actual},max/pos/neg="
                 f"{maximum}/{positive}/{negative}"
             )
             if unavailable:
