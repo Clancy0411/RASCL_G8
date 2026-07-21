@@ -8,6 +8,7 @@ import sys
 import time
 import types
 import unittest
+from unittest import mock
 
 
 def _load_bridge_module():
@@ -287,6 +288,71 @@ class BridgePDOTest(unittest.TestCase):
 
         bus.mark_drive_homing_started(2)
         self.assertFalse(bus.homing_complete)
+
+    def test_spur_gear_can_join_csp_without_being_homed(self):
+        bus = make_bus(
+            control_mode="homing_csp",
+            required_homing_drive_indices=[0, 1, 2],
+        )
+        self.assertEqual(bus.required_homing_drive_ids, {0, 1, 2})
+        self.assertEqual(bus.required_csp_drive_ids, {0, 1, 2, 3})
+        self.assertEqual(bus.non_homing_csp_drive_ids, {3})
+
+        for drive_id in range(3):
+            bus.mark_drive_homing_started(drive_id)
+            bus.mark_drive_homed(drive_id)
+        self.assertTrue(bus.homing_complete)
+
+    def test_deferred_csp_enables_non_homed_spur_gear(self):
+        slaves = [FakeSlave() for _ in range(4)]
+        for slave in slaves[:3]:
+            slave.values[(bridge.STATUS_WORD, 0)] = int(
+                bridge.STATUS_OPERATION_ENABLED_STATE
+            ).to_bytes(2, "little")
+
+        bus = make_bus(
+            control_mode="homing_csp",
+            required_homing_drive_indices=[0, 1, 2],
+        )
+        bus.master = FakeMaster(slaves)
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+        bus.mark_homing_complete(True)
+
+        with mock.patch.object(bus.drives[3], "enable_operation") as enable_spur:
+            bus._prepare_deferred_csp_locked()
+
+        enable_spur.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
+        self.assertEqual(bus.master.config_map_calls, 1)
+
+    def test_non_homed_spur_gear_enters_csp_with_homed_arm_axes(self):
+        slaves = [FakeSlave() for _ in range(4)]
+        for slave in slaves:
+            slave.values[(bridge.STATUS_WORD, 0)] = int(
+                bridge.STATUS_OPERATION_ENABLED_STATE
+            ).to_bytes(2, "little")
+
+        bus = make_bus(
+            control_mode="homing_csp",
+            pdo_cycle_ns=1_000_000,
+            required_homing_drive_indices=[0, 1, 2],
+        )
+        bus.master = FakeMaster(slaves)
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+        bus.mark_homing_complete(True)
+
+        with mock.patch.object(bus.drives[3], "enable_operation") as enable_spur:
+            states = bus.enter_csp([10, 20, 30, 40])
+
+        enable_spur.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
+        self.assertTrue(bus.csp_active)
+        self.assertEqual([state[0] for state in states], [10, 20, 30, 40])
+        bus.exit_csp()
 
     def test_homing_csp_handoff_keeps_enable_operation_controlword(self):
         positions = [10, 20, 30, 40]

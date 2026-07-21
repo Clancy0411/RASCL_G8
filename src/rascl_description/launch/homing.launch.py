@@ -40,6 +40,13 @@ def generate_launch_description():
             "Emergency fallback only: skip Drive 3 Homing and keep it Disable Voltage in CSP."
         ),
     )
+    skip_spur_homing_arg = DeclareLaunchArgument(
+        "skip_spur_gear_homing",
+        default_value="true",
+        description=(
+            "Do not reference-home the pre-installed Drive 3 gripper; it still joins CSP/PDO."
+        ),
+    )
 
     bridge_node = Node(
         package="rascl_hardware_interface",
@@ -70,6 +77,9 @@ def generate_launch_description():
                 "ignore_spur_gear_in_csp": ParameterValue(
                     LaunchConfiguration("ignore_spur_gear_in_csp"), value_type=bool
                 ),
+                "skip_spur_gear_homing": ParameterValue(
+                    LaunchConfiguration("skip_spur_gear_homing"), value_type=bool
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -94,6 +104,7 @@ def generate_launch_description():
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
             ignore_spur_gear_arg,
+            skip_spur_homing_arg,
             bridge_node,
         ]
     )

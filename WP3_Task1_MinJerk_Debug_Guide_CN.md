@@ -44,12 +44,12 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
 1. **T1 组 4：启动唯一 EtherCAT/Homing bridge。**
    - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
-   - Drive 0–3 都会自动 Homing；Drive 3 使用其绿色参考开关。
+   - Drive 0–2 自动 Homing；预装的 Drive 3 不执行 Homing，但会参与 CSP/PDO。
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
    - 脚本先读取数字输入；确认机械支撑、急停和活动空间后输入 `HOME`。
-   - 依次运动 Drive 0–3；Drive 3 到达其参考开关时也必须成功。
+   - 只运动 Drive 0–2；Drive 3 保持原安装位置，不执行 Homing。
    - 必须返回 `success=True` 和 `Homing completed for required drives; CSP handoff armed`。
    - 未看到这两项时禁止进入组 7。
 3. **仍在 T2 选择组 7：启动 CSP ros2_control。**
@@ -58,7 +58,7 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
    - T2 必须出现 `Activated real RASCL hardware in csp mode`；组 7 随后持续占住 T2。
 4. **T3 组 8：检查 controller 和 joint state。**
    - `joint_state_broadcaster` 与 `rascl_position_controller` 必须都是 `active`。
-   - `/joint_states` 必须连续输出，Home 应接近 `[0,+1.5708,+1.5708,0]`。
+   - `/joint_states` 必须连续输出；前三轴应接近 `[0,+1.5708,+1.5708]`。
    - 任一项不满足，禁止执行组 9/10。
 5. **T3 组 13：查看当前模型 TCP。**
    - 读取 TF `base_link -> spur_gear`；名义 Home 应接近
@@ -77,11 +77,11 @@ T3：8 → 13 → 14 → 9 → 10 → MOVE
    - 运动结束后脚本再次检查 controller 和 `/joint_states`；失败时必须完整重启。
    - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
 
-### Drive 3 / gripper 的 CSP counts 指令
+### Drive 3 / gripper 的 CSP 相对 counts 指令
 
-完成四轴 Home 和组 `7` 后，在 T3 运行组 `15`。输入的是 Drive 3 **绝对**原始
-`0x6064` counts：Home 名义值为 `0`；例如 `500000` 表示目标 raw count 为 500000，
-不是“增加 500000”。脚本将它精确换算为 `spur_gear_joint` 的弧度，并通过现有
+完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。输入的是 Drive 3 **相对**
+encoder 增量：输入 `2000` 就在当前值基础上沿已配置方向移动 2000 counts；输入
+`-2000` 则反向移动。该换算不依赖 Drive 3 的 Home 或绝对零位。脚本通过现有
 `rascl_position_controller` 和 CSP/PDO 发送四轴命令；前三轴使用刚读到的
 `/joint_states` 保持不动。
 
@@ -137,17 +137,19 @@ IK/规划失败但 T1/T2 没有 PDO、WKC、following error，且两个 controll
 4. 任一 controller inactive、WKC/following error、方向异常时禁止发目标。
 5. 停机前先支撑机械臂；正常停机会 Disable Voltage。
 
-当前默认是四轴模式：Drive 3 `spur_gear_joint` 必须完成 Homing，参与 CSP 准入、PDO
-状态检查和轨迹保持。`ignore_spur_gear_in_csp:=true` 仅保留为 Drive 3 故障时的紧急
-三轴回退，不能用于正常四轴验收。
+当前默认是“三轴 Homing + 四轴 CSP”模式：Drive 3 `spur_gear_joint` 不执行 Homing，
+但会由完整 CiA-402 使能序列进入 CSP，并参与 PDO 状态检查和轨迹保持。
+`ignore_spur_gear_in_csp:=true` 仅保留为 Drive 3 硬件故障时的紧急三轴回退；正常运行
+必须保持其默认值 `false`。
 
 坐标约定：
 
 ```text
-URDF q=[0,0,0,0] TCP              = [0.29756,-0.00177,0.043001] m
-自动 Home q~=[0,+pi/2,+pi/2,0] TCP = [0.20756,-0.00177,0.293001] m
-direction（D0–D3）                 = [+1,+1,+1,+1]
-home_offset_counts 名义值          = [0,-802816,-802816,0]
+URDF q=[0,0,0,0] TCP                    = [0.29756,-0.00177,0.043001] m
+自动 Home（D0–D2）q~=[0,+pi/2,+pi/2] TCP = [0.20756,-0.00177,0.293001] m
+Drive 3                                  = 保持上电时位置，不定义 Home 零位
+direction（D0–D3）                       = [+1,+1,+1,+1]
+home_offset_counts（D0–D2）名义值         = [0,-802816,-802816]
 ```
 
 `homing_offsets=[0,0,0,0]` 是驱动器 `0x607C`，不得用来补偿 URDF 零位。Drive 2
@@ -208,7 +210,7 @@ bash ./rascl_debug.sh
 | 1 | T1 | 编译并运行功能测试 |
 | 2 / 3 | T1 / T2 | 启动并检查 fake hardware |
 | 4 | T1 | 启动唯一 Homing bridge，保持运行 |
-| 5 | T2 | 首次逐轴 Homing Drive 0–3 |
+| 5 | T2 | 首次逐轴 Homing Drive 0–2 |
 | 6 | T2 | 已验证后一次执行 `home_all` |
 | 7 | T2 | 复用 bridge 启动 CSP，保持运行 |
 | 8 | T3 | Controller 与 joint state 保持检查 |
@@ -216,7 +218,7 @@ bash ./rascl_debug.sh
 | 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
 | 13 | T3 | CSP 启动后查看实时模型 TCP |
 | 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
-| 15 | T3 | 在 CSP 中发送 Drive 3 绝对 raw counts 目标 |
+| 15 | T3 | 在 CSP 中发送 Drive 3 相对 counts 增量 |
 
 日常实机顺序以本指南最前面的
 `T1:4 → T2:6→7 → T3:8→13→14→9→10` 为准。下面保留原始命令用于排错。
@@ -263,8 +265,8 @@ ctest --test-dir build/rascl_hardware_interface \
 ```
 
 这两个目标必须通过。它们覆盖硬件接口换算、PDO 字节布局、固定周期循环、
-SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及三轴临时模式下
-Drive 3 始终 Disable Voltage。
+SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及 Drive 3 跳过
+Homing 后的独立 CiA-402 使能和四轴 CSP 准入。
 
 完整 `colcon test` 还会运行 `clang_format`、`cpplint` 等代码风格检查。这些检查
 可以在提交前处理，但格式或版权头失败不阻塞实机调试。判断时看 CTest 的测试
@@ -334,7 +336,8 @@ ros2 daemon start
 
 ```bash
 ros2 launch rascl_description homing.launch.py \
-  interface:=enx3c18a0256deb
+  interface:=enx3c18a0256deb \
+  skip_spur_gear_homing:=true
 ```
 
 应看到：
@@ -352,7 +355,7 @@ ros2 service call /rascl_faulhaber_bridge/read_digital_inputs \
   std_srvs/srv/Trigger "{}"
 ```
 
-首次或机械结构变化后逐轴执行 Drive 0–3；每轴成功后再继续：
+首次或机械结构变化后逐轴执行 Drive 0–2；每轴成功后再继续：
 
 ```bash
 ros2 param set /rascl_faulhaber_bridge test_drive_index 0
@@ -364,14 +367,12 @@ ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 ros2 param set /rascl_faulhaber_bridge test_drive_index 2
 ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 
-ros2 param set /rascl_faulhaber_bridge test_drive_index 3
-ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 ```
 
-Drive 3 成功后应看到 `CSP handoff armed`，不需要再重复执行 `home_all`。
+Drive 2 成功后应看到 `CSP handoff armed`。Drive 3 不执行 `home_one`。
 
-Drive 0–3 已经逐轴验证过时，也可以在新的 bridge 会话中用一次 `home_all`
-代替上面四组 `home_one`。该服务会命令 Drive 3：
+Drive 0–2 已经逐轴验证过时，也可以在新的 bridge 会话中用一次 `home_all`
+代替上面三组 `home_one`。该服务不会命令 Drive 3：
 
 ```bash
 ros2 service call /rascl_faulhaber_bridge/home_all \
@@ -416,9 +417,9 @@ OK <D0_raw> <D0_status> <D1_raw> <D1_status> \
    <D2_raw> <D2_status> <D3_raw> <D3_status>
 ```
 
-四轴模式下 D0–D3 raw 都可作为对应关节的 offset 候选值。记录后支撑机械臂，在
-`T1` 按 `Ctrl-C`；重新启动前放回已验证的安全 Homing 起始区域，再从第 5 节执行。
-第 7 节用四轴实测值替换示例数字。
+Drive 3 没有执行 Home，故其 raw 值不能作为 Homing offset 标定依据。记录后支撑
+机械臂，在 `T1` 按 `Ctrl-C`；重新启动前放回已验证的安全 Homing 起始区域，再从
+第 5 节执行。第 7 节用 D0–D2 实测值替换示例数字。
 
 ## 7. 同一 EtherCAT 会话切换 CSP
 
@@ -449,6 +450,7 @@ assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
 Deferred process image mapped
 Master reached OP state
 Homing-to-CSP handoff completed without Shutdown/Disable controlwords
+Drive 3 spur_gear_joint skips Homing but will be enabled and validated in CSP
 ```
 
 `T2` 应看到：
@@ -486,12 +488,12 @@ ros2 topic hz /joint_states
 ```text
 joint_state_broadcaster active
 rascl_position_controller active
-positions ~= [0,+1.5708,+1.5708,0]
+前三轴 positions ~= [0,+1.5708,+1.5708]
 ```
 
-Drive 3 也必须保持已 Home 的位置、无 following error。保持至少 10 秒，不发送
-目标。四轴实机与 RViz 必须一致，`T1/T2` 无 PDO、WKC 或 following error。结束
-`topic hz` 时只在 `T3` 按 `Ctrl-C`。
+Drive 3 的数值没有 Homing 零点，不能用作姿态验收；但它必须处于 CSP Operation
+Enabled，且无 PDO/WKC/following error。保持至少 10 秒，不发送目标。前三轴实机与
+RViz 必须一致。结束 `topic hz` 时只在 `T3` 按 `Ctrl-C`。
 
 ## 9. 小幅 minimum-jerk 轨迹
 
@@ -578,12 +580,12 @@ source install/local_setup.bash
 ## 11. 验收标准
 
 1. 软件测试和 fake hardware 全部通过。
-2. Drive 0–3 的 `home_one` 或一次 `home_all` 成功；Drive 3 绿色参考开关有效。
+2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；Drive 3 不执行 Homing。
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
-4. 四个 Drive 交接只发送 Enable Operation，并全部进入 CSP。
-5. 四轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动。
+4. Drive 0–2 连续交接；Drive 3 通过独立 CiA-402 使能后也进入 CSP。
+5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动；Drive 3 无 PDO 故障。
 6. 20 ms PDO 循环无 WKC/following error。
-7. Drive 3 的组 `15` counts 命令可在 CSP 中执行，且随后 Task 1 保持该角度。
+7. Drive 3 的组 `15` 相对 counts 命令可在 CSP 中执行，且随后 Task 1 保持该角度。
 8. Home 附近 12 秒 minimum-jerk 小轨迹成功。
 
 ## 12. 参数速查
@@ -591,7 +593,7 @@ source install/local_setup.bash
 | 项目 | 值 |
 |---|---|
 | Drive / Joint | `0 shoulder`, `1 upperarm`, `2 lowerarm`, `3 spur_gear` |
-| 四轴默认 / 紧急回退 | 默认 `ignore_spur_gear_in_csp:=false`；仅故障时才设为 `true` |
+| Drive 3 策略 | `skip_spur_gear_homing:=true`，但 `ignore_spur_gear_in_csp:=false` |
 | Homing method | `[28,28,24,24]` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]` |

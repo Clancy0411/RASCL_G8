@@ -42,22 +42,25 @@ The command order used by the position controller is:
 
 All joint positions are represented in radians on the ROS side.
 
-For real hardware, raw reference-switch counts are mapped to the fixed URDF
-joint convention through per-joint `direction` and `home_offset_counts`. The
-nominal defaults are:
+For real hardware, the raw reference-switch counts of Drive 0--2 are mapped to
+the fixed URDF joint convention through per-joint `direction` and
+`home_offset_counts`. The nominal arm-axis defaults are:
 
 ```text
-[shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
-direction          = [+1, +1, +1, +1]
-home_offset_counts = [0, -802816, -802816, 0] counts
+[shoulder_joint, upperarm_joint, lowerarm_joint]
+direction          = [+1, +1, +1]
+home_offset_counts = [0, -802816, -802816] counts
 ```
 
 Therefore raw zero after automatic Homing is represented as
-`[0,+pi/2,+pi/2,0] rad`. These parameters do not change URDF joint origins, the
-IK geometry, or fake hardware's initial `q=[0,0,0,0]` pose. Drive 2 uses the
-paired `lowerarm_direction:=1` and `lowerarm_home_offset_counts:=-802816`
-mapping so that positive lowerarm commands agree with its physical motion.
-Override the direction/offset pair only together when recalibrating Drive 2.
+`[0,+pi/2,+pi/2] rad` for those three axes. Drive 3 (`spur_gear_joint`) is
+pre-installed and deliberately skips Homing: it retains its power-on measured
+position, joins CSP/PDO, and is commanded by relative encoder-count increments.
+These parameters do not change URDF joint origins, the IK geometry, or fake
+hardware's initial `q=[0,0,0,0]` pose. Drive 2 uses the paired
+`lowerarm_direction:=1` and `lowerarm_home_offset_counts:=-802816` mapping so
+that positive lowerarm commands agree with its physical motion. Override the
+direction/offset pair only together when recalibrating Drive 2.
 
 ### `config/controllers.yaml`
 
@@ -147,17 +150,20 @@ Commands are sent to:
 /rascl_position_controller/commands
 ```
 
-After automatic Home, first read `/joint_states`. A nominal hold-position
-example is:
+After automatic Home, first read `/joint_states`. Drive 3 is intentionally not
+homed in the normal workflow, so preserve its measured position in any manual
+four-joint command. Do not use a fixed `0.0` for `spur_gear_joint` unless that
+is its actual current position. A nominal arm-only example, with
+`<current_spur_rad>` replaced by feedback, is:
 
 ```bash
 ros2 topic pub --once /rascl_position_controller/commands \
   std_msgs/msg/Float64MultiArray \
-  "{data: [0.0, 1.5708, 1.5708, 0.0]}"
+  "{data: [0.0, 1.5708, 1.5708, <current_spur_rad>]}"
 ```
 
 Do not send `[0,0,0,0]` as the first real-hardware command; it requests the
-physically different URDF-zero pose.
+physically different URDF-zero pose and may also move the unhomed gripper.
 
 The values correspond to:
 
@@ -165,12 +171,12 @@ The values correspond to:
 [shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
 ```
 
-For a homed four-axis CSP session, `rascl_debug.sh` group `15` is the supported
-way to command `spur_gear_joint` in raw Drive 3 counts. It converts the count
-target through the same calibration parameters as the hardware interface and
-publishes a four-joint controller command that preserves the measured arm pose.
-Do not send a direct Profile Position command while ros2_control owns the CSP
-connection.
+For the CSP session, `rascl_debug.sh` group `15` is the supported way to command
+`spur_gear_joint` by a signed **relative** Drive 3 encoder increment in counts.
+It adds the increment to the current spur joint state, publishes a four-joint
+controller command that preserves the measured arm pose, and does not require
+Drive 3 Homing. Do not send a direct Profile Position command while ros2_control
+owns the CSP connection.
 
 ## Notes
 
