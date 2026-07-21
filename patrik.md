@@ -1,57 +1,65 @@
-rascl-container:~/ws$ bash ./rascl_debug.sh 6
-waiting for service to become available...
-requester: making request: std_srvs.srv.Trigger_Request()
-
-response:
-std_srvs.srv.Trigger_Response(success=True, message='Drive 0: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07 | Drive 1: physical=0x03/00000011, logical=0x04/00000100, polarity=0x07 | Drive 2: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07 | Drive 3: physical=0x00/00000000, logical=0x01/00000001, polarity=0x01')
-
-home_all 只会运动 Drive 0-2；预装的 Drive 3 不执行 Home，随后仍会进入 CSP。
-waiting for service to become available...
-requester: making request: std_srvs.srv.Trigger_Request()
-
-response:
-std_srvs.srv.Trigger_Response(success=True, message='Homing completed for required drives; CSP handoff armed: drive0=-875 drive1=-769 drive2=935')
-
-waiting for service to become available...
-requester: making request: std_srvs.srv.Trigger_Request()
-
-response:
-std_srvs.srv.Trigger_Response(success=True, message='Drive 2 protection: 0x607B position_range=[-2147483648, 2147483647], 0x607D software_limit=[-802816, 802816], 0x6065 following_window=25000 counts, 0x6066 following_timeout=250 ms')
-
-
-rascl-container:~/ws$ bash ./rascl_debug.sh 4
-Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。
-Drive 0-2 自动 Homing；预装的 Drive 3 不 Homing，但会参与后续 CSP。
-Drive 2 CSP following-error：窗口 25000 counts，超时 250 ms；内部限位只读取、不改写。
-[INFO] [launch]: All log files can be found below /root/.ros/log/2026-07-21-21-34-02-497689-irs-rascl06-267
+rascl-container:~/ws$ bash ./rascl_debug.sh 7
+保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。
+Drive 2 映射：direction=1，home_offset_counts=-802816
+Drive 3 CSP 映射：direction=1，counts_per_revolution=1323008（不执行 Home）
+进入 CSP 后，Home 的 lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。
+[INFO] [launch]: All log files can be found below /root/.ros/log/2026-07-21-22-00-40-445262-irs-rascl06-304
 [INFO] [launch]: Default logging verbosity is set to INFO
-[INFO] [rascl_faulhaber_bridge.py-1]: process started with pid [270]
-[rascl_faulhaber_bridge.py-1] [INFO] [1784669642.631714812] [rascl_faulhaber_bridge]: Connecting EtherCAT on enx3c18a0256deb; control_mode=homing_csp
-[rascl_faulhaber_bridge.py-1] [INFO] [1784669642.632035274] [rascl_faulhaber_bridge]: Drive 3 spur_gear_joint skips Homing but will be enabled and validated in CSP
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Opening interface: enx3c18a0256deb
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Found 4 slave(s)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Homing-to-CSP session starts SDO-only in PRE-OP; PDO mapping is deferred until home_all succeeds
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 0 uses slave 0: MC5004
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 1 uses slave 1: MC5004
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 2 uses slave 2: MC5004
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 3 uses slave 3: MC5004
-[rascl_faulhaber_bridge.py-1] Traceback (most recent call last):
-[rascl_faulhaber_bridge.py-1]   File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 1794, in <module>
-[rascl_faulhaber_bridge.py-1]     main()
-[rascl_faulhaber_bridge.py-1]   File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 1785, in main
-[rascl_faulhaber_bridge.py-1]     node = RASCLFaulhaberBridge()
-[rascl_faulhaber_bridge.py-1]            ^^^^^^^^^^^^^^^^^^^^^^
-[rascl_faulhaber_bridge.py-1]   File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 1320, in __init__
-[rascl_faulhaber_bridge.py-1]     self._configure_drive2_csp_protection()
-[rascl_faulhaber_bridge.py-1]   File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 1396, in _configure_drive2_csp_protection
-[rascl_faulhaber_bridge.py-1]     before = drive.read_position_protection()
-[rascl_faulhaber_bridge.py-1]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-[rascl_faulhaber_bridge.py-1]   File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 345, in read_position_protection
-[rascl_faulhaber_bridge.py-1]     "position_range_min": self.sdo_read_int(POSITION_RANGE_LIMIT, 1, signed=True),
-[rascl_faulhaber_bridge.py-1]                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-[rascl_faulhaber_bridge.py-1]   File "/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py", line 166, in sdo_read_int
-[rascl_faulhaber_bridge.py-1]     data = self.slave.sdo_read(index, subindex)
-[rascl_faulhaber_bridge.py-1]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-[rascl_faulhaber_bridge.py-1]   File "src/pysoem/pysoem.pyx", line 909, in pysoem.pysoem.CdefSlave.sdo_read
-[rascl_faulhaber_bridge.py-1] pysoem.pysoem.WkcError
-[ERROR] [rascl_faulhaber_bridge.py-1]: process has died [pid 270, exit code 1, cmd '/root/ws/install/rascl_hardware_interface/lib/rascl_hardware_interface/rascl_faulhaber_bridge.py --ros-args -r __node:=rascl_faulhaber_bridge --params-file /tmp/launch_params_18gi27y7'].
+[INFO] [robot_state_publisher-1]: process started with pid [308]
+[robot_state_publisher-1] [INFO] [1784671240.552070717] [robot_state_publisher]: Robot initialized
+[INFO] [ros2_control_node-2]: process started with pid [324]
+[ros2_control_node-2] [INFO] [1784671242.626722614] [controller_manager]: Using Steady (Monotonic) clock for triggering controller manager cycles.
+[ros2_control_node-2] [INFO] [1784671242.628846025] [controller_manager]: Subscribing to '/robot_description' topic for robot description.
+[ros2_control_node-2] [INFO] [1784671242.630113154] [controller_manager]: update rate is 50 Hz
+[ros2_control_node-2] [INFO] [1784671242.630127809] [controller_manager]: Overruns handling is : enabled
+[ros2_control_node-2] [INFO] [1784671242.630131623] [controller_manager]: Spawning controller_manager RT thread with scheduler priority: 50
+[ros2_control_node-2] [INFO] [1784671242.630249020] [controller_manager]: Successful set up FIFO RT scheduling policy with priority 50.
+[ros2_control_node-2] [INFO] [1784671242.809064188] [controller_manager]: Received robot description from topic.
+[ros2_control_node-2] [INFO] [1784671242.809134602] [controller_manager]: Enforcing command limits is disabled. Command limits from URDF will be ignored.
+[ros2_control_node-2] [INFO] [1784671242.811965351] [controller_manager]: Loading hardware 'RasclBotHardware' 
+[ros2_control_node-2] [INFO] [1784671242.812882820] [controller_manager]: Loaded hardware 'RasclBotHardware' from plugin 'rascl_hardware_interface/RASCLHardwareInterface'
+[ros2_control_node-2] [INFO] [1784671242.812971979] [controller_manager]: Initialize hardware 'RasclBotHardware' 
+[ros2_control_node-2] [INFO] [1784671242.818293327] [RASCLHardwareInterface]: Initialized 4 RASCL joints. fake_hardware=false control_mode=csp bridge=127.0.0.1:15001
+[ros2_control_node-2] [INFO] [1784671242.818320025] [controller_manager]: Successful initialization of hardware 'RasclBotHardware'
+[ros2_control_node-2] [INFO] [1784671242.818539717] [controller_manager]: Activating component 'RasclBotHardware'.
+[ros2_control_node-2] [INFO] [1784671242.818550318] [resource_manager]: 'configure' hardware 'RasclBotHardware' 
+[ros2_control_node-2] [INFO] [1784671242.818553539] [RASCLHardwareInterface]: Connecting to Faulhaber TCP bridge...
+[ros2_control_node-2] [INFO] [1784671242.818671888] [RASCLHardwareInterface]: Connected to Faulhaber bridge.
+[ros2_control_node-2] [INFO] [1784671242.819397415] [resource_manager]: Successful 'configure' of hardware 'RasclBotHardware'
+[ros2_control_node-2] [INFO] [1784671242.819410992] [resource_manager]: 'activate' hardware 'RasclBotHardware' 
+[ros2_control_node-2] [ERROR] [1784671242.929774326] [RASCLHardwareInterface]: ENTER_CSP_ALL failed. response='ERR SdoError: (1, 24690, 0, 100728834, 'Attempt to write to a read only object')'
+[ros2_control_node-2] [ERROR] [1784671242.929871367] [resource_manager]: Failed to 'activate' hardware 'RasclBotHardware'
+[ros2_control_node-2] terminate called after throwing an instance of 'std::runtime_error'
+[ros2_control_node-2]   what():  Failed to set the initial state of the component : RasclBotHardware to active
+[ros2_control_node-2] Stack trace (most recent call last) in thread 344:
+[ros2_control_node-2] #17   Object "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2", at 0xffffffffffffffff, in 
+[ros2_control_node-2] #16   Object "/usr/lib/x86_64-linux-gnu/libc.so.6", at 0x7c1c3abf1c6b, in 
+[ros2_control_node-2] #15   Object "/usr/lib/x86_64-linux-gnu/libc.so.6", at 0x7c1c3ab64aa3, in 
+[ros2_control_node-2] #14   Object "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33", at 0x7c1c3adf4db3, in 
+[ros2_control_node-2] #13   Object "/opt/ros/jazzy/lib/librclcpp.so", at 0x7c1c3b0e64d6, in rclcpp::executors::MultiThreadedExecutor::run(unsigned long)
+[ros2_control_node-2] #12   Object "/opt/ros/jazzy/lib/librclcpp.so", at 0x7c1c3b0bbc69, in rclcpp::Executor::execute_any_executable(rclcpp::AnyExecutable&)
+[ros2_control_node-2] #11   Object "/opt/ros/jazzy/lib/librclcpp.so", at 0x7c1c3b0bb53a, in rclcpp::Executor::execute_subscription(std::shared_ptr<rclcpp::SubscriptionBase>)
+[ros2_control_node-2] #10   Object "/opt/ros/jazzy/lib/libcontroller_manager.so", at 0x7c1c3b396474, in 
+[ros2_control_node-2] #9    Object "/opt/ros/jazzy/lib/libcontroller_manager.so", at 0x7c1c3b2ffdfa, in controller_manager::ControllerManager::robot_description_callback(std_msgs::msg::String_<std::allocator<void> > const&)
+[ros2_control_node-2] #8    Object "/opt/ros/jazzy/lib/libcontroller_manager.so", at 0x7c1c3b2fd05b, in controller_manager::ControllerManager::init_resource_manager(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+[ros2_control_node-2] #7    Object "/opt/ros/jazzy/lib/libcontroller_manager.so", at 0x7c1c3b2c1020, in 
+[ros2_control_node-2] #6    Object "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33", at 0x7c1c3adc3390, in __cxa_throw
+[ros2_control_node-2] #5    Object "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33", at 0x7c1c3adada54, in std::terminate()
+[ros2_control_node-2] #4    Object "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33", at 0x7c1c3adc30d9, in 
+[ros2_control_node-2] #3    Object "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33", at 0x7c1c3adadff4, in 
+[ros2_control_node-2] #2    Object "/usr/lib/x86_64-linux-gnu/libc.so.6", at 0x7c1c3aaf08fe, in abort
+[ros2_control_node-2] #1    Object "/usr/lib/x86_64-linux-gnu/libc.so.6", at 0x7c1c3ab0d27d, in raise
+[ros2_control_node-2] #0    Object "/usr/lib/x86_64-linux-gnu/libc.so.6", at 0x7c1c3ab66b2c, in pthread_kill
+[ros2_control_node-2] Aborted (Signal sent by tkill() 324 0)
+[ERROR] [ros2_control_node-2]: process has died [pid 324, exit code -6, cmd '/opt/ros/jazzy/lib/controller_manager/ros2_control_node --ros-args --params-file /tmp/launch_params_sfhwow7h --params-file /root/ws/install/rascl_description/share/rascl_description/config/controllers_csp.yaml'].
+[INFO] [spawner-3]: process started with pid [351]
+[spawner-3] [INFO] [1784671244.712027449] [spawner_joint_state_broadcaster]: waiting for service /controller_manager/list_controllers to become available...
+[INFO] [spawner-4]: process started with pid [366]
+[spawner-3] [WARN] [1784671254.723159187] [spawner_joint_state_broadcaster]: Could not contact service /controller_manager/list_controllers
+[spawner-3] [INFO] [1784671254.723529987] [spawner_joint_state_broadcaster]: waiting for service /controller_manager/list_controllers to become available...
+[spawner-3] [WARN] [1784671264.733076264] [spawner_joint_state_broadcaster]: Could not contact service /controller_manager/list_controllers
+[spawner-3] [INFO] [1784671264.733417563] [spawner_joint_state_broadcaster]: waiting for service /controller_manager/list_controllers to become available...
+[spawner-4] [WARN] [1784671265.652753885] [ros2_control_controller_spawner_rascl_position_controller]: Failed to acquire lock in 20 seconds. Attempt 1 of 5 failed. Retrying in 3 seconds...
+
+
+
