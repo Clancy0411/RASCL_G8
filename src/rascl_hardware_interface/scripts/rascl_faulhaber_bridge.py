@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import sys
 import threading
 import time
 from typing import List, Optional, Sequence, Tuple
@@ -2027,6 +2028,14 @@ class RASCLFaulhaberBridge(Node):
 
 
 def main(args=None) -> None:
+    # ros2 launch captures child stdout through a pipe, where Python otherwise
+    # uses block buffering.  EtherCAT handoff/configuration messages must be
+    # visible in T1 before the operator sends motion commands.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True, write_through=True)
+        except (AttributeError, ValueError):
+            pass
     rclpy.init(args=args)
     node = None
     try:
