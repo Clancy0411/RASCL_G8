@@ -196,40 +196,6 @@ class FaulhaberDrive:
             time.sleep(0.05)
         raise TimeoutError(f"Drive {self.drive_id}: motion timed out after {timeout_s:.1f} seconds")
 
-    def move_relative_counts_and_wait(
-        self, delta_counts: int, timeout_s: float
-    ) -> Tuple[int, int, int]:
-        """Move from the current raw position by ``delta_counts`` in Profile Position.
-
-        This is deliberately independent of a Home offset: it is intended for
-        stand-alone Drive 3/gripper checks before that axis has a validated
-        reference switch procedure.
-        """
-
-        start_counts = self.read_actual_position_counts()
-        target_counts = start_counts + int(delta_counts)
-        if not -(1 << 31) <= target_counts < (1 << 31):
-            raise ValueError(
-                f"Drive {self.drive_id}: relative target {target_counts} exceeds INT32 range"
-            )
-
-        # Drive 3 is normally at Disable Voltage in the temporary three-axis
-        # CSP setup, so it needs the complete CiA-402 enable sequence here.
-        self.enable_operation(MODE_PROFILE_POSITION)
-        self.sdo_write_int(TARGET_POSITION, 0, target_counts, size=4, signed=True)
-        time.sleep(self.sdo_delay_s)
-        self.write_controlword(CMD_START_MOTION)
-
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            status = self.read_status()
-            if status & STATUS_FAULT:
-                raise RuntimeError(f"Fault during motion; statusword=0x{status:04X}")
-            if status & STATUS_TARGET_REACHED:
-                return start_counts, target_counts, self.read_actual_position_counts()
-            time.sleep(0.05)
-        raise TimeoutError(f"Drive {self.drive_id}: motion timed out after {timeout_s:.1f} seconds")
-
     def home_to_reference_switch(
         self,
         method: int,
@@ -1128,7 +1094,7 @@ class RASCLFaulhaberBridge(Node):
         )
         if self.ignore_spur_gear_in_csp:
             self.get_logger().warning(
-                "Temporary three-axis mode: spur_gear_joint (Drive 3) will not Home, "
+                "Emergency three-axis fallback: spur_gear_joint (Drive 3) will not Home, "
                 "will remain Disable Voltage in CSP, and its CSP targets will be ignored"
             )
         self.bus.connect()
@@ -1476,26 +1442,6 @@ class RASCLFaulhaberBridge(Node):
                         return "ERR usage MOVE_ABS <drive_index> <counts>"
                     self.bus.drives[int(parts[1])].move_absolute_counts(int(parts[2]))
                     return "OK"
-
-                if operation == "MOVE_SPUR_REL":
-                    self._ensure_non_csp_operation("move Drive 3 through Profile Position")
-                    if len(parts) != 2:
-                        return "ERR usage MOVE_SPUR_REL <delta_counts>"
-                    if len(self.bus.drives) <= 3:
-                        return "ERR Drive 3 is not configured"
-                    drive = self.bus.drives[3]
-                    try:
-                        start, target, actual = drive.move_relative_counts_and_wait(
-                            int(parts[1]), self.motion_timeout_s
-                        )
-                    finally:
-                        # This standalone diagnostic must not leave an unhomed
-                        # gripper holding torque after the command has returned.
-                        drive.disable_operation()
-                    return (
-                        "OK drive=3 "
-                        f"start={start} target={target} actual={actual} disabled=true"
-                    )
 
                 if operation == "HOME":
                     self._ensure_non_csp_operation("home")

@@ -8,7 +8,6 @@ import sys
 import time
 import types
 import unittest
-from unittest import mock
 
 
 def _load_bridge_module():
@@ -429,40 +428,6 @@ class BridgePDOTest(unittest.TestCase):
             r"CSP_SNAPSHOT .*D2\(target=300,actual=250,error=50,status=0x2027,mode=8\)",
         ):
             bus._validate_running_states(states)
-
-    def test_spur_relative_command_uses_current_counts_and_disables_drive(self):
-        node = object.__new__(bridge.RASCLFaulhaberBridge)
-        drive = mock.Mock()
-        drive.move_relative_counts_and_wait.return_value = (1234, 3234, 3230)
-        drive.disable_operation.return_value = 0x0040
-        node.bus = types.SimpleNamespace(
-            csp_active=False,
-            deferred_csp_prepared=False,
-            drives=[mock.Mock(), mock.Mock(), mock.Mock(), drive],
-        )
-        node.lock = bridge.threading.RLock()
-        node.control_mode = "homing_csp"
-        node.motion_timeout_s = 8.0
-
-        response = node.handle_tcp_command("MOVE_SPUR_REL 2000")
-
-        drive.move_relative_counts_and_wait.assert_called_once_with(2000, 8.0)
-        drive.disable_operation.assert_called_once_with()
-        self.assertEqual(
-            response,
-            "OK drive=3 start=1234 target=3234 actual=3230 disabled=true",
-        )
-
-    def test_spur_relative_command_rejects_csp(self):
-        node = object.__new__(bridge.RASCLFaulhaberBridge)
-        node.bus = types.SimpleNamespace(csp_active=True, drives=[mock.Mock() for _ in range(4)])
-        node.lock = bridge.threading.RLock()
-        node.control_mode = "homing_csp"
-        node.motion_timeout_s = 8.0
-
-        response = node.handle_tcp_command("MOVE_SPUR_REL 2000")
-
-        self.assertIn("Cannot move Drive 3 through Profile Position while CSP/PDO is active", response)
 
 
 if __name__ == "__main__":

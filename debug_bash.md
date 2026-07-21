@@ -1,15 +1,17 @@
-已加入 Drive 3 独立夹爪调试：组 15。它不需要 Homing，也不会运动 Drive 0–2 或进入 CSP。
-使用流程：
-先确保没有运行 CSP：停止旧的 T2 组 7 和 T1 bridge。
-因为这是代码更新，先在无实机进程时执行一次组 1。
-T1 启动 bridge：
-bash ./rascl_debug.sh 4
-等待出现 TCP bridge listening on 127.0.0.1:15001。
-在 T2 或 T3 执行：
+Drive 3 已恢复为四轴 CSP 的正常关节：它参与自动 Homing、CSP 准入、PDO 状态检查和轨迹保持。
+
+完整启动：T1 组 4；T2 组 6 输入 HOME；T2 组 7；T3 组 8。Drive 3 的绿色参考开关也必须在 Home 时成功。
+
+控制夹爪：在组 7 持续运行、两个 controller 都是 active 且没有 wp3_tsk1 轨迹节点时，在 T3 执行：
+
+```bash
 bash ./rascl_debug.sh 15
-首次输入 2000，确认时输入 SPUR。观察夹爪实际方向后，再运行一次组 15，输入 -2000 验证反向。
-该数值是 Drive 3 原始 encoder counts。每次执行逻辑为：
-当前编码器值 + 输入步长 → 等待到位 → 自动 Disable Voltage
-成功会显示类似：
-OK drive=3 start=... target=... actual=... disabled=true
-默认单次上限是 ±20000 counts。CSP/ros2_control_node 运行时，脚本和 bridge 都会拒绝此命令，不会影响当前可用的三轴 CSP 流程。测试完成后若要恢复机械臂流程，请关闭 T1 后从 T1:4 → T2:6→7 完整重启。
+```
+
+输入的是 Drive 3 绝对 raw `0x6064` counts，Home 名义值为 0；例如 `500000` 不是增量。
+脚本使用相同的 direction、home offset 和 counts-per-revolution 换算，经
+`/rascl_position_controller/commands` 发送 CSP 指令，并保持三个机械臂关节当前位置。
+
+组 15 会清除旧的 Task 1 规划授权；之后要运行 Task 1 必须重新执行 `14 → 9 → 10`。
+Task 1 会读取该 spur gear 实时位置并保持它，因此可在同一 CSP 会话中交替执行：
+`15 → 14 → 9 → 10 → 15`。

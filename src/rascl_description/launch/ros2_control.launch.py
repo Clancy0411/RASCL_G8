@@ -76,6 +76,11 @@ def generate_launch_description():
             "direction and must be paired with lowerarm_home_offset_counts:=-802816."
         ),
     )
+    spur_gear_direction_arg = DeclareLaunchArgument(
+        "spur_gear_direction",
+        default_value="1",
+        description="Drive 3 encoder-to-URDF sign; +1 is the validated gripper direction.",
+    )
     start_bridge_arg = DeclareLaunchArgument(
         "start_bridge",
         default_value="false",
@@ -121,6 +126,7 @@ def generate_launch_description():
             " axis_counts_per_revolution:=", LaunchConfiguration("axis_counts_per_revolution"),
             " gripper_counts_per_revolution:=", LaunchConfiguration("gripper_counts_per_revolution"),
             " lowerarm_direction:=", LaunchConfiguration("lowerarm_direction"),
+            " gripper_direction:=", LaunchConfiguration("spur_gear_direction"),
             " shoulder_home_offset_counts:=", LaunchConfiguration("shoulder_home_offset_counts"),
             " upperarm_home_offset_counts:=", LaunchConfiguration("upperarm_home_offset_counts"),
             " lowerarm_home_offset_counts:=", LaunchConfiguration("lowerarm_home_offset_counts"),
@@ -218,6 +224,7 @@ def generate_launch_description():
             axis_counts_arg,
             gripper_counts_arg,
             lowerarm_direction_arg,
+            spur_gear_direction_arg,
             shoulder_home_offset_arg,
             upperarm_home_offset_arg,
             lowerarm_home_offset_arg,

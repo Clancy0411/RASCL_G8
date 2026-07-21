@@ -165,6 +165,13 @@ The values correspond to:
 [shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
 ```
 
+For a homed four-axis CSP session, `rascl_debug.sh` group `15` is the supported
+way to command `spur_gear_joint` in raw Drive 3 counts. It converts the count
+target through the same calibration parameters as the hardware interface and
+publishes a four-joint controller command that preserves the measured arm pose.
+Do not send a direct Profile Position command while ros2_control owns the CSP
+connection.
+
 ## Notes
 
 This package does not implement the low-level EtherCAT communication itself. The actual hardware access is implemented in the `rascl_hardware_interface` package.

@@ -14,13 +14,15 @@ ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-88}"
 # This paired offset preserves automatic Home at q=[0,+pi/2,+pi/2,0].
 LOWERARM_DIRECTION="${RASCL_LOWERARM_DIRECTION:-1}"
 LOWERARM_HOME_OFFSET_COUNTS="${RASCL_LOWERARM_HOME_OFFSET_COUNTS:--802816}"
+SPUR_GEAR_DIRECTION="${RASCL_SPUR_GEAR_DIRECTION:-1}"
+SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
+SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
+SPUR_GEAR_MIN_POSITION_RAD="${RASCL_SPUR_GEAR_MIN_POSITION_RAD:--3.1415}"
+SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-3.1415}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
-# Stand-alone Drive 3/gripper diagnostics use raw encoder-count increments.
-# It has no validated Home yet, so a deliberately small default limit is used.
-SPUR_GEAR_STEP_LIMIT_COUNTS="${RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS:-500000}"
 STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
 TARGET_STATE_FILE="$STATE_DIR/target.state"
 CSP_SESSION_FILE="$STATE_DIR/csp_session.state"
@@ -158,39 +160,47 @@ require_csp_session() {
     die "组 7 CSP 会话已结束；禁止复用旧状态，请完整重启"
 }
 
-require_spur_gear_standalone_session() {
-  if [[ -f "$CSP_SESSION_FILE" ]]; then
-    local session_pid
-    IFS= read -r session_pid <"$CSP_SESSION_FILE" || true
-    if [[ "$session_pid" =~ ^[0-9]+$ ]] && kill -0 "$session_pid" 2>/dev/null; then
-      die "组 7 CSP 会话仍在运行；禁止单独运动 Drive 3。先在 T2 按 Ctrl-C，再关闭 T1 并重新启动组 4。"
-    fi
-    rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
-  fi
-  if command -v pgrep >/dev/null 2>&1 && pgrep -f 'ros2_control_node' >/dev/null 2>&1; then
-    die "检测到 ros2_control_node；Drive 3 独立测试只能在未启动组 7 时进行。"
+require_no_active_wp3_motion() {
+  local nodes
+  nodes="$(ros2 node list 2>/dev/null || true)"
+  if grep -Eq '^/wp3_tsk1(_[0-9]+)?$' <<<"$nodes"; then
+    die "wp3_tsk1 轨迹节点仍在发布命令；等待组 10 完全结束后才能单独控制 Drive 3。"
   fi
 }
 
-tcp_bridge_command() {
-  local command="$1"
-  python3 - "$command" <<'PY'
-import socket
+read_csp_joint_snapshot() {
+  python3 - <<'PY'
 import sys
+import time
 
-command = sys.argv[1]
-with socket.create_connection(("127.0.0.1", 15001), timeout=3) as sock:
-    sock.settimeout(12)
-    sock.sendall((command + "\n").encode("utf-8"))
-    reply = b""
-    while b"\n" not in reply:
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        reply += chunk
-if not reply:
-    raise RuntimeError("TCP bridge returned no response")
-print(reply.decode("utf-8", errors="replace").strip())
+import rclpy
+from sensor_msgs.msg import JointState
+
+JOINTS = ("shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint")
+latest = None
+
+
+def callback(message):
+    global latest
+    by_name = dict(zip(message.name, message.position))
+    if all(name in by_name for name in JOINTS):
+        latest = [float(by_name[name]) for name in JOINTS]
+
+
+rclpy.init()
+node = rclpy.create_node("rascl_spur_counts_snapshot")
+subscription = node.create_subscription(JointState, "/joint_states", callback, 10)
+deadline = time.monotonic() + 3.0
+try:
+    while latest is None and time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    if latest is None:
+        raise RuntimeError("No complete /joint_states received within 3 seconds")
+    print(" ".join(f"{value:.17g}" for value in latest))
+finally:
+    node.destroy_subscription(subscription)
+    node.destroy_node()
+    rclpy.shutdown()
 PY
 }
 
@@ -258,10 +268,8 @@ group_homing_bridge() {
   ensure_state_dir
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
-  echo "Drive 3 已忽略，并保持 Disable Voltage。"
-  ros2 launch rascl_description homing.launch.py \
-    interface:="$INTERFACE" \
-    ignore_spur_gear_in_csp:=true
+  echo "Drive 0-3 都会自动 Homing，并参与后续 CSP。"
+  ros2 launch rascl_description homing.launch.py interface:="$INTERFACE"
 }
 
 read_inputs() {
@@ -284,13 +292,15 @@ group_home_individual() {
   home_one 1
   confirm_exact HOME "确认 Drive 1 成功；输入 HOME 启动 Drive 2："
   home_one 2
-  echo "Drive 0-2 Homing 已结束；确认最后响应包含 CSP handoff armed。"
+  confirm_exact HOME "确认 Drive 2 成功；输入 HOME 启动 Drive 3 spur gear："
+  home_one 3
+  echo "Drive 0-3 Homing 已结束；确认最后响应包含 CSP handoff armed。"
 }
 
 group_home_all() {
   load_ros
   read_inputs
-  echo "home_all 只会运动 Drive 0-2；Drive 3 不会运动。"
+  echo "home_all 会依次运动 Drive 0-3；确认 spur gear 的绿色 Home 传感器可用。"
   confirm_exact HOME "检查传感器、支撑和空间；输入 HOME 继续："
   ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
 }
@@ -305,7 +315,8 @@ group_csp_launch() {
   }
   trap cleanup_csp_state EXIT
   echo "保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。"
-  echo "Drive 2 映射：lowerarm_direction=$LOWERARM_DIRECTION，lowerarm_home_offset_counts=$LOWERARM_HOME_OFFSET_COUNTS"
+  echo "Drive 2 映射：direction=$LOWERARM_DIRECTION，home_offset_counts=$LOWERARM_HOME_OFFSET_COUNTS"
+  echo "Drive 3 映射：direction=$SPUR_GEAR_DIRECTION，home_offset_counts=$SPUR_GEAR_HOME_OFFSET_COUNTS，counts_per_revolution=$SPUR_GEAR_COUNTS_PER_REVOLUTION"
   echo "进入 CSP 后，Home 的 lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。"
   set +e
   ros2 launch rascl_description ros2_control.launch.py \
@@ -313,10 +324,12 @@ group_csp_launch() {
     use_fake_hardware:=false \
     start_bridge:=false \
     lowerarm_direction:="$LOWERARM_DIRECTION" \
+    spur_gear_direction:="$SPUR_GEAR_DIRECTION" \
+    gripper_counts_per_revolution:="$SPUR_GEAR_COUNTS_PER_REVOLUTION" \
     shoulder_home_offset_counts:=0 \
     upperarm_home_offset_counts:=-802816 \
     lowerarm_home_offset_counts:="$LOWERARM_HOME_OFFSET_COUNTS" \
-    spur_gear_home_offset_counts:=0
+    spur_gear_home_offset_counts:="$SPUR_GEAR_HOME_OFFSET_COUNTS"
   local launch_status=$?
   set -e
   cleanup_csp_state
@@ -377,7 +390,7 @@ group_real_execute() {
   ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
     die "3 秒内没有 /joint_states，禁止执行"
-  echo "该命令会运动实机；Drive 3 继续保持失能。"
+  echo "该命令会运动实机；四个 Drive 都处于 CSP，Task 1 会保持 spur gear 当前角度。"
   confirm_exact MOVE "确认目标 [$TARGET_X, $TARGET_Y, $TARGET_Z] m、支撑、空间和急停；输入 MOVE 执行："
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
@@ -416,36 +429,63 @@ group_tcp_pose() {
   timeout 3s ros2 run tf2_ros tf2_echo base_link spur_gear || [[ "$?" -eq 124 ]]
 }
 
-group_spur_gear_step() {
+group_spur_gear_target_counts() {
   load_ros
-  require_spur_gear_standalone_session
-  is_integer "$SPUR_GEAR_STEP_LIMIT_COUNTS" && (( SPUR_GEAR_STEP_LIMIT_COUNTS > 0 )) ||
-    die "RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS 必须是正整数"
+  require_csp_session
+  require_active_controllers
+  require_no_active_wp3_motion
+  is_number "$SPUR_GEAR_DIRECTION" && [[ "$SPUR_GEAR_DIRECTION" != "0" ]] ||
+    die "RASCL_SPUR_GEAR_DIRECTION 必须是非零数字"
+  is_integer "$SPUR_GEAR_HOME_OFFSET_COUNTS" ||
+    die "RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS 必须是整数"
+  is_positive_number "$SPUR_GEAR_COUNTS_PER_REVOLUTION" ||
+    die "RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION 必须是正数"
+  is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
+    die "Drive 3 URDF 限位必须是数字"
 
-  local ping
-  if ! ping="$(tcp_bridge_command "PING")"; then
-    die "无法连接 T1 的 bridge；先在 T1 启动组 4，并等待 TCP bridge listening。"
+  local snapshot shoulder upperarm lowerarm spur current_counts target_counts target_rad
+  if ! snapshot="$(read_csp_joint_snapshot)"; then
+    die "3 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
-  [[ "$ping" == "OK" ]] || die "T1 bridge PING 失败：$ping"
-
-  echo "Drive 3 standalone gripper test: raw relative encoder counts, no Homing."
-  echo "每次命令完成后会自动 Disable Voltage；+/- 的实际夹爪方向尚未标定。"
-  echo "本次最大允许步长：±$SPUR_GEAR_STEP_LIMIT_COUNTS counts。建议首次输入 2000。"
-  local delta response
-  read -r -p "Drive 3 相对步长 counts（正/负，默认 2000）: " delta
-  delta="${delta:-2000}"
-  is_integer "$delta" || die "步长必须是整数 counts：$delta"
-  (( delta != 0 )) || die "步长不能为 0"
-  (( delta >= -SPUR_GEAR_STEP_LIMIT_COUNTS && delta <= SPUR_GEAR_STEP_LIMIT_COUNTS )) ||
-    die "步长超出 ±$SPUR_GEAR_STEP_LIMIT_COUNTS counts；如确有必要，显式设置 RASCL_SPUR_GEAR_STEP_LIMIT_COUNTS 后重试。"
-
-  confirm_exact SPUR "确认只有 Drive 3/gripper 将运动，T2 组 7 未运行；输入 SPUR 执行："
-  if ! response="$(tcp_bridge_command "MOVE_SPUR_REL $delta")"; then
-    die "Drive 3 TCP 命令无响应；停止测试并检查 T1 输出。"
+  read -r shoulder upperarm lowerarm spur <<<"$snapshot"
+  current_counts="$(python3 - "$spur" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" <<'PY'
+import math
+import sys
+spur_rad, direction, offset, counts_per_revolution = map(float, sys.argv[1:])
+print(round(offset + spur_rad * counts_per_revolution / (direction * 2.0 * math.pi)))
+PY
+)"
+  echo "Drive 3 当前估算 raw 0x6064 = $current_counts counts；Home 名义值 = $SPUR_GEAR_HOME_OFFSET_COUNTS。"
+  read -r -p "Drive 3 目标 raw 0x6064 counts（绝对值，不是增量）: " target_counts
+  is_integer "$target_counts" || die "目标必须是整数 counts：$target_counts"
+  (( target_counts >= -2147483648 && target_counts <= 2147483647 )) ||
+    die "目标超出 Drive INT32 范围"
+  if ! target_rad="$(python3 - "$target_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" <<'PY'
+import math
+import sys
+target, direction, offset, counts_per_revolution, minimum, maximum = map(float, sys.argv[1:])
+target_rad = direction * (target - offset) * 2.0 * math.pi / counts_per_revolution
+if minimum > maximum:
+    raise ValueError("minimum position exceeds maximum position")
+if not minimum <= target_rad <= maximum:
+    raise ValueError(
+        f"target {int(target)} counts maps to {target_rad:.6f} rad, outside "
+        f"URDF range [{minimum:.6f}, {maximum:.6f}] rad"
+    )
+print(f"{target_rad:.17g}")
+PY
+)"; then
+    die "Drive 3 counts 目标被 URDF 软件限位拒绝"
   fi
-  [[ "$response" == OK* ]] || die "Drive 3 未完成运动：$response"
-  echo "$response"
-  echo "已自动 Disable Voltage。观察夹爪实际方向；需要反向时再次选择组 15 并输入相反数。"
+
+  clear_plan_state
+  echo "将通过 CSP 发布 [shoulder, upperarm, lowerarm, spur] = [$shoulder, $upperarm, $lowerarm, $target_rad] rad。"
+  echo "前三轴保持当前 joint_state；此操作已清除旧组 9 规划授权。"
+  confirm_exact SPUR "确认没有 wp3_tsk1 正在执行、夹爪路径清空；输入 SPUR 发送："
+  ros2 topic pub --once /rascl_position_controller/commands \
+    std_msgs/msg/Float64MultiArray \
+    "{data: [$shoulder, $upperarm, $lowerarm, $target_rad]}"
+  echo "Drive 3 CSP 目标已发布：raw=$target_counts counts。到位后再运行组 9，Task 1 会保持此 spur gear 角度。"
 }
 
 group_set_target() {
@@ -484,10 +524,10 @@ print_menu() {
     "  1  编译 + 功能测试                                  [T1]" \
     "  2  启动 fake ros2_control（前台持续运行）            [T1]" \
     "  3  Fake 检查 + 规划 + 执行                           [T2]" \
-    "  4  启动实机 Homing bridge，忽略 Drive 3             [T1]" \
-    "  5  逐轴 Homing Drive 0、1、2                         [T2]" \
-    "  6  home_all（只执行 Drive 0-2）                      [T2]" \
-    "  7  启动实机 CSP ros2_control（前台持续运行）         [T2]" \
+    "  4  启动实机四轴 Homing bridge                         [T1]" \
+    "  5  逐轴 Homing Drive 0、1、2、3                      [T2]" \
+    "  6  home_all（执行 Drive 0-3）                         [T2]" \
+    "  7  启动实机四轴 CSP ros2_control（前台持续运行）      [T2]" \
     "  8  Controller/joint state 保持检查 10 秒             [T3]" \
     "  9  只规划实机 minimum-jerk 轨迹                      [T3]" \
     " 10  执行实机 minimum-jerk 轨迹                        [T3，会运动]" \
@@ -495,11 +535,11 @@ print_menu() {
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
     " 13  查看当前模型 TCP 坐标                              [T3]" \
     " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
-    " 15  独立测试 Drive 3 spur gear 相对运动（无 CSP）       [T2/T3，会运动]" \
+    " 15  在 CSP 中设置 Drive 3 spur gear 绝对 counts 目标  [T3，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3 单测：T1=4；T2/T3=15。"
+    "四轴 CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3 counts：T3=15。"
 }
 
 run_group() {
@@ -518,7 +558,7 @@ run_group() {
     12) group_pack_logs ;;
     13) group_tcp_pose ;;
     14) group_set_target ;;
-    15) group_spur_gear_step ;;
+    15) group_spur_gear_target_counts ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

@@ -35,9 +35,9 @@ def generate_launch_description():
     enable_dc_sync_arg = DeclareLaunchArgument("enable_dc_sync", default_value="false")
     ignore_spur_gear_arg = DeclareLaunchArgument(
         "ignore_spur_gear_in_csp",
-        default_value="true",
+        default_value="false",
         description=(
-            "Temporary three-axis mode: skip Drive 3 Homing and keep it Disable Voltage in CSP."
+            "Emergency fallback only: skip Drive 3 Homing and keep it Disable Voltage in CSP."
         ),
     )
 

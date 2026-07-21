@@ -125,20 +125,11 @@ Homing must run without an active CSP/PDO loop. Start the dedicated bridge:
 ros2 launch rascl_description homing.launch.py interface:=robot_interface
 ```
 
-The current launch defaults to temporary three-axis mode
-(`ignore_spur_gear_in_csp:=true`). `home_all` homes only Drives 0–2; Drive 3
-(`spur_gear_joint`) receives no Homing motion, is excluded from CSP admission
-and state checks, and receives Disable Voltage in every PDO cycle. Do not rely
-on it to hold a load. After its Homing fault is repaired, restore four-axis mode
-with `ignore_spur_gear_in_csp:=false`.
-
-For stand-alone Drive 3/gripper diagnostics before its Homing procedure is
-validated, the TCP bridge also accepts `MOVE_SPUR_REL <delta_counts>`. It reads
-Drive 3's current raw `0x6064` value, moves by that signed encoder-count delta
-in Profile Position, waits for Target Reached, then disables Drive 3. The
-command is rejected while CSP/PDO is active and must not be used as a calibrated
-joint-position interface. `rascl_debug.sh` group `15` wraps this command with a
-small default step limit and confirmation.
+The launch defaults to four-axis mode (`ignore_spur_gear_in_csp:=false`).
+`home_all` homes Drives 0–3, including Drive 3 (`spur_gear_joint`) with its
+configured reference input and homing method. All four drives must complete
+Homing and remain Operation Enabled before CSP admission. The `true` setting is
+kept only as an emergency three-axis fallback when Drive 3 has a hardware fault.
 
 Validate Drives 0–2 with `home_one`, or call `home_all` once. Keep the Homing
 launch running until the complete CSP session has ended. For a gravity-loaded
@@ -157,16 +148,15 @@ ros2 launch rascl_description ros2_control.launch.py \
 ```
 
 The existing bridge defers PDO mapping until this activation and initializes
-every CSP target from `0x6064`. Required drives request OP using only Enable
-Operation; an ignored Drive 3 stays at Disable Voltage. CSP is rejected if
-Homing of a required drive did not finish or a required drive stopped being
-Operation Enabled. Support the arm before stopping ros2_control because
-shutdown disables the drives.
+every CSP target from `0x6064`. All four required drives request OP using only
+Enable Operation. CSP is rejected if Homing of any drive did not finish or a
+required drive stopped being Operation Enabled. Support the arm before stopping
+ros2_control because shutdown disables the drives.
 
 The defaults select `control_mode:=csp`, `controllers_csp.yaml`, a 20 ms PDO
 cycle, and SM-Sync. Before entering CSP, the bridge writes and reads back the
 FAULHABER U16 `0x2332:00` Cyclic Mode Interpolation Rate as `200`
-(`20 ms / 100 us`) for Drives 0-2; an ignored Drive 3 is left untouched. This
+(`20 ms / 100 us`) for Drives 0-3. This
 interpolates each 20 ms target update inside the drive instead of applying it
 as a 100 us step. Profile Position remains available only as a regression
 fallback by explicitly selecting both the profile mode and controller config.
@@ -182,16 +172,17 @@ ros2 service call /rascl_faulhaber_bridge/home_all \
   std_srvs/srv/Trigger "{}"
 ```
 
-After successful Homing in temporary three-axis mode, the first three joint
-positions should be:
+After successful four-axis Homing, the joint positions should be approximately:
 
 ```text
-[0.0, +1.5708, +1.5708]
+[0.0, +1.5708, +1.5708, 0.0]
 ```
 
-Drive 3 is unhomed in this mode, so its reported position is not an acceptance
-value and CSP position targets for it are ignored by the bridge. Its separate
-pre-CSP `MOVE_SPUR_REL` diagnostic is described above.
+Drive 3 now participates in both CSP state validation and position targets.
+`rascl_debug.sh` group `15` accepts an absolute Drive 3 raw `0x6064` target in
+counts, converts it with the same `direction` and `home_offset_counts` formula
+as the hardware interface, and publishes it through the active CSP position
+controller while holding the three arm joints at their current positions.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search. The ros2_control parameters
@@ -208,9 +199,9 @@ each drive's raw `0x6064` value in the physical URDF zero pose and use those
 counts as the corresponding `*_home_offset_counts` launch arguments. Keep the
 Homing bridge running after `home_all`, call its `disable_all` service, support
 the links while moving to the validated physical URDF-zero pose, and send
-`GET_ALL` to `127.0.0.1:15001`. In temporary three-axis mode only the Drive 0–2
-raw-position fields are valid calibration values; the unhomed Drive 3 value is
-not. See the Chinese Debug Guide for the guarded procedure and response layout.
+`GET_ALL` to `127.0.0.1:15001`. In four-axis mode all Drive 0–3 raw-position
+fields are valid calibration candidates. See the Chinese Debug Guide for the
+guarded procedure and response layout.
 
 Do not call homing services while the CSP ros2_control stack is active. Also do
 not publish `[0,0,0,0]` as the first command after automatic homing: that is the
