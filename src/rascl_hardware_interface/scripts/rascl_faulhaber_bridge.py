@@ -21,12 +21,18 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 
 # CiA 402 object dictionary indices.
+ERROR_REGISTER = 0x1001
+PREDEFINED_ERROR_FIELD = 0x1003
 CONTROL_WORD = 0x6040
 STATUS_WORD = 0x6041
 MODE_OF_OPERATION = 0x6060
 MODE_DISPLAY = 0x6061
+POSITION_DEMAND_VALUE = 0x6062
 TARGET_POSITION = 0x607A
 ACTUAL_POSITION = 0x6064
+VELOCITY_ACTUAL_VALUE = 0x606C
+MAX_TORQUE = 0x6072
+ACTUAL_TORQUE = 0x6077
 HOMING_OFFSET = 0x607C
 HOMING_METHOD = 0x6098
 PROFILE_VELOCITY = 0x6081
@@ -40,6 +46,41 @@ FOLLOWING_ERROR_WINDOW = 0x6065
 FOLLOWING_ERROR_TIMEOUT = 0x6066
 POSITION_RANGE_LIMIT = 0x607B
 SOFTWARE_POSITION_LIMIT = 0x607D
+MAX_MOTOR_SPEED = 0x6080
+POSITIVE_TORQUE_LIMIT = 0x60E0
+NEGATIVE_TORQUE_LIMIT = 0x60E1
+FOLLOWING_ERROR_ACTUAL_VALUE = 0x60F4
+
+# FAULHABER manufacturer objects used only for failure diagnostics.
+DEVICE_STATUS = 0x2324
+DEVICE_STATUS_FLAGS = {
+    2: "velocity_deviation",
+    5: "following_error",
+    6: "positive_limit_switch",
+    7: "negative_limit_switch",
+    8: "software_limit_positive",
+    9: "software_limit_negative",
+    13: "voltage_limited",
+    14: "torque_limited",
+    15: "speed_limited",
+    16: "temperature_warning",
+    17: "temperature_shutdown",
+    18: "supply_overvoltage",
+    19: "controller_undervoltage",
+    20: "motor_undervoltage",
+    21: "motor_overspeed",
+    22: "safety_monitoring",
+}
+ERROR_REGISTER_FLAGS = {
+    0: "generic",
+    1: "current",
+    2: "voltage",
+    3: "temperature",
+    4: "communication",
+    5: "device_profile",
+    7: "manufacturer",
+}
+POSITION_CONTROL_PARAMETER_SET = 0x2348
 
 # FAULHABER CSP target-position interpolation.  The value is the desired
 # target refresh interval expressed as multiples of the drive's fixed 100 us
@@ -339,6 +380,80 @@ class FaulhaberDrive:
                 f"window={configured['following_error_window']} counts, "
                 f"timeout={configured['following_error_timeout_ms']} ms"
             )
+
+    @staticmethod
+    def _decode_flags(value: int, definitions: dict[int, str]) -> str:
+        flags = [name for bit, name in definitions.items() if value & (1 << bit)]
+        return ",".join(flags) if flags else "none"
+
+    def capture_fault_diagnostics(self) -> str:
+        """Collect a best-effort, read-only SDO snapshot immediately after a fault.
+
+        This is called from the PDO thread before it asks EtherCAT for SAFE-OP.
+        SDO failures are recorded in the returned text and never replace the
+        original PDO fault, which is the safety-critical event.
+        """
+
+        unavailable: list[str] = []
+
+        def read(
+            label: str, index: int, subindex: int = 0, signed: bool = False
+        ) -> Optional[int]:
+            try:
+                return self.sdo_read_int(index, subindex, signed=signed)
+            except Exception as exc:
+                unavailable.append(f"{label}:{type(exc).__name__}")
+                return None
+
+        device_status = read("device_status", DEVICE_STATUS, 1)
+        error_register = read("error_register", ERROR_REGISTER)
+        error_history_count = read("error_history_count", PREDEFINED_ERROR_FIELD)
+        error_history: List[int] = []
+        if error_history_count is not None:
+            for subindex in range(1, min(int(error_history_count), 8) + 1):
+                entry = read(f"error_history_{subindex}", PREDEFINED_ERROR_FIELD, subindex)
+                if entry is not None:
+                    error_history.append(entry)
+
+        position_demand = read("position_demand", POSITION_DEMAND_VALUE, signed=True)
+        position_actual = read("position_actual", ACTUAL_POSITION, signed=True)
+        following_actual = read("following_error_actual", FOLLOWING_ERROR_ACTUAL_VALUE)
+        velocity_actual = read("velocity_actual", VELOCITY_ACTUAL_VALUE, signed=True)
+        torque_actual = read("torque_actual", ACTUAL_TORQUE, signed=True)
+        maximum_torque = read("maximum_torque", MAX_TORQUE)
+        positive_torque_limit = read("positive_torque_limit", POSITIVE_TORQUE_LIMIT)
+        negative_torque_limit = read("negative_torque_limit", NEGATIVE_TORQUE_LIMIT)
+        maximum_motor_speed = read("maximum_motor_speed", MAX_MOTOR_SPEED)
+        position_gain = read("position_gain", POSITION_CONTROL_PARAMETER_SET, 1)
+
+        parts = [f"DRIVE_DIAG D{self.drive_id}"]
+        if device_status is not None:
+            parts.append(
+                f"0x2324.01=0x{device_status:08X}"
+                f"[{self._decode_flags(device_status, DEVICE_STATUS_FLAGS)}]"
+            )
+        if error_register is not None:
+            parts.append(
+                f"0x1001=0x{error_register:02X}"
+                f"[{self._decode_flags(error_register, ERROR_REGISTER_FLAGS)}]"
+            )
+        parts.append(
+            "0x1003=[" + ",".join(f"0x{entry:08X}" for entry in error_history) + "]"
+        )
+        parts.append(f"0x6062={position_demand}")
+        parts.append(f"0x6064={position_actual}")
+        parts.append(f"0x60F4={following_actual}")
+        parts.append(f"0x606C={velocity_actual}")
+        parts.append(f"0x6077={torque_actual}")
+        parts.append(
+            "limits(0x6072/0x60E0/0x60E1/0x6080)="
+            f"{maximum_torque}/{positive_torque_limit}/{negative_torque_limit}/"
+            f"{maximum_motor_speed}"
+        )
+        parts.append(f"0x2348.01(Kv)={position_gain}")
+        if unavailable:
+            parts.append("unavailable=" + ",".join(unavailable))
+        return "; ".join(parts)
 
 
 class FaulhaberBus:
@@ -948,14 +1063,16 @@ class FaulhaberBus:
             if drive_id in self.ignored_csp_drive_ids:
                 continue
             if statusword & STATUS_FAULT:
+                diagnostics = self.drives[drive_id].capture_fault_diagnostics()
                 raise RuntimeError(
                     f"Drive {drive_id} fault; statusword=0x{statusword:04X}; "
-                    f"{self._format_csp_snapshot(states)}"
+                    f"{self._format_csp_snapshot(states)}; {diagnostics}"
                 )
             if statusword & STATUS_FOLLOWING_OR_HOMING_ERROR:
+                diagnostics = self.drives[drive_id].capture_fault_diagnostics()
                 raise RuntimeError(
                     f"Drive {drive_id} CSP following error; statusword=0x{statusword:04X}; "
-                    f"{self._format_csp_snapshot(states)}"
+                    f"{self._format_csp_snapshot(states)}; {diagnostics}"
                 )
             if (statusword & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE:
                 raise RuntimeError(

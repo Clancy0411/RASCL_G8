@@ -170,6 +170,13 @@ For Drive 2 (`lowerarm_joint`), the Homing/CSP launch also reads `0x607B` and
 object or issue a parameter-store request. The `read_drive2_diagnostics`
 service is available before CSP/PDO activation to report the values.
 
+When the PDO loop detects a drive fault or following error, it also captures a
+best-effort read-only `DRIVE_DIAG` SDO snapshot before requesting SAFE-OP. It
+includes `0x2324:01`, `0x1001`, `0x1003`, following error, actual velocity and
+torque, torque/speed limits, and the position-loop gain `0x2348:01`. The
+snapshot is appended to the existing CSP fault text, so normal log collection
+captures it without a second TCP client.
+
 If the network interface has a different name, replace `robot_interface` with the actual interface name.
 
 ## Home Service

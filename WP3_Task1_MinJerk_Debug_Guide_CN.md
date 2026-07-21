@@ -588,7 +588,11 @@ ss -ltnp | grep 15001
 - `following error`、WKC、SAFE-OP：controller 可能自动失能，立即支撑/急停；
   不再发送命令。following error 的 `ros2_control_node` 日志会自动含
   `CSP_SNAPSHOT`：每个 Drive 的 PDO `target`、`actual`、`error=target-actual`、
-  `status` 和 `mode`，均为原始 counts。停止 T1/T2 后选择组 `12` 打包并提交该
+  `status` 和 `mode`，均为原始 counts。故障 Drive 还会紧接着记录 `DRIVE_DIAG`：
+  `0x2324.01`（软件/硬件限位、转矩/电压/速度限制、温度等状态）、`0x1001`、
+  `0x1003`、位置/速度/转矩实际值、`0x60F4` 跟随偏差、转矩/速度限值及
+  `0x2348.01` 位置环 Kv。快照为只读 SDO，任何单项读取失败都会标为
+  `unavailable`，不会覆盖原始 PDO 故障。停止 T1/T2 后选择组 `12` 打包并提交该
   `tar.gz`；无需手动复制终端。
 - controller inactive：
 

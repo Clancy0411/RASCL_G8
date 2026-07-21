@@ -87,6 +87,26 @@ class FakeSlave:
         )
         self.values[(bridge.FOLLOWING_ERROR_WINDOW, 0)] = int(32).to_bytes(4, "little")
         self.values[(bridge.FOLLOWING_ERROR_TIMEOUT, 0)] = int(48).to_bytes(2, "little")
+        self.values[(bridge.ERROR_REGISTER, 0)] = int(0).to_bytes(1, "little")
+        self.values[(bridge.PREDEFINED_ERROR_FIELD, 0)] = int(0).to_bytes(1, "little")
+        self.values[(bridge.DEVICE_STATUS, 1)] = int(0).to_bytes(4, "little")
+        self.values[(bridge.POSITION_DEMAND_VALUE, 0)] = int(0).to_bytes(
+            4, "little", signed=True
+        )
+        self.values[(bridge.FOLLOWING_ERROR_ACTUAL_VALUE, 0)] = int(0).to_bytes(
+            4, "little"
+        )
+        self.values[(bridge.VELOCITY_ACTUAL_VALUE, 0)] = int(0).to_bytes(
+            4, "little", signed=True
+        )
+        self.values[(bridge.ACTUAL_TORQUE, 0)] = int(0).to_bytes(2, "little", signed=True)
+        self.values[(bridge.MAX_TORQUE, 0)] = int(6000).to_bytes(2, "little")
+        self.values[(bridge.POSITIVE_TORQUE_LIMIT, 0)] = int(6000).to_bytes(2, "little")
+        self.values[(bridge.NEGATIVE_TORQUE_LIMIT, 0)] = int(6000).to_bytes(2, "little")
+        self.values[(bridge.MAX_MOTOR_SPEED, 0)] = int(32767).to_bytes(4, "little")
+        self.values[(bridge.POSITION_CONTROL_PARAMETER_SET, 1)] = int(30).to_bytes(
+            1, "little"
+        )
 
     def sdo_read(self, index, subindex):
         return self.values[(index, subindex)]
@@ -522,6 +542,19 @@ class BridgePDOTest(unittest.TestCase):
 
     def test_following_error_includes_target_and_actual_pdo_snapshot(self):
         bus = make_bus()
+        slaves = [FakeSlave() for _ in range(4)]
+        slaves[2].values[(bridge.DEVICE_STATUS, 1)] = int(
+            (1 << 5) | (1 << 14)
+        ).to_bytes(4, "little")
+        slaves[2].values[(bridge.ERROR_REGISTER, 0)] = int(0x20).to_bytes(1, "little")
+        slaves[2].values[(bridge.PREDEFINED_ERROR_FIELD, 0)] = int(1).to_bytes(1, "little")
+        slaves[2].values[(bridge.PREDEFINED_ERROR_FIELD, 1)] = int(0x8611).to_bytes(
+            4, "little"
+        )
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
         bus.target_counts = [100, 200, 300, 400]
         states = [
             (90, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
@@ -538,7 +571,9 @@ class BridgePDOTest(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError,
             r"Drive 2 CSP following error; statusword=0x2027; "
-            r"CSP_SNAPSHOT .*D2\(target=300,actual=250,error=50,status=0x2027,mode=8\)",
+            r"CSP_SNAPSHOT .*D2\(target=300,actual=250,error=50,status=0x2027,mode=8\).*; "
+            r"DRIVE_DIAG D2; 0x2324\.01=0x00004020\[following_error,torque_limited\]; "
+            r"0x1001=0x20\[device_profile\]; 0x1003=\[0x00008611\]",
         ):
             bus._validate_running_states(states)
 
