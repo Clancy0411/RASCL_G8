@@ -166,6 +166,49 @@ class FaulhaberDrive:
         data = self.slave.sdo_read(index, subindex)
         return int.from_bytes(data, "little", signed=signed)
 
+    def sdo_write_int_retry(
+        self,
+        index: int,
+        subindex: int,
+        value: int,
+        size: int,
+        signed: bool = False,
+        attempts: int = 3,
+    ) -> None:
+        """Retry an idempotent PRE-OP configuration write after mailbox WKC loss."""
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self.sdo_write_int(index, subindex, value, size, signed=signed)
+                return
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts:
+                    time.sleep(max(self.sdo_delay_s, 0.02))
+        assert last_error is not None
+        raise last_error
+
+    def sdo_read_int_retry(
+        self,
+        index: int,
+        subindex: int,
+        signed: bool = False,
+        attempts: int = 3,
+    ) -> int:
+        """Retry a PRE-OP diagnostic/configuration read after mailbox WKC loss."""
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.sdo_read_int(index, subindex, signed=signed)
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts:
+                    time.sleep(max(self.sdo_delay_s, 0.02))
+        assert last_error is not None
+        raise last_error
+
     def read_status(self) -> int:
         return self.sdo_read_int(STATUS_WORD, 0, signed=False)
 
@@ -342,14 +385,22 @@ class FaulhaberDrive:
         """
 
         return {
-            "position_range_min": self.sdo_read_int(POSITION_RANGE_LIMIT, 1, signed=True),
-            "position_range_max": self.sdo_read_int(POSITION_RANGE_LIMIT, 2, signed=True),
-            "software_limit_min": self.sdo_read_int(SOFTWARE_POSITION_LIMIT, 1, signed=True),
-            "software_limit_max": self.sdo_read_int(SOFTWARE_POSITION_LIMIT, 2, signed=True),
-            "following_error_window": self.sdo_read_int(
+            "position_range_min": self.sdo_read_int_retry(
+                POSITION_RANGE_LIMIT, 1, signed=True
+            ),
+            "position_range_max": self.sdo_read_int_retry(
+                POSITION_RANGE_LIMIT, 2, signed=True
+            ),
+            "software_limit_min": self.sdo_read_int_retry(
+                SOFTWARE_POSITION_LIMIT, 1, signed=True
+            ),
+            "software_limit_max": self.sdo_read_int_retry(
+                SOFTWARE_POSITION_LIMIT, 2, signed=True
+            ),
+            "following_error_window": self.sdo_read_int_retry(
                 FOLLOWING_ERROR_WINDOW, 0, signed=False
             ),
-            "following_error_timeout_ms": self.sdo_read_int(
+            "following_error_timeout_ms": self.sdo_read_int_retry(
                 FOLLOWING_ERROR_TIMEOUT, 0, signed=False
             ),
         }
@@ -364,21 +415,18 @@ class FaulhaberDrive:
         if not 1 <= int(timeout_ms) <= 0xFFFF:
             raise ValueError("following-error timeout must be 1..65535 ms")
 
-        self.sdo_write_int(
+        self.sdo_write_int_retry(
             FOLLOWING_ERROR_WINDOW, 0, int(window_counts), size=4, signed=False
         )
-        self.sdo_write_int(
+        self.sdo_write_int_retry(
             FOLLOWING_ERROR_TIMEOUT, 0, int(timeout_ms), size=2, signed=False
         )
-        configured = self.read_position_protection()
-        if (
-            configured["following_error_window"] != int(window_counts)
-            or configured["following_error_timeout_ms"] != int(timeout_ms)
-        ):
+        configured_window = self.sdo_read_int_retry(FOLLOWING_ERROR_WINDOW, 0)
+        configured_timeout = self.sdo_read_int_retry(FOLLOWING_ERROR_TIMEOUT, 0)
+        if configured_window != int(window_counts) or configured_timeout != int(timeout_ms):
             raise RuntimeError(
                 "following-error readback mismatch: "
-                f"window={configured['following_error_window']} counts, "
-                f"timeout={configured['following_error_timeout_ms']} ms"
+                f"window={configured_window} counts, timeout={configured_timeout} ms"
             )
 
     @staticmethod
@@ -1393,19 +1441,31 @@ class RASCLFaulhaberBridge(Node):
             raise RuntimeError("CSP configuration requires Drive 2")
 
         drive = self.bus.drives[2]
-        before = drive.read_position_protection()
+        # The following-error settings are required for this CSP session, so
+        # read/write/readback them independently from optional limit reporting.
+        # Some MC5004 units return a transient mailbox WKC error on the first
+        # 0x607B read immediately after PRE-OP discovery.
+        before_window = drive.sdo_read_int_retry(FOLLOWING_ERROR_WINDOW, 0)
+        before_timeout = drive.sdo_read_int_retry(FOLLOWING_ERROR_TIMEOUT, 0)
         drive.configure_following_error_monitor(
             self.drive2_following_error_window_counts,
             self.drive2_following_error_timeout_ms,
         )
+        try:
+            position_protection = self._drive2_position_protection_message()
+        except Exception as exc:
+            position_protection = (
+                "Drive 2 0x607B/0x607D diagnostic unavailable after retries "
+                f"({type(exc).__name__}); bridge startup continues and group 6 will retry"
+            )
         self.get_logger().warning(
             "Drive 2 CSP following-error monitor changed for this session only: "
-            f"0x6065 {before['following_error_window']} -> "
+            f"0x6065 {before_window} -> "
             f"{self.drive2_following_error_window_counts} counts; "
-            f"0x6066 {before['following_error_timeout_ms']} -> "
+            f"0x6066 {before_timeout} -> "
             f"{self.drive2_following_error_timeout_ms} ms. "
             "0x607B/0x607D were read only, not modified. "
-            + self._drive2_position_protection_message()
+            + position_protection
         )
 
     def _ensure_non_csp_operation(self, operation: str) -> None:

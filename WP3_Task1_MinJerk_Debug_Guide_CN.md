@@ -46,8 +46,9 @@ T3：8 → 13 → 14 → 9 → 10
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
    - Drive 0–2 自动 Homing；预装的 Drive 3 不执行 Homing，但会参与 CSP/PDO。
    - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
-     Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并同时读出
-     `0x607B/0x607D`；不会改写内部行程限位。
+     Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
+     `0x607B/0x607D`；不会改写内部行程限位。若 PRE-OP 第一次限位读取出现临时
+     `WkcError`，bridge 会短重试；仍失败时只警告并继续，组 `6` 会再次读取。
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**

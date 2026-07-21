@@ -282,6 +282,27 @@ class BridgePDOTest(unittest.TestCase):
             {index for index, _subindex, _payload in slave.writes},
         )
 
+    def test_position_protection_read_retries_a_transient_mailbox_error(self):
+        slave = FakeSlave()
+        original_read = slave.sdo_read
+        position_range_attempts = 0
+
+        def flaky_read(index, subindex):
+            nonlocal position_range_attempts
+            if (index, subindex) == (bridge.POSITION_RANGE_LIMIT, 1):
+                position_range_attempts += 1
+                if position_range_attempts == 1:
+                    raise RuntimeError("transient WKC")
+            return original_read(index, subindex)
+
+        slave.sdo_read = flaky_read
+        drive = bridge.FaulhaberDrive(slave, 2, sdo_delay_s=0.0, verbose=False)
+
+        diagnostics = drive.read_position_protection()
+
+        self.assertEqual(position_range_attempts, 2)
+        self.assertEqual(diagnostics["position_range_min"], -(1 << 31))
+
     def test_csp_connect_configures_interpolation_for_required_drives_only(self):
         slaves = [FakeSlave() for _ in range(4)]
         master = FakeMaster(slaves)

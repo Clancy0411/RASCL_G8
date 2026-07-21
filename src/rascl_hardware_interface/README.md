@@ -169,6 +169,10 @@ For Drive 2 (`lowerarm_joint`), the Homing/CSP launch also reads `0x607B` and
 25000` raw counts and `0x6066 = 250` ms. It does not write either position-limit
 object or issue a parameter-store request. The `read_drive2_diagnostics`
 service is available before CSP/PDO activation to report the values.
+Transient PRE-OP mailbox WKC errors are retried. Failure to read the optional
+`0x607B`/`0x607D` report no longer aborts bridge startup; the following-error
+write/readback remains mandatory, and the service retries limit reporting
+after Homing.
 
 When the PDO loop detects a drive fault or following error, it also captures a
 best-effort read-only `DRIVE_DIAG` SDO snapshot before requesting SAFE-OP. It
