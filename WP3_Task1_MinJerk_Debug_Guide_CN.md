@@ -45,12 +45,17 @@ T3：8 → 13 → 14 → 9 → 10
    - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
    - Drive 0–2 自动 Homing；预装的 Drive 3 不执行 Homing，但会参与 CSP/PDO。
+   - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
+     Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并同时读出
+     `0x607B/0x607D`；不会改写内部行程限位。
    - 等到出现 `TCP bridge listening on 127.0.0.1:15001`。
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
    - 脚本不再要求输入二次确认，选择组 `6` 后立即开始 Home。
    - 只运动 Drive 0–2；Drive 3 保持原安装位置，不执行 Homing。
    - 必须返回 `success=True` 和 `Homing completed for required drives; CSP handoff armed`。
+   - 随后脚本自动打印 `Drive 2 protection`。若 `0x607B` 或 `0x607D` 不是完整 S32
+     范围，先保存该行输出；不要自行清除限位，提交后再判断是否与计划目标冲突。
    - 未看到这两项时禁止进入组 7。
 3. **仍在 T2 选择组 7：启动 CSP ros2_control。**
    - 组 7 必须复用仍在 T1 运行的 bridge，不能另开 bridge。
@@ -147,6 +152,27 @@ IK/规划失败但 T1/T2 没有 PDO、WKC、following error，且两个 controll
 但会由完整 CiA-402 使能序列进入 CSP，并参与 PDO 状态检查和轨迹保持。
 `ignore_spur_gear_in_csp:=true` 仅保留为 Drive 3 硬件故障时的紧急三轴回退；正常运行
 必须保持其默认值 `false`。
+
+### Drive 2 内部限位与 following-error 测试设置
+
+Drive 2（`lowerarm_joint`）发生的 `statusword=0x3027` 是 CSP following error。驱动器
+默认 `0x6065=32 counts`、`0x6066=48 ms`，对本机械臂的 196:1 减速轴过紧。本版本仅在
+每次 T1 组 `4` 启动时，以 SDO 写入并回读 **Drive 2** 的：
+
+```text
+0x6065 = 25000 counts  (约 0.0489 rad)
+0x6066 = 250 ms
+```
+
+这不是关闭保护：实际偏差超过约 2.8°并持续 250 ms 仍会停机。代码不向 `0x607B`
+（position range）或 `0x607D`（software position limit）写值，也不发送 `0x1010`
+保存命令；其当前值由组 `4` 日志及组 `6` 末尾的
+`/rascl_faulhaber_bridge/read_drive2_diagnostics` 输出记录。
+
+若输出为完整 S32 范围 `[-2147483648, 2147483647]`，Drive 2 没有启用内部位置区间。
+若限位较小，先比较它与故障日志的 `CSP_SNAPSHOT D2(target=...)`，不要直接清除限位。
+新阈值下仍发生 following error，说明实际偏差已超过这条有限保护，应打包日志而不是继续
+增加阈值。
 
 坐标约定：
 
@@ -343,6 +369,8 @@ ros2 daemon start
 ```bash
 ros2 launch rascl_description homing.launch.py \
   interface:=enx3c18a0256deb \
+  drive2_following_error_window_counts:=25000 \
+  drive2_following_error_timeout_ms:=250 \
   skip_spur_gear_homing:=true
 ```
 
@@ -382,6 +410,9 @@ Drive 0–2 已经逐轴验证过时，也可以在新的 bridge 会话中用一
 
 ```bash
 ros2 service call /rascl_faulhaber_bridge/home_all \
+  std_srvs/srv/Trigger "{}"
+
+ros2 service call /rascl_faulhaber_bridge/read_drive2_diagnostics \
   std_srvs/srv/Trigger "{}"
 ```
 

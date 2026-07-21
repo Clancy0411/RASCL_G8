@@ -73,6 +73,20 @@ class FakeSlave:
         self.values[(bridge.SM2_PARAMETERS, bridge.SM_CYCLE_TIME_SUBINDEX)] = int(0).to_bytes(
             4, "little"
         )
+        self.values[(bridge.POSITION_RANGE_LIMIT, 1)] = int(-(1 << 31)).to_bytes(
+            4, "little", signed=True
+        )
+        self.values[(bridge.POSITION_RANGE_LIMIT, 2)] = int((1 << 31) - 1).to_bytes(
+            4, "little", signed=True
+        )
+        self.values[(bridge.SOFTWARE_POSITION_LIMIT, 1)] = int(-(1 << 31)).to_bytes(
+            4, "little", signed=True
+        )
+        self.values[(bridge.SOFTWARE_POSITION_LIMIT, 2)] = int((1 << 31) - 1).to_bytes(
+            4, "little", signed=True
+        )
+        self.values[(bridge.FOLLOWING_ERROR_WINDOW, 0)] = int(32).to_bytes(4, "little")
+        self.values[(bridge.FOLLOWING_ERROR_TIMEOUT, 0)] = int(48).to_bytes(2, "little")
 
     def sdo_read(self, index, subindex):
         return self.values[(index, subindex)]
@@ -213,6 +227,39 @@ class BridgePDOTest(unittest.TestCase):
         self.assertEqual(
             slave.values[(bridge.CYCLIC_MODE_INTERPOLATION_RATE, 0)],
             int(200).to_bytes(2, "little"),
+        )
+
+    def test_drive_following_error_monitor_is_relaxed_without_changing_limits(self):
+        slave = FakeSlave()
+        drive = bridge.FaulhaberDrive(slave, 2, sdo_delay_s=0.0, verbose=False)
+        initial_limits = (
+            slave.values[(bridge.POSITION_RANGE_LIMIT, 1)],
+            slave.values[(bridge.POSITION_RANGE_LIMIT, 2)],
+            slave.values[(bridge.SOFTWARE_POSITION_LIMIT, 1)],
+            slave.values[(bridge.SOFTWARE_POSITION_LIMIT, 2)],
+        )
+
+        drive.configure_following_error_monitor(25_000, 250)
+        diagnostics = drive.read_position_protection()
+
+        self.assertEqual(diagnostics["following_error_window"], 25_000)
+        self.assertEqual(diagnostics["following_error_timeout_ms"], 250)
+        self.assertEqual(
+            initial_limits,
+            (
+                slave.values[(bridge.POSITION_RANGE_LIMIT, 1)],
+                slave.values[(bridge.POSITION_RANGE_LIMIT, 2)],
+                slave.values[(bridge.SOFTWARE_POSITION_LIMIT, 1)],
+                slave.values[(bridge.SOFTWARE_POSITION_LIMIT, 2)],
+            ),
+        )
+        self.assertNotIn(
+            bridge.POSITION_RANGE_LIMIT,
+            {index for index, _subindex, _payload in slave.writes},
+        )
+        self.assertNotIn(
+            bridge.SOFTWARE_POSITION_LIMIT,
+            {index for index, _subindex, _payload in slave.writes},
         )
 
     def test_csp_connect_configures_interpolation_for_required_drives_only(self):

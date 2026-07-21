@@ -164,6 +164,12 @@ interpolates each 20 ms target update inside the drive instead of applying it
 as a 100 us step. Profile Position remains available only as a regression
 fallback by explicitly selecting both the profile mode and controller config.
 
+For Drive 2 (`lowerarm_joint`), the Homing/CSP launch also reads `0x607B` and
+`0x607D` and configures a finite session following-error monitor of `0x6065 =
+25000` raw counts and `0x6066 = 250` ms. It does not write either position-limit
+object or issue a parameter-store request. The `read_drive2_diagnostics`
+service is available before CSP/PDO activation to report the values.
+
 If the network interface has a different name, replace `robot_interface` with the actual interface name.
 
 ## Home Service

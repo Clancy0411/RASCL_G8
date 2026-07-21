@@ -57,6 +57,16 @@ def generate_launch_description():
         default_value="false",
         description="Use EtherCAT DC-Sync. The conservative default is SM-Sync.",
     )
+    drive2_following_error_window_arg = DeclareLaunchArgument(
+        "drive2_following_error_window_counts",
+        default_value="25000",
+        description="Drive 2 CSP following-error window in raw encoder counts.",
+    )
+    drive2_following_error_timeout_arg = DeclareLaunchArgument(
+        "drive2_following_error_timeout_ms",
+        default_value="250",
+        description="Drive 2 CSP following-error timeout in milliseconds.",
+    )
 
     axis_counts_arg = DeclareLaunchArgument(
         "axis_counts_per_revolution",
@@ -164,6 +174,12 @@ def generate_launch_description():
                 "enable_dc_sync": ParameterValue(
                     LaunchConfiguration("enable_dc_sync"), value_type=bool
                 ),
+                "drive2_following_error_window_counts": ParameterValue(
+                    LaunchConfiguration("drive2_following_error_window_counts"), value_type=int
+                ),
+                "drive2_following_error_timeout_ms": ParameterValue(
+                    LaunchConfiguration("drive2_following_error_timeout_ms"), value_type=int
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -221,6 +237,8 @@ def generate_launch_description():
             pdo_cycle_ns_arg,
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
+            drive2_following_error_window_arg,
+            drive2_following_error_timeout_arg,
             axis_counts_arg,
             gripper_counts_arg,
             lowerarm_direction_arg,

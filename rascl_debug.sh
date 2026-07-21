@@ -14,6 +14,8 @@ ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-88}"
 # This paired offset preserves automatic Home at q=[0,+pi/2,+pi/2,0].
 LOWERARM_DIRECTION="${RASCL_LOWERARM_DIRECTION:-1}"
 LOWERARM_HOME_OFFSET_COUNTS="${RASCL_LOWERARM_HOME_OFFSET_COUNTS:--802816}"
+DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS="${RASCL_DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS:-25000}"
+DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS="${RASCL_DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS:-250}"
 SPUR_GEAR_DIRECTION="${RASCL_SPUR_GEAR_DIRECTION:-1}"
 SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
 SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
@@ -267,13 +269,21 @@ group_homing_bridge() {
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 0-2 自动 Homing；预装的 Drive 3 不 Homing，但会参与后续 CSP。"
+  echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；内部限位只读取、不改写。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
+    drive2_following_error_window_counts:="$DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS" \
+    drive2_following_error_timeout_ms:="$DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS" \
     skip_spur_gear_homing:=true
 }
 
 read_inputs() {
   ros2 service call /rascl_faulhaber_bridge/read_digital_inputs \
+    std_srvs/srv/Trigger "{}"
+}
+
+read_drive2_diagnostics() {
+  ros2 service call /rascl_faulhaber_bridge/read_drive2_diagnostics \
     std_srvs/srv/Trigger "{}"
 }
 
@@ -297,6 +307,7 @@ group_home_all() {
   read_inputs
   echo "home_all 只会运动 Drive 0-2；预装的 Drive 3 不执行 Home，随后仍会进入 CSP。"
   ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
+  read_drive2_diagnostics
 }
 
 group_csp_launch() {

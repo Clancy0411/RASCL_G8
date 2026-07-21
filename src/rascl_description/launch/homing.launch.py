@@ -33,6 +33,16 @@ def generate_launch_description():
     pdo_cycle_ns_arg = DeclareLaunchArgument("pdo_cycle_ns", default_value="20000000")
     pdo_timeout_us_arg = DeclareLaunchArgument("pdo_timeout_us", default_value="5000")
     enable_dc_sync_arg = DeclareLaunchArgument("enable_dc_sync", default_value="false")
+    drive2_following_error_window_arg = DeclareLaunchArgument(
+        "drive2_following_error_window_counts",
+        default_value="25000",
+        description="Drive 2 CSP following-error window in raw encoder counts.",
+    )
+    drive2_following_error_timeout_arg = DeclareLaunchArgument(
+        "drive2_following_error_timeout_ms",
+        default_value="250",
+        description="Drive 2 CSP following-error timeout in milliseconds.",
+    )
     ignore_spur_gear_arg = DeclareLaunchArgument(
         "ignore_spur_gear_in_csp",
         default_value="false",
@@ -74,6 +84,12 @@ def generate_launch_description():
                 "enable_dc_sync": ParameterValue(
                     LaunchConfiguration("enable_dc_sync"), value_type=bool
                 ),
+                "drive2_following_error_window_counts": ParameterValue(
+                    LaunchConfiguration("drive2_following_error_window_counts"), value_type=int
+                ),
+                "drive2_following_error_timeout_ms": ParameterValue(
+                    LaunchConfiguration("drive2_following_error_timeout_ms"), value_type=int
+                ),
                 "ignore_spur_gear_in_csp": ParameterValue(
                     LaunchConfiguration("ignore_spur_gear_in_csp"), value_type=bool
                 ),
@@ -103,6 +119,8 @@ def generate_launch_description():
             pdo_cycle_ns_arg,
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
+            drive2_following_error_window_arg,
+            drive2_following_error_timeout_arg,
             ignore_spur_gear_arg,
             skip_spur_homing_arg,
             bridge_node,

@@ -36,6 +36,10 @@ HOMING_SPEED = 0x6099
 HOMING_SEARCH_SPEED = 0x01
 HOMING_ZERO_SPEED = 0x02
 HOMING_ACCELERATION = 0x609A
+FOLLOWING_ERROR_WINDOW = 0x6065
+FOLLOWING_ERROR_TIMEOUT = 0x6066
+POSITION_RANGE_LIMIT = 0x607B
+SOFTWARE_POSITION_LIMIT = 0x607D
 
 # FAULHABER CSP target-position interpolation.  The value is the desired
 # target refresh interval expressed as multiples of the drive's fixed 100 us
@@ -286,6 +290,55 @@ class FaulhaberDrive:
         physical = self.sdo_read_int(DIGITAL_IO_STATUS, DIGITAL_INPUT_PHYSICAL)
         polarity = self.sdo_read_int(DIGITAL_INPUT_SETTINGS, INPUT_POLARITY)
         return logical, physical, polarity
+
+    def read_position_protection(self) -> dict[str, int]:
+        """Read Drive-side limits and following-error settings without changing them.
+
+        Both ``0x607B`` and ``0x607D`` are in the target-position path for CSP.
+        They are intentionally only observed here: the physical travel range of
+        the arm is not known accurately enough to replace a persisted drive
+        safety limit from software.
+        """
+
+        return {
+            "position_range_min": self.sdo_read_int(POSITION_RANGE_LIMIT, 1, signed=True),
+            "position_range_max": self.sdo_read_int(POSITION_RANGE_LIMIT, 2, signed=True),
+            "software_limit_min": self.sdo_read_int(SOFTWARE_POSITION_LIMIT, 1, signed=True),
+            "software_limit_max": self.sdo_read_int(SOFTWARE_POSITION_LIMIT, 2, signed=True),
+            "following_error_window": self.sdo_read_int(
+                FOLLOWING_ERROR_WINDOW, 0, signed=False
+            ),
+            "following_error_timeout_ms": self.sdo_read_int(
+                FOLLOWING_ERROR_TIMEOUT, 0, signed=False
+            ),
+        }
+
+    def configure_following_error_monitor(
+        self, window_counts: int, timeout_ms: int
+    ) -> None:
+        """Set and read back the CiA-402 following-error monitor for this session."""
+
+        if not 1 <= int(window_counts) <= 0xFFFFFFFF:
+            raise ValueError("following-error window must be an unsigned 32-bit positive count")
+        if not 1 <= int(timeout_ms) <= 0xFFFF:
+            raise ValueError("following-error timeout must be 1..65535 ms")
+
+        self.sdo_write_int(
+            FOLLOWING_ERROR_WINDOW, 0, int(window_counts), size=4, signed=False
+        )
+        self.sdo_write_int(
+            FOLLOWING_ERROR_TIMEOUT, 0, int(timeout_ms), size=2, signed=False
+        )
+        configured = self.read_position_protection()
+        if (
+            configured["following_error_window"] != int(window_counts)
+            or configured["following_error_timeout_ms"] != int(timeout_ms)
+        ):
+            raise RuntimeError(
+                "following-error readback mismatch: "
+                f"window={configured['following_error_window']} counts, "
+                f"timeout={configured['following_error_timeout_ms']} ms"
+            )
 
 
 class FaulhaberBus:
@@ -1064,6 +1117,11 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("enable_dc_sync", False)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
+        # Drive 2's factory 32-count / 48-ms monitor is far below the normal
+        # compliant motion lag of this 196:1 arm axis. Keep a finite, axis-
+        # local monitor for CSP instead of disabling following-error detection.
+        self.declare_parameter("drive2_following_error_window_counts", 25_000)
+        self.declare_parameter("drive2_following_error_timeout_ms", 250)
 
         # Values validated on the auto_homing branch.
         self.declare_parameter("homing_methods", [28, 28, 24, 24])
@@ -1095,6 +1153,12 @@ class RASCLFaulhaberBridge(Node):
         )
         self.skip_spur_gear_homing = bool(
             self.get_parameter("skip_spur_gear_homing").value
+        )
+        self.drive2_following_error_window_counts = int(
+            self.get_parameter("drive2_following_error_window_counts").value
+        )
+        self.drive2_following_error_timeout_ms = int(
+            self.get_parameter("drive2_following_error_timeout_ms").value
         )
 
         self.homing_methods = self._int_parameter_list("homing_methods")
@@ -1136,6 +1200,7 @@ class RASCLFaulhaberBridge(Node):
                 "Drive 3 spur_gear_joint skips Homing but will be enabled and validated in CSP"
             )
         self.bus.connect()
+        self._configure_drive2_csp_protection()
         for drive in self.bus.drives:
             drive.configure_profile_motion(
                 self.profile_velocity,
@@ -1152,6 +1217,9 @@ class RASCLFaulhaberBridge(Node):
         )
         self.read_digital_inputs_srv = self.create_service(
             Trigger, "~/read_digital_inputs", self.on_read_digital_inputs
+        )
+        self.read_drive2_diagnostics_srv = self.create_service(
+            Trigger, "~/read_drive2_diagnostics", self.on_read_drive2_diagnostics
         )
         self.blink_digout1_srv = self.create_service(
             Trigger, "~/blink_digout1", self.on_blink_digout1
@@ -1179,6 +1247,49 @@ class RASCLFaulhaberBridge(Node):
         for name, values in parameters.items():
             if len(values) != expected:
                 raise ValueError(f"{name} needs {expected} entries, got {len(values)}")
+
+    def _drive2_position_protection_message(self) -> str:
+        if len(self.bus.drives) <= 2:
+            raise RuntimeError("Drive 2 is not configured")
+        values = self.bus.drives[2].read_position_protection()
+        return (
+            "Drive 2 protection: "
+            f"0x607B position_range=[{values['position_range_min']}, "
+            f"{values['position_range_max']}], "
+            f"0x607D software_limit=[{values['software_limit_min']}, "
+            f"{values['software_limit_max']}], "
+            f"0x6065 following_window={values['following_error_window']} counts, "
+            f"0x6066 following_timeout={values['following_error_timeout_ms']} ms"
+        )
+
+    def _configure_drive2_csp_protection(self) -> None:
+        """Report Drive 2 limits and apply the finite CSP following-error monitor.
+
+        No write to 0x607B or 0x607D occurs here. The bridge also deliberately
+        does not issue a CiA-301 parameter-store command, so it does not request
+        a persistent change to the controller's non-volatile configuration.
+        """
+
+        if self.control_mode not in ("csp", "homing_csp"):
+            return
+        if len(self.bus.drives) <= 2:
+            raise RuntimeError("CSP configuration requires Drive 2")
+
+        drive = self.bus.drives[2]
+        before = drive.read_position_protection()
+        drive.configure_following_error_monitor(
+            self.drive2_following_error_window_counts,
+            self.drive2_following_error_timeout_ms,
+        )
+        self.get_logger().warning(
+            "Drive 2 CSP following-error monitor changed for this session only: "
+            f"0x6065 {before['following_error_window']} -> "
+            f"{self.drive2_following_error_window_counts} counts; "
+            f"0x6066 {before['following_error_timeout_ms']} -> "
+            f"{self.drive2_following_error_timeout_ms} ms. "
+            "0x607B/0x607D were read only, not modified. "
+            + self._drive2_position_protection_message()
+        )
 
     def _ensure_non_csp_operation(self, operation: str) -> None:
         if self.bus.csp_active:
@@ -1343,6 +1454,19 @@ class RASCLFaulhaberBridge(Node):
         except Exception as exc:
             response.success = False
             response.message = f"Read digital inputs failed: {exc}"
+        return response
+
+    def on_read_drive2_diagnostics(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        try:
+            with self.lock:
+                self._ensure_non_csp_operation("read Drive 2 protection through SDO")
+                response.success = True
+                response.message = self._drive2_position_protection_message()
+        except Exception as exc:
+            response.success = False
+            response.message = f"Read Drive 2 diagnostics failed: {exc}"
         return response
 
     def on_digout1(self, msg: Bool) -> None:
