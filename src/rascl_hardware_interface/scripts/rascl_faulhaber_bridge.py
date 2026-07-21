@@ -502,6 +502,62 @@ class FaulhaberDrive:
             ),
         }
 
+    def ensure_peak_current_for_torque_limit(
+        self, limit_per_mille: int
+    ) -> Tuple[dict[str, int], dict[str, int], int]:
+        """Raise an undersized peak current for the requested torque limit.
+
+        On this MC5004 firmware, read-only ``0x6072`` is derived from
+        ``peak_current / rated_current * 1000``.  Drive 2 was configured with
+        220 mA peak versus 1100 mA rated, which explains its effective
+        200-per-mille torque ceiling.  At the default 1000-per-mille limit this
+        raises peak current to rated current.  The session-only correction
+        leaves the rated and continuous-current motor parameters unchanged.
+        """
+
+        before = self.read_motor_current_parameters()
+        rated_current = before["rated_current_ma"]
+        if not 1 <= rated_current <= 0xFFFF:
+            raise RuntimeError(
+                f"Drive {self.drive_id} invalid rated current: {rated_current} mA"
+            )
+
+        required_peak_current = (
+            rated_current * int(limit_per_mille) + 999
+        ) // 1000
+        if not 1 <= required_peak_current <= 0xFFFF:
+            raise RuntimeError(
+                f"Drive {self.drive_id} required peak current is outside U16: "
+                f"{required_peak_current} mA"
+            )
+
+        if before["peak_current_ma"] < required_peak_current:
+            self.sdo_write_int_retry(
+                MOTOR_APPLICATION_DATA,
+                3,
+                required_peak_current,
+                size=2,
+                signed=False,
+            )
+            time.sleep(max(self.sdo_delay_s, 0.02))
+
+        after = self.read_motor_current_parameters()
+        if after["peak_current_ma"] < required_peak_current:
+            raise RuntimeError(
+                f"Drive {self.drive_id} peak-current readback remains below required: "
+                f"required={required_peak_current} mA, "
+                f"peak={after['peak_current_ma']} mA"
+            )
+
+        effective_maximum = self.sdo_read_int_retry(MAX_TORQUE, 0, signed=False)
+        if effective_maximum < int(limit_per_mille):
+            raise RuntimeError(
+                f"Drive {self.drive_id} read-only 0x6072 remains {effective_maximum} "
+                "after peak-current correction; expected at least "
+                f"{int(limit_per_mille)}"
+            )
+        return before, after, effective_maximum
+
     @staticmethod
     def _decode_flags(value: int, definitions: dict[int, str]) -> str:
         flags = [name for bit, name in definitions.items() if value & (1 << bit)]
@@ -1010,46 +1066,56 @@ class FaulhaberBus:
         """Set and verify writable CSP torque limits on participating drives."""
 
         changes: List[str] = []
-        effective_limit_warnings: List[str] = []
         for drive in self.drives:
             if drive.drive_id not in self.required_csp_drive_ids:
                 continue
             before, after = drive.configure_csp_torque_limit(
                 self.csp_torque_limit_per_mille
             )
-            try:
-                current_parameters = drive.read_motor_current_parameters()
-                current_text = (
-                    f"; motor_mA="
-                    f"{current_parameters['rated_current_ma']}/"
-                    f"{current_parameters['continuous_current_ma']}/"
-                    f"{current_parameters['peak_current_ma']}"
+            if drive.drive_id == 2:
+                current_before, current_after, effective_maximum = (
+                    drive.ensure_peak_current_for_torque_limit(
+                        self.csp_torque_limit_per_mille
+                    )
                 )
-            except Exception as exc:
-                current_text = f"; motor_mA=unavailable({type(exc).__name__})"
+                after = drive.read_torque_limits(retry=True)
+                if effective_maximum != after["maximum_torque"]:
+                    raise RuntimeError(
+                        "Drive 2 inconsistent 0x6072 readback after peak-current "
+                        f"correction: {effective_maximum} != "
+                        f"{after['maximum_torque']}"
+                    )
+                current_text = (
+                    "; motor_mA(rated/continuous/peak) "
+                    f"{current_before['rated_current_ma']}/"
+                    f"{current_before['continuous_current_ma']}/"
+                    f"{current_before['peak_current_ma']} -> "
+                    f"{current_after['rated_current_ma']}/"
+                    f"{current_after['continuous_current_ma']}/"
+                    f"{current_after['peak_current_ma']}"
+                )
+            else:
+                try:
+                    current_parameters = drive.read_motor_current_parameters()
+                    current_text = (
+                        f"; motor_mA="
+                        f"{current_parameters['rated_current_ma']}/"
+                        f"{current_parameters['continuous_current_ma']}/"
+                        f"{current_parameters['peak_current_ma']}"
+                    )
+                except Exception as exc:
+                    current_text = f"; motor_mA=unavailable({type(exc).__name__})"
             changes.append(
                 f"D{drive.drive_id} max/pos/neg "
                 f"{self._format_torque_limits(before)} -> "
                 f"{self._format_torque_limits(after)}"
                 f"{current_text}"
             )
-            if after["maximum_torque"] < self.csp_torque_limit_per_mille:
-                effective_limit_warnings.append(
-                    f"D{drive.drive_id} 0x6072={after['maximum_torque']}"
-                )
         print(
             "[EtherCAT] CSP directional torque limits verified for this session only "
             "(0x6072 read-only; 0x60E0/0x60E1 writable; 1000=rated torque): "
             + "; ".join(changes)
         )
-        if effective_limit_warnings:
-            print(
-                "[EtherCAT] WARNING: writable directional limits were raised, but "
-                "the read-only effective maximum remains below the requested limit: "
-                + "; ".join(effective_limit_warnings)
-                + ". Inspect motor_mA (0x2329 rated/continuous/peak) before changing "
-                "motor parameters."
-            )
 
     def _capture_torque_snapshot(self) -> str:
         """Capture actual torque and limits for all drives after a CSP fault."""

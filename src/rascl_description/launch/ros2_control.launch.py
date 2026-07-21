@@ -61,7 +61,8 @@ def generate_launch_description():
         "csp_torque_limit_per_mille",
         default_value="1000",
         description=(
-            "Symmetric CSP directional torque limit for Drives 0-3; 1000 is rated."
+            "Symmetric CSP directional torque limit for Drives 0-3; 1000 is rated. "
+            "Drive 2 peak current is raised at CSP handoff if needed to satisfy it."
         ),
     )
     drive2_following_error_window_arg = DeclareLaunchArgument(

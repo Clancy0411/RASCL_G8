@@ -121,6 +121,15 @@ class FakeSlave:
         self.values[(index, subindex)] = bytes(payload)
         if (index, subindex) == (bridge.MODE_OF_OPERATION, 0):
             self.values[(bridge.MODE_DISPLAY, 0)] = bytes(payload)
+        if (index, subindex) == (bridge.MOTOR_APPLICATION_DATA, 3):
+            rated_current = int.from_bytes(
+                self.values[(bridge.MOTOR_APPLICATION_DATA, 1)], "little"
+            )
+            peak_current = int.from_bytes(payload, "little")
+            effective_maximum = peak_current * 1000 // rated_current
+            self.values[(bridge.MAX_TORQUE, 0)] = effective_maximum.to_bytes(
+                2, "little"
+            )
 
 
 class FakeMaster:
@@ -346,6 +355,40 @@ class BridgePDOTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "readback mismatch"):
             drive.configure_csp_torque_limit(1000)
+
+    def test_drive2_peak_current_correction_raises_read_only_maximum(self):
+        slave = FakeSlave()
+        slave.values[(bridge.MOTOR_APPLICATION_DATA, 1)] = int(1100).to_bytes(
+            2, "little"
+        )
+        slave.values[(bridge.MOTOR_APPLICATION_DATA, 2)] = int(1100).to_bytes(
+            2, "little"
+        )
+        slave.values[(bridge.MOTOR_APPLICATION_DATA, 3)] = int(220).to_bytes(
+            2, "little"
+        )
+        slave.values[(bridge.MAX_TORQUE, 0)] = int(200).to_bytes(2, "little")
+        drive = bridge.FaulhaberDrive(slave, 2, sdo_delay_s=0.0, verbose=False)
+
+        before, after, effective_maximum = (
+            drive.ensure_peak_current_for_torque_limit(1000)
+        )
+
+        self.assertEqual(before["rated_current_ma"], 1100)
+        self.assertEqual(before["continuous_current_ma"], 1100)
+        self.assertEqual(before["peak_current_ma"], 220)
+        self.assertEqual(after["rated_current_ma"], 1100)
+        self.assertEqual(after["continuous_current_ma"], 1100)
+        self.assertEqual(after["peak_current_ma"], 1100)
+        self.assertEqual(effective_maximum, 1000)
+        self.assertIn(
+            (
+                bridge.MOTOR_APPLICATION_DATA,
+                3,
+                int(1100).to_bytes(2, "little"),
+            ),
+            slave.writes,
+        )
 
     def test_above_bridge_csp_torque_ceiling_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "1..6000"):

@@ -178,13 +178,18 @@ At the CSP handoff, every participating drive is configured with the symmetric
 session-only directional limits `0x60E0 = 0x60E1 = 1000`, where `1000` is 100%
 of rated motor torque. The MC5004 EtherCAT firmware used on the robot rejects
 writes to `0x6072` as read-only, so the bridge observes that effective maximum
-but never writes it. This raises the writable 200-per-mille limits that
-saturated Drive 2 during loaded downward motion. The setting is applied only
-after Homing, so the validated reference-search behavior is unchanged. Every
-writable object is read back before PDO motion is allowed; a mismatch rejects
-CSP. The limit is exposed as `csp_torque_limit_per_mille` (valid range
-1--6000), but the default deliberately stops at rated torque and no
-parameter-store request is issued.
+but never writes it. On this firmware, `0x6072` is derived from
+`0x2329:03 peak_current / 0x2329:01 rated_current * 1000`. Drive 2 was
+configured as `220 / 1100 * 1000 = 200`, so changing only `0x60E0/0x60E1`
+could not raise its effective ceiling. At CSP handoff, the bridge now raises
+only Drive 2's undersized `0x2329:03` to the current limit's required value
+(`220 -> 1100 mA` for the default 1000-per-mille limit), then verifies both
+that write and read-only `0x6072 >= 1000`. Drive 2's rated and continuous
+currents are unchanged, as are all motor-current parameters on Drives 0, 1,
+and 3. The correction is applied only after Homing, so the validated
+reference-search behavior is unchanged. Any readback mismatch rejects CSP.
+The limit is exposed as `csp_torque_limit_per_mille` (valid range 1--6000),
+but the default stops at rated torque and no parameter-store request is issued.
 
 When the PDO loop detects a drive fault or following error, it also captures a
 best-effort read-only `DRIVE_DIAG` SDO snapshot before requesting SAFE-OP. It

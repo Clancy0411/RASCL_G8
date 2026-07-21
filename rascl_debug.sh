@@ -272,6 +272,7 @@ group_homing_bridge() {
   echo "Drive 0-2 自动 Homing；预装的 Drive 3 不 Homing，但会参与后续 CSP。"
   echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；内部限位只读取、不改写。"
   echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
+  echo "Drive 2 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（首次通常为 220→1100 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1/3 电流参数不改。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
     csp_torque_limit_per_mille:="$CSP_TORQUE_LIMIT_PER_MILLE" \
