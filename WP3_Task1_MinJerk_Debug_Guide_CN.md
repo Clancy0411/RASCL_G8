@@ -311,17 +311,21 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
-在 `T1` 只运行两个功能测试目标：
+在 `T1` 运行 robot description 参数类型回归测试和两个硬件功能测试目标：
 
 ```bash
+ctest --test-dir build/rascl_description \
+  -R '^test_robot_description_parameter$' \
+  --output-on-failure
 ctest --test-dir build/rascl_hardware_interface \
   -R '^(test_generic_system|test_faulhaber_bridge)$' \
   --output-on-failure
 ```
 
-这两个目标必须通过。它们覆盖硬件接口换算、PDO 字节布局、固定周期循环、
-SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及 Drive 3 跳过
-Homing 后的独立 CiA-402 使能和四轴 CSP 准入。
+三个目标必须通过。robot description 测试确保 xacro 输出始终以字符串参数传入，
+不会被 ROS 2 launch 误当作 YAML；另外两个目标覆盖硬件接口换算、PDO 字节布局、
+固定周期循环、SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及
+Drive 3 跳过 Homing 后的独立 CiA-402 使能和四轴 CSP 准入。
 
 完整 `colcon test` 还会运行 `clang_format`、`cpplint` 等代码风格检查。这些检查
 可以在提交前处理，但格式或版权头失败不阻塞实机调试。判断时看 CTest 的测试

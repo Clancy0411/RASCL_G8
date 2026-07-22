@@ -239,7 +239,10 @@ group_build_test() {
   set -u
   ros2 pkg prefix rascl_wp3_ss26_group8 >/dev/null
   ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk1'
-  echo "[2/2] Running functional hardware-interface tests..."
+  echo "[2/2] Running launch and functional hardware-interface tests..."
+  ctest --test-dir build/rascl_description \
+    -R '^test_robot_description_parameter$' \
+    --output-on-failure
   ctest --test-dir build/rascl_hardware_interface \
     -R '^(test_generic_system|test_faulhaber_bridge)$' \
     --output-on-failure

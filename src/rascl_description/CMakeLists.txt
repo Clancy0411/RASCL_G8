@@ -7,4 +7,12 @@ install(DIRECTORY config launch meshes rviz urdf
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(
+    test_robot_description_parameter
+    test/test_robot_description_parameter.py
+  )
+endif()
+
 ament_package()

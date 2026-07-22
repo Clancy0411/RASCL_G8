@@ -166,7 +166,11 @@ def generate_launch_description():
             " spur_gear_home_offset_counts:=", LaunchConfiguration("spur_gear_home_offset_counts"),
         ]
     )
-    robot_description = {"robot_description": robot_description_content}
+    # URDF is XML text.  Force the parameter type so launch_ros does not try to
+    # interpret xacro output (including XML comments containing colons) as YAML.
+    robot_description = {
+        "robot_description": ParameterValue(robot_description_content, value_type=str)
+    }
 
     # The bridge owns pysoem/EtherCAT and provides a local TCP endpoint to C++.
     bridge_node = Node(
