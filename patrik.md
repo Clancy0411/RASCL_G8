@@ -1,70 +1,28 @@
-rascl-container:~/ws$ bash ./rascl_debug.sh 4
-Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。
-Drive 0-2 自动 Homing；预装的 Drive 3 不 Homing，但会参与后续 CSP。
-Drive 2 CSP following-error：窗口 25000 counts，超时 250 ms；内部限位只读取、不改写。
-Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 1000（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。
-Drive 2 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（首次通常为 220→1100 mA），并要求只读 0x6072 回读不低于 1000；Drive 0/1/3 电流参数不改。
-[INFO] [launch]: All log files can be found below /root/.ros/log/2026-07-21-22-31-47-693106-irs-rascl06-217
+rascl-container:~/ws$ bash ./rascl_debug.sh 6
+waiting for service to become available...
+requester: making request: std_srvs.srv.Trigger_Request()
+
+response:
+std_srvs.srv.Trigger_Response(success=True, message='Drive 0: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07 | Drive 1: physical=0x03/00000011, logical=0x04/00000100, polarity=0x07 | Drive 2: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07 | Drive 3: physical=0x00/00000000, logical=0x01/00000001, polarity=0x01')
+
+home_all 只会运动 Drive 0-2；预装的 Drive 3 不执行 Home，随后仍会进入 CSP。
+waiting for service to become available...
+requester: making request: std_srvs.srv.Trigger_Request()
+
+response:
+std_srvs.srv.Trigger_Response(success=True, message='Homing completed for required drives; CSP handoff armed: drive0=-893 drive1=-738 drive2=761')
+
+waiting for service to become available...
+requester: making request: std_srvs.srv.Trigger_Request()
+
+response:
+std_srvs.srv.Trigger_Response(success=True, message='Drive 2 protection: 0x607B position_range=[-2147483648, 2147483647], 0x607D software_limit=[-802816, 802816], 0x6065 following_window=16384 counts, 0x6066 following_timeout=48 ms')
+
+rascl-container:~/ws$ bash ./rascl_debug.sh 7
+保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。
+Drive 2 映射：direction=1，home_offset_counts=-802816
+Drive 3 CSP 映射：direction=1，counts_per_revolution=1323008（不执行 Home）
+进入 CSP 后，Home 的 lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。
+[INFO] [launch]: All log files can be found below /root/.ros/log/2026-07-22-16-53-02-754620-irs-rascl06-291
 [INFO] [launch]: Default logging verbosity is set to INFO
-[INFO] [rascl_faulhaber_bridge.py-1]: process started with pid [220]
-[rascl_faulhaber_bridge.py-1] [INFO] [1784673107.947949130] [rascl_faulhaber_bridge]: Connecting EtherCAT on enx3c18a0256deb; control_mode=homing_csp
-[rascl_faulhaber_bridge.py-1] [INFO] [1784673107.948267967] [rascl_faulhaber_bridge]: Drive 3 spur_gear_joint skips Homing but will be enabled and validated in CSP
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Opening interface: enx3c18a0256deb
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Found 4 slave(s)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Homing-to-CSP session starts SDO-only in PRE-OP; PDO mapping is deferred until home_all succeeds
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 0 uses slave 0: MC5004
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 1 uses slave 1: MC5004
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 2 uses slave 2: MC5004
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Drive 3 uses slave 3: MC5004
-[rascl_faulhaber_bridge.py-1] [WARN] [1784673108.052903875] [rascl_faulhaber_bridge]: Drive 2 CSP following-error monitor changed for this session only: 0x6065 16384 -> 25000 counts; 0x6066 48 -> 250 ms. 0x607B/0x607D were read only, not modified. Drive 2 protection: 0x607B position_range=[-2147483648, 2147483647], 0x607D software_limit=[-802816, 802816], 0x6065 following_window=25000 counts, 0x6066 following_timeout=250 ms
-[rascl_faulhaber_bridge.py-1] [INFO] [1784673108.056094275] [rascl_faulhaber_bridge]: TCP bridge listening on 127.0.0.1:15001
-[rascl_faulhaber_bridge.py-1] [Drive 0] Controlword <- 0x0006
-[rascl_faulhaber_bridge.py-1] [Drive 0] Controlword <- 0x0007
-[rascl_faulhaber_bridge.py-1] [Drive 0] mode requested=6, display=6
-[rascl_faulhaber_bridge.py-1] [Drive 0] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 0] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 0] Controlword <- 0x001F
-[rascl_faulhaber_bridge.py-1] [Drive 0] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 0] mode requested=1, display=1
-[rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x0006
-[rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x0007
-[rascl_faulhaber_bridge.py-1] [Drive 1] mode requested=6, display=6
-[rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x001F
-[rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 1] mode requested=1, display=1
-[rascl_faulhaber_bridge.py-1] [Drive 2] Controlword <- 0x0006
-[rascl_faulhaber_bridge.py-1] [Drive 2] Controlword <- 0x0007
-[rascl_faulhaber_bridge.py-1] [Drive 2] mode requested=6, display=6
-[rascl_faulhaber_bridge.py-1] [Drive 2] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 2] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 2] Controlword <- 0x001F
-[rascl_faulhaber_bridge.py-1] [Drive 2] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [Drive 2] mode requested=1, display=1
-[rascl_faulhaber_bridge.py-1] [INFO] [1784673137.773765204] [rascl_faulhaber_bridge]: Hardware client connected from ('127.0.0.1', 35916)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] CSP directional torque limits verified for this session only (0x6072 read-only; 0x60E0/0x60E1 writable; 1000=rated torque): D0 max/pos/neg 700/700/700 -> 700/1000/1000; motor_mA=1100/1100/770; D1 max/pos/neg 700/700/700 -> 700/1000/1000; motor_mA=1100/1100/770; D2 max/pos/neg 200/200/200 -> 1000/1000/1000; motor_mA(rated/continuous/peak) 1100/1100/220 -> 1100/1100/1100; D3 max/pos/neg 150/150/150 -> 150/1000/1000; motor_mA=540/540/81
-[rascl_faulhaber_bridge.py-1] [Drive 3] mode requested=1, display=1
-[rascl_faulhaber_bridge.py-1] [Drive 3] Controlword <- 0x0006
-[rascl_faulhaber_bridge.py-1] [Drive 3] Controlword <- 0x0007
-[rascl_faulhaber_bridge.py-1] [Drive 3] Controlword <- 0x000F
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 0: CSP interpolation 0x2332.00 configured to 200 x 100 us (20000000 ns PDO cycle)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 0: assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 0: SM2 cycle monitoring configured for 20000000 ns
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 1: CSP interpolation 0x2332.00 configured to 200 x 100 us (20000000 ns PDO cycle)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 1: assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 1: SM2 cycle monitoring configured for 20000000 ns
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 2: CSP interpolation 0x2332.00 configured to 200 x 100 us (20000000 ns PDO cycle)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 2: assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 2: SM2 cycle monitoring configured for 20000000 ns
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 3: CSP interpolation 0x2332.00 configured to 200 x 100 us (20000000 ns PDO cycle)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 3: assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Slave 3: SM2 cycle monitoring configured for 20000000 ns
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Deferred process image mapped (48 bytes)
-[rascl_faulhaber_bridge.py-1] [EtherCAT] SM-Sync selected with cycle 20000000 ns
-[rascl_faulhaber_bridge.py-1] [Drive 0] mode requested=8, display=8
-[rascl_faulhaber_bridge.py-1] [Drive 1] mode requested=8, display=8
-[rascl_faulhaber_bridge.py-1] [Drive 2] mode requested=8, display=8
-[rascl_faulhaber_bridge.py-1] [Drive 3] mode requested=8, display=8
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Master reached OP state
-[rascl_faulhaber_bridge.py-1] [EtherCAT] Homing-to-CSP handoff completed without Shutdown/Disable controlwords
+[ERROR] [launch]: Caught exception in launch (see debug for traceback): Unable to parse the value of parameter robot_description as yaml. If the parameter is meant to be a string, try wrapping it in launch_ros.parameter_descriptions.ParameterValue(value, value_type=str)
