@@ -34,8 +34,7 @@ class WP3Task1SingleTarget(Node):
     def __init__(self) -> None:
         super().__init__("wp3_tsk1")
 
-        # Target position in the base_link frame.  The TCP is currently defined
-        # as the spur_gear_joint origin, not the actual jaw contact point.
+        # Target position of the calibrated tcp_link in the base_link frame.
         self.declare_parameter("target_x", NOMINAL_ZERO_TCP_IN_BASE_LINK[0])
         self.declare_parameter("target_y", NOMINAL_ZERO_TCP_IN_BASE_LINK[1])
         self.declare_parameter("target_z", NOMINAL_ZERO_TCP_IN_BASE_LINK[2])
@@ -75,7 +74,7 @@ class WP3Task1SingleTarget(Node):
 
         self.get_logger().info("WP3 Task 1 single-target minimum-jerk node started.")
         self.get_logger().info("Target frame: base_link, unit: meter.")
-        self.get_logger().info("TCP definition: spur_gear_joint origin.")
+        self.get_logger().info("TCP definition: calibrated fixed tcp_link.")
         self.get_logger().info(
             "Calibration convention: URDF q=[0,0,0,0] remains the physical model-zero pose "
             f"with nominal TCP {NOMINAL_ZERO_TCP_IN_BASE_LINK} m. The calibrated automatic-Home "

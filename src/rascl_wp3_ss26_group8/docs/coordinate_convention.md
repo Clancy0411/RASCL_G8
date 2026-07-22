@@ -4,7 +4,8 @@ Frame: `base_link` from `rascl_description/urdf/rascl.urdf`.
 
 Unit: meter.
 
-TCP for the first milestone: `spur_gear_joint` origin.
+TCP for the first milestone: calibrated fixed `tcp_link`, attached to
+`lowerarm` and independent of `spur_gear_joint` motion.
 
 Calibration for real hardware uses the validated reference-switch search from
 the `auto_homing` branch. Start in its safe search region, validate each axis
@@ -19,15 +20,21 @@ the URDF zero pose. With the nominal software count calibration, it must read:
 In this automatic-Home pose, the kinematic model gives:
 
 ```text
-TCP in base_link = [0.20756, -0.00177, 0.293001] m
+TCP in base_link = [0.18456, -0.00177, 0.336001] m
 ```
 
-The original physical URDF-zero convention remains:
+The original physical URDF-zero joint-angle convention remains; the listed TCP
+uses the new calibrated `tcp_link`:
 
 ```text
 q = [0, 0, 0, 0] rad
-TCP in base_link = [0.29756, -0.00177, 0.043001] m
+TCP in base_link = [0.27456, -0.00177, 0.086001] m
 ```
+
+The 2026-07-22 provisional TCP calibration used one physical automatic-Home
+measurement and applied `[-0.023, 0, +0.043] m` in `base_link` at that pose.
+Measurements at additional poses are required to distinguish a fixed TCP
+offset from link-geometry or encoder-zero error.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
 interface applies nominal `direction=[+1,+1,+1,+1]` and

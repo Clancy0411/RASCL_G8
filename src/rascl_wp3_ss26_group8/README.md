@@ -5,7 +5,7 @@ This package contains the first WP3 application code for Group 8.
 The current milestone focuses on Task 1 preparation:
 
 - one Cartesian target is given in the `base_link` coordinate frame,
-- the tool center point (TCP) is defined as the `spur_gear_joint` origin,
+- the tool center point (TCP) is the calibrated fixed `tcp_link`,
 - the node solves inverse kinematics for the three arm joints,
 - it generates a joint-space minimum-jerk trajectory,
 - it publishes the trajectory to `/rascl_position_controller/commands`,
@@ -19,7 +19,8 @@ FAULHABER CSP mode and cyclic EtherCAT Position PDOs on real hardware.
 ## Coordinate convention
 
 All target coordinates are expressed in the URDF `base_link` frame, in meters.
-The TCP is currently the `spur_gear_joint` origin.
+The TCP is the fixed `tcp_link` attached to `lowerarm`; it does not move when
+`spur_gear_joint` opens or closes the gripper.
 
 Calibration convention for real hardware:
 
@@ -28,11 +29,12 @@ Calibration convention for real hardware:
 3. Keep that bridge running and start ros2_control with `start_bridge:=false`.
 4. Check that the calibrated automatic-Home pose reads approximately `[0,+pi/2,+pi/2,0] rad`.
 
-The original `3588dc98` convention is preserved: `q=[0,0,0,0]` still
-corresponds to the physical URDF zero pose, with nominal TCP:
+The joint-coordinate convention from `3588dc98` is preserved:
+`q=[0,0,0,0]` still corresponds to the physical URDF zero pose. With the
+calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.29756, -0.00177, 0.043001] m
+base_link TCP = [0.27456, -0.00177, 0.086001] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -40,8 +42,13 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.20756, -0.00177, 0.293001] m
+base_link auto-home TCP = [0.18456, -0.00177, 0.336001] m
 ```
+
+The TCP was provisionally corrected from one measured automatic-Home pose by
+`[-0.023, 0, +0.043] m` in `base_link`.  Re-measure it at other arm poses: a
+configuration-dependent residual requires link/encoder calibration rather than
+another constant TCP shift.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

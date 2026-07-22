@@ -1,9 +1,9 @@
 """Small self-contained kinematics helper for the RASCL robot.
 
-The first WP3 milestone uses the spur_gear_joint origin as the tool center point
-(TCP).  The geometry constants below are copied from rascl_description/urdf/
-rascl.urdf.  This avoids adding a heavy kinematics dependency while still making
-our Cartesian target coordinates consistent with the URDF and RViz.
+The first WP3 milestone uses the calibrated ``tcp_link`` as the tool center
+point (TCP).  The geometry constants below are copied from
+rascl_description/urdf/rascl.urdf.  This avoids adding a heavy kinematics
+dependency while still making Cartesian targets consistent with URDF and TF.
 """
 
 from __future__ import annotations
@@ -26,11 +26,17 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-3.1415, 3.1415)
 
+# Fixed TCP position in the lowerarm frame.  At the nominal automatic-Home pose
+# this applies the measured base_link correction [-0.023, 0, +0.043] m to the
+# former spur_gear_joint-origin TCP.  It is deliberately independent of the
+# gripper's spur_gear_joint angle.
+TCP_ORIGIN_IN_LOWERARM = (0.11616, 0.043, 0.0179)
+
 # Nominal position of the TCP in base_link when q=[0,0,0].  This is useful when
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29756, -0.00177, 0.043001)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.27456, -0.00177, 0.086001)
 
 
 @dataclass
@@ -144,7 +150,7 @@ def clamp_to_limits(q: Sequence[float], limits: Sequence[Tuple[float, float]] = 
 
 
 def forward_tcp(q_arm: Sequence[float]) -> Vector3:
-    """Return the spur_gear_joint origin in base_link coordinates.
+    """Return the calibrated ``tcp_link`` origin in base_link coordinates.
 
     Args:
         q_arm: [shoulder_joint, upperarm_joint, lowerarm_joint] in radians.
@@ -171,8 +177,9 @@ def forward_tcp(q_arm: Sequence[float]) -> Vector3:
     transform = _matmul(transform, _origin((0.17, 0.08, 0.02183), (-math.pi, 0.0, 0.0)))
     transform = _matmul(transform, _axis_rotation((0.0, 0.0, -1.0), q3))
 
-    # The first WP3 milestone defines the TCP as the spur_gear_joint origin.
-    transform = _matmul(transform, _origin((0.13916, 0.0, 0.0179), (0.0, -math.pi / 2.0, 0.0)))
+    # Match the dedicated fixed tcp_link in rascl.urdf.  TCP must not depend on
+    # the gripper's spur_gear_joint angle.
+    transform = _matmul(transform, _origin(TCP_ORIGIN_IN_LOWERARM, (0.0, -math.pi / 2.0, 0.0)))
     return _position(transform)
 
 

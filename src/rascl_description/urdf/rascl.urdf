@@ -115,6 +115,20 @@
     </collision>
   </link>
 
+  <!--
+    Calibrated tool center point.  Keep this separate from spur_gear_joint:
+    opening/closing the gripper must not move the Cartesian planning frame.
+    The 2026-07-22 single-pose calibration shifts the old TCP by
+    [-0.023, 0, +0.043] m in base_link at the nominal automatic-Home pose.
+  -->
+  <joint name="tcp_fixed_joint" type="fixed">
+    <parent link="lowerarm"/>
+    <child link="tcp_link"/>
+    <origin xyz="0.11616 0.043 0.0179" rpy="0 -1.570796327 0"/>
+  </joint>
+
+  <link name="tcp_link"/>
+
   <joint name="spur_gear_joint" type="revolute">
     <parent link="lowerarm"/>
     <child link="spur_gear"/>

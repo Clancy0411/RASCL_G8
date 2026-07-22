@@ -5,6 +5,11 @@
 原 7.7 “初始位置调整未实装”事项至此由软件 count offset 完成；CSP/PDO 与最终 offset 数值仍需按新 Debug Guide 逐步实机验证。
 
 补充修正 Homing→CSP 流程：不能在 Home 后停止 bridge，否则清理过程会 Disable Operation/Voltage。现在 `homing.launch.py` 保持同一 EtherCAT master，`home_all` 成功后由 `ros2_control.launch.py start_bridge:=false` 延迟配置 PDO 并进入 CSP；交接只发送 Enable Operation，初始 target 使用当前 actual counts。
+
+## 2026-07-22 TCP 单姿态初步修正
+
+根据自动 Home 位置的实测值，将旧模型 TCP 在 `base_link` 下修正 `[-0.023,0,+0.043] m`。新增固定 `tcp_link`，其 `lowerarm` 局部坐标为 `[0.11616,0.043,0.0179] m`；TF、FK、IK 和调试组 13 均改用该 frame，`spur_gear_joint` 的实体位置及夹爪运动未改。名义自动 Home TCP 为 `[0.18456,-0.00177,0.336001] m`。该结果仅由一个姿态得到，仍需在更多姿态外部测量验证。
+
 新的调试说明在README_RASCL_Group8.md
 
 
