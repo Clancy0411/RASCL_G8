@@ -295,6 +295,8 @@ open  或 o = 从当前位置相对 +110000 counts，松开放下
 固定 `110000 counts` 在默认速度下自动使用约 11 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
+预检查和实际运动节点取得完整 `/joint_states` 的默认超时均为 5 秒；运动节点异常会以
+`SPUR_TRACE failed` 写入 ROS 日志，便于组 `12` 打包分析。
 
 ## 9. Drive 2 当前参数
 

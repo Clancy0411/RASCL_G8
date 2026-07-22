@@ -32,6 +32,7 @@ GRIPPER_RELEASE_DELTA_COUNTS=110000
 SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-10000}"
 SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
 SPUR_GEAR_SETTLE_DURATION_S="${RASCL_SPUR_GEAR_SETTLE_DURATION_S:-1.0}"
+SPUR_GEAR_FEEDBACK_TIMEOUT_S="${RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S:-5.0}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
@@ -170,7 +171,7 @@ require_no_active_wp3_motion() {
 }
 
 read_csp_joint_snapshot() {
-  python3 - <<'PY'
+  python3 - "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" <<'PY'
 import sys
 import time
 
@@ -179,6 +180,7 @@ from sensor_msgs.msg import JointState
 
 JOINTS = ("shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint")
 latest = None
+feedback_timeout_s = float(sys.argv[1])
 
 
 def callback(message):
@@ -191,12 +193,14 @@ def callback(message):
 rclpy.init()
 node = rclpy.create_node("rascl_spur_counts_snapshot")
 subscription = node.create_subscription(JointState, "/joint_states", callback, 10)
-deadline = time.monotonic() + 3.0
+deadline = time.monotonic() + feedback_timeout_s
 try:
     while latest is None and time.monotonic() < deadline:
         rclpy.spin_once(node, timeout_sec=0.1)
     if latest is None:
-        raise RuntimeError("No complete /joint_states received within 3 seconds")
+        raise RuntimeError(
+            f"No complete /joint_states received within {feedback_timeout_s:g} seconds"
+        )
     print(" ".join(f"{value:.17g}" for value in latest))
 finally:
     node.destroy_subscription(subscription)
@@ -473,13 +477,15 @@ group_gripper_action() {
     die "RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S 必须是正数"
   is_positive_number "$SPUR_GEAR_SETTLE_DURATION_S" ||
     die "RASCL_SPUR_GEAR_SETTLE_DURATION_S 必须是正数"
+  is_positive_number "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" ||
+    die "RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S 必须是正数"
   is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
     die "Drive 3 URDF 限位必须是数字"
 
   local snapshot shoulder upperarm lowerarm spur gripper_action action_label
   local delta_counts target_rad minimum_duration motion_duration
   if ! snapshot="$(read_csp_joint_snapshot)"; then
-    die "3 秒内未收到完整 /joint_states；禁止控制 Drive 3"
+    die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
   echo "Drive 3 当前 joint position = $spur rad；抓夹动作以当前位置为基准，不依赖 Home。"
@@ -535,7 +541,7 @@ PY
   if ! python3 - "$shoulder" "$upperarm" "$lowerarm" "$spur" "$target_rad" \
     "$delta_counts" "$motion_duration" "$SPUR_GEAR_DIRECTION" \
     "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" \
-    "$SPUR_GEAR_SETTLE_DURATION_S" <<'PY'
+    "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" "$SPUR_GEAR_SETTLE_DURATION_S" <<'PY'
 import math
 import sys
 import time
@@ -555,6 +561,7 @@ from std_msgs.msg import Float64MultiArray
     direction,
     counts_per_revolution,
     home_offset_counts,
+    feedback_timeout_s,
     settle_s,
 ) = map(float, sys.argv[1:])
 
@@ -608,11 +615,14 @@ logger.info(
 )
 
 try:
-    feedback_deadline = time.monotonic() + 1.0
+    feedback_deadline = time.monotonic() + feedback_timeout_s
     while latest_spur is None and time.monotonic() < feedback_deadline:
         rclpy.spin_once(node, timeout_sec=0.05)
     if latest_spur is None:
-        raise RuntimeError("No Drive 3 /joint_states feedback before CSP motion")
+        raise RuntimeError(
+            "No Drive 3 /joint_states feedback within "
+            f"{feedback_timeout_s:g} seconds before CSP motion"
+        )
 
     period_s = 0.02
     start = time.monotonic()
@@ -644,6 +654,9 @@ try:
             raise RuntimeError("/joint_states stopped while Drive 3 was settling")
         time.sleep(period_s)
     log_feedback(logger, "complete")
+except Exception as exc:
+    logger.error(f"SPUR_TRACE failed: {exc}")
+    raise
 finally:
     node.destroy_subscription(subscription)
     node.destroy_node()
