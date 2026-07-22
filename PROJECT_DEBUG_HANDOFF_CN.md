@@ -282,8 +282,8 @@ PDO 由 bridge 内部独立循环持续发送，不能只依赖 ROS read/write �
 Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 只接受抓夹动作选择：
 
 ```text
-收 = 从当前位置相对 -110000 counts，收紧夹持
-放 = 从当前位置相对 +110000 counts，松开放下
+close 或 c = 从当前位置相对 -110000 counts，收紧夹持
+open  或 o = 从当前位置相对 +110000 counts，松开放下
 ```
 
 两者都不是绝对 encoder 目标；连续重复同一动作会继续累加。默认速度为：
@@ -498,7 +498,7 @@ bash ./rascl_debug.sh <组号>
 12 打包完整 ROS 日志
 13 查询 base_link -> tcp_link
 14 设置下一目标 XYZ 与运动时间
-15 CSP 下抓夹收紧/松开放下
+15 CSP 下输入 close/open 控制抓夹收紧/松开
 16 读取最近 CSP_STALL_SNAPSHOT
 ```
 

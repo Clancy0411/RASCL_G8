@@ -172,8 +172,9 @@ The values correspond to:
 ```
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
-command. Choosing `收` applies a relative `-110000` count grip/close move;
-choosing `放` applies a relative `+110000` count release/open move. It starts
+command. Entering ASCII `close` (or `c`) applies a relative `-110000` count
+grip/close move; entering `open` (or `o`) applies a relative `+110000` count
+release/open move. It starts
 from the current spur joint state, then publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
 10000 counts/s, the duration is derived automatically as about 11 seconds. It

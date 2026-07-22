@@ -483,18 +483,19 @@ group_gripper_action() {
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
   echo "Drive 3 当前 joint position = $spur rad；抓夹动作以当前位置为基准，不依赖 Home。"
-  read -r -p "确认抓夹动作（收=夹紧，放=松开放下）[收/放]：" gripper_action
+  read -r -p "Gripper action [close/open] (c/o): " gripper_action
+  gripper_action="${gripper_action,,}"
   case "$gripper_action" in
-    收)
+    close | c)
       action_label="收紧夹持"
       delta_counts="$GRIPPER_GRIP_DELTA_COUNTS"
       ;;
-    放)
+    open | o)
       action_label="松开放下"
       delta_counts="$GRIPPER_RELEASE_DELTA_COUNTS"
       ;;
     *)
-      die "未执行抓夹动作：请输入“收”或“放”"
+      die "未执行抓夹动作：请输入 close/c 或 open/o"
       ;;
   esac
   if ! read -r target_rad minimum_duration < <(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" "$SPUR_GEAR_SPEED_COUNTS_PER_S" "$SPUR_GEAR_MIN_MOTION_DURATION_S" <<'PY'
@@ -707,7 +708,7 @@ print_menu() {
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。抓夹收/放：T3=15。"
+    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。抓夹 close/open：T3=15。"
 }
 
 run_group() {

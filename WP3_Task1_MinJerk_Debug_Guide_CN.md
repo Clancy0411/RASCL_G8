@@ -105,11 +105,12 @@ T3：8 → 13 → 14 → 9 → 10
 
 ### Drive 3 / gripper 的收放动作
 
-完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。用户只需输入一次 `收` 或 `放`：
+完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。电脑不需要中文输入法，用户只需
+输入一次 ASCII 动作词（也可只输入单字母缩写）：
 
 ```text
-收 = 从当前位置相对 -110000 counts，收紧并夹持物体
-放 = 从当前位置相对 +110000 counts，松开并放下物体
+close 或 c = 从当前位置相对 -110000 counts，收紧并夹持物体
+open  或 o = 从当前位置相对 +110000 counts，松开并放下物体
 ```
 
 Drive 3 没有 Home，因此两种动作仍以执行时的当前位置为基准；连续重复同一动作会继续
@@ -276,7 +277,7 @@ bash ./rascl_debug.sh
 | 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
 | 13 | T3 | CSP 启动后查看实时模型 TCP |
 | 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
-| 15 | T3 | 选择 `收`/`放`，控制抓夹夹紧或松开 |
+| 15 | T3 | 输入 `close`/`open`，控制抓夹夹紧或松开 |
 | 16 | T3 | 查看最近一次 CSP 停滞自动诊断快照 |
 
 日常实机顺序以本指南最前面的
@@ -691,7 +692,7 @@ source install/local_setup.bash
 4. Drive 0–2 连续交接；Drive 3 通过独立 CiA-402 使能后也进入 CSP。
 5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动；Drive 3 无 PDO 故障。
 6. 20 ms PDO 循环无 WKC/following error，运动结束有 `MOTION_RESULT reached=true`。
-7. Drive 3 的组 `15` 收/放动作可在 CSP 中执行，且随后 Task 1 保持该角度。
+7. Drive 3 的组 `15` `close`/`open` 动作可在 CSP 中执行，且随后 Task 1 保持该角度。
 8. Home 附近 12 秒 minimum-jerk 小轨迹成功。
 
 ## 12. 参数速查

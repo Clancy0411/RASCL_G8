@@ -234,8 +234,9 @@ After successful Homing, the first three joint positions should be approximately
 
 Drive 3 has no Homing zero in this workflow, but it participates in both CSP
 state validation and position targets. `rascl_debug.sh` group `15` accepts one
-gripper action: `收` applies a relative `-110000` count grip/close move, and
-`放` applies a relative `+110000` count release/open move. Each action starts
+ASCII gripper action: `close` (or `c`) applies a relative `-110000` count
+grip/close move, and `open` (or `o`) applies a relative `+110000` count
+release/open move. Each action starts
 from the current joint state, uses the configured direction and counts per
 revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
