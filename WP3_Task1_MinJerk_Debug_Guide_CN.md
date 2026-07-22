@@ -83,10 +83,9 @@ T3：8 → 13 → 14 → 9 → 10
    - `/joint_states` 必须连续输出；前三轴应接近 `[0,+1.5708,+1.5708]`。
    - 任一项不满足，禁止执行组 9/10。
 5. **T3 组 13：查看当前模型 TCP。**
-   - 读取 TF `base_link -> tcp_link`；名义 Home 应接近
-     `[0.18456,-0.00177,0.336001] m`。你们这次实机同一 Home 姿态的旧 TF 是
-     `[0.208,0,0.292] m`，应用修正量后应接近 `[0.185,0,0.335] m`；记录新输出并
-     重新测量实体 TCP。
+   - 读取 TF `base_link -> tcp_link`；当前二次单姿态标定后的名义 Home 应接近
+     `[0.18318978,-0.01580108,0.32181469] m`。该标定优先修正
+     `XYZ=[0.16,-0.16,0.05] m` 测试点，必须记录 Home 新输出并重新测量实体 TCP。
 6. **T3 组 14：输入下一目标。**
    - 依次输入 TCP 的 `x/y/z`（米）和运动时间（秒）。
    - 整数或小数都可，例如输入 `5` 会自动作为 `5.0` 秒发送给 ROS。
@@ -199,8 +198,8 @@ Drive 2（`lowerarm_joint`）发生的 `statusword=0x3027` 是 CSP following err
 坐标约定：
 
 ```text
-URDF q=[0,0,0,0] TCP                    = [0.27456,-0.00177,0.086001] m
-自动 Home（D0–D2）q~=[0,+pi/2,+pi/2] TCP = [0.18456,-0.00177,0.336001] m
+URDF q=[0,0,0,0] TCP                    = [0.27318978,-0.01580108,0.07181469] m
+自动 Home（D0–D2）q~=[0,+pi/2,+pi/2] TCP = [0.18318978,-0.01580108,0.32181469] m
 Drive 3                                  = 保持上电时位置，不定义 Home 零位
 direction（D0–D3）                       = [+1,+1,+1,+1]
 home_offset_counts（D0–D2）名义值         = [0,-802816,-802816]
@@ -311,9 +310,11 @@ source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
 
-在 `T1` 运行 robot description 参数类型回归测试和两个硬件功能测试目标：
+在 `T1` 运行 TCP 标定、robot description 参数类型和两个硬件功能测试目标：
 
 ```bash
+python3 -m pytest \
+  src/rascl_wp3_ss26_group8/test/test_kinematics_calibration.py -q
 ctest --test-dir build/rascl_description \
   -R '^test_robot_description_parameter$' \
   --output-on-failure
@@ -322,10 +323,11 @@ ctest --test-dir build/rascl_hardware_interface \
   --output-on-failure
 ```
 
-三个目标必须通过。robot description 测试确保 xacro 输出始终以字符串参数传入，
-不会被 ROS 2 launch 误当作 YAML；另外两个目标覆盖硬件接口换算、PDO 字节布局、
-固定周期循环、SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及
-Drive 3 跳过 Homing 后的独立 CiA-402 使能和四轴 CSP 准入。
+四个目标必须通过。TCP 测试确保 URDF/FK 基准和当前实测标定一致，并验证 IK 能对
+原 Cartesian 目标重新规划。robot description 测试确保 xacro 输出始终以字符串参数
+传入，不会被 ROS 2 launch 误当作 YAML；另外两个目标覆盖硬件接口换算、PDO 字节布局、
+固定周期循环、SDO-only Homing、延迟 mapping、必需轴未 Home 禁止 CSP，以及 Drive 3
+跳过 Homing 后的独立 CiA-402 使能和四轴 CSP 准入。
 
 完整 `colcon test` 还会运行 `clang_format`、`cpplint` 等代码风格检查。这些检查
 可以在提交前处理，但格式或版权头失败不阻塞实机调试。判断时看 CTest 的测试
@@ -538,12 +540,14 @@ Homing 后选择组 `13` 可直接查看实时模型 TCP。脚本读取 TF
 `base_link -> tcp_link`；其中 `Translation` 的 `x/y/z` 单位为米。名义 Home 值为：
 
 ```text
-[0.18456, -0.00177, 0.336001] m
+[0.18318978, -0.01580108, 0.32181469] m
 ```
 
-该值由实时 joint state 和 URDF 正运动学计算，不是对实体夹爪位置的外部测量。本次只用
-一个 Home 姿态把旧模型 TCP 修正了 `[-0.023,0,+0.043] m`；必须重新实测。若其他姿态的
-残差不同，问题不是固定 TCP 偏移，需要继续标定连杆参数或 encoder 零位。
+该值由实时 joint state 和 URDF 正运动学计算，不是对实体夹爪位置的外部测量。当前二次
+单姿态标定使用程序 `XYZ=[0.16,-0.16,0.05] m`、外部实测
+`YXZ=[0.14,-0.16,0.05] m`，把对应 `base_link` 数值误差 `[-0.020,0,0] m`
+转换为 `lowerarm` 固定 TCP 修正。该修改优先保证这一测试姿态；Home 和其他姿态必须
+重新测量，不能用模型 TF 自身证明实体位置正确。
 
 `T3`：
 

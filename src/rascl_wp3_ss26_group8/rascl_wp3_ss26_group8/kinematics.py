@@ -26,17 +26,17 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-3.1415, 3.1415)
 
-# Fixed TCP position in the lowerarm frame.  At the nominal automatic-Home pose
-# this applies the measured base_link correction [-0.023, 0, +0.043] m to the
-# former spur_gear_joint-origin TCP.  It is deliberately independent of the
-# gripper's spur_gear_joint angle.
-TCP_ORIGIN_IN_LOWERARM = (0.11616, 0.043, 0.0179)
+# Fixed TCP position in the lowerarm frame.  The current single-pose
+# recalibration maps the former model TCP [0.16, -0.16, 0.05] m to the measured
+# base_link TCP [0.14, -0.16, 0.05] m at that joint pose.  It is deliberately
+# independent of the gripper's spur_gear_joint angle.
+TCP_ORIGIN_IN_LOWERARM = (0.11478978, 0.02881369, 0.03193108)
 
 # Nominal position of the TCP in base_link when q=[0,0,0].  This is useful when
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.27456, -0.00177, 0.086001)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.27318978, -0.01580108, 0.07181469)
 
 
 @dataclass

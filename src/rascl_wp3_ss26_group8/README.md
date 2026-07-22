@@ -34,7 +34,7 @@ The joint-coordinate convention from `3588dc98` is preserved:
 calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.27456, -0.00177, 0.086001] m
+base_link TCP = [0.27318978, -0.01580108, 0.07181469] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -42,13 +42,16 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.18456, -0.00177, 0.336001] m
+base_link auto-home TCP = [0.18318978, -0.01580108, 0.32181469] m
 ```
 
-The TCP was provisionally corrected from one measured automatic-Home pose by
-`[-0.023, 0, +0.043] m` in `base_link`.  Re-measure it at other arm poses: a
-configuration-dependent residual requires link/encoder calibration rather than
-another constant TCP shift.
+The current TCP uses a second single-pose calibration.  At the joint pose that
+the former model reported as `[0.16, -0.16, 0.05] m`, the external Y/X/Z
+measurement was `[0.14, -0.16, 0.05] m`; in the project's physical-axis
+convention this is the numeric `base_link` XYZ correction `[-0.020, 0, 0] m`.
+The resulting fixed origin in `lowerarm` is
+`[0.11478978, 0.02881369, 0.03193108] m`.  This intentionally prioritizes that
+measured pose and must be rechecked at Home and other arm poses.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

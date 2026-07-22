@@ -239,7 +239,9 @@ group_build_test() {
   set -u
   ros2 pkg prefix rascl_wp3_ss26_group8 >/dev/null
   ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk1'
-  echo "[2/2] Running launch and functional hardware-interface tests..."
+  echo "[2/2] Running kinematics, launch, and hardware-interface tests..."
+  python3 -m pytest \
+    src/rascl_wp3_ss26_group8/test/test_kinematics_calibration.py -q
   ctest --test-dir build/rascl_description \
     -R '^test_robot_description_parameter$' \
     --output-on-failure

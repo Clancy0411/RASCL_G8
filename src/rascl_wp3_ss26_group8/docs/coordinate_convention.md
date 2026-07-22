@@ -20,7 +20,7 @@ the URDF zero pose. With the nominal software count calibration, it must read:
 In this automatic-Home pose, the kinematic model gives:
 
 ```text
-TCP in base_link = [0.18456, -0.00177, 0.336001] m
+TCP in base_link = [0.18318978, -0.01580108, 0.32181469] m
 ```
 
 The original physical URDF-zero joint-angle convention remains; the listed TCP
@@ -28,13 +28,16 @@ uses the new calibrated `tcp_link`:
 
 ```text
 q = [0, 0, 0, 0] rad
-TCP in base_link = [0.27456, -0.00177, 0.086001] m
+TCP in base_link = [0.27318978, -0.01580108, 0.07181469] m
 ```
 
-The 2026-07-22 provisional TCP calibration used one physical automatic-Home
-measurement and applied `[-0.023, 0, +0.043] m` in `base_link` at that pose.
-Measurements at additional poses are required to distinguish a fixed TCP
-offset from link-geometry or encoder-zero error.
+The current 2026-07-22 TCP definition applies a second single-pose calibration.
+At the joint pose that the former model reported as `[0.16, -0.16, 0.05] m`,
+the external Y/X/Z measurement was `[0.14, -0.16, 0.05] m`.  Under the
+project's physical-axis convention, the correction is `[-0.020, 0, 0] m` in
+numeric `base_link` XYZ.  Transforming that correction into `lowerarm` gives
+the fixed origin `[0.11478978, 0.02881369, 0.03193108] m`.  This calibration
+prioritizes that measured pose; Home and additional poses must be rechecked.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
 interface applies nominal `direction=[+1,+1,+1,+1]` and
