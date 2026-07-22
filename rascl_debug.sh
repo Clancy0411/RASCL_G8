@@ -25,9 +25,10 @@ SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
 SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
 SPUR_GEAR_MIN_POSITION_RAD="${RASCL_SPUR_GEAR_MIN_POSITION_RAD:--3.1415}"
 SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-3.1415}"
-# Group 15 limits the average Drive 3 speed instead of sending one large CSP
-# setpoint step.  Override deliberately per invocation when characterising the
-# gripper, for example RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S=5000.
+# Group 15 maps one explicit gripper action to a fixed relative Drive 3 move.
+# It limits the average speed instead of sending one large CSP setpoint step.
+GRIPPER_GRIP_DELTA_COUNTS=-110000
+GRIPPER_RELEASE_DELTA_COUNTS=110000
 SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-10000}"
 SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
 SPUR_GEAR_SETTLE_DURATION_S="${RASCL_SPUR_GEAR_SETTLE_DURATION_S:-1.0}"
@@ -96,10 +97,6 @@ require_active_controllers() {
 
 is_number() {
   [[ "$1" =~ ^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]
-}
-
-is_integer() {
-  [[ "$1" =~ ^[-+]?[0-9]+$ ]]
 }
 
 is_positive_number() {
@@ -461,7 +458,7 @@ group_tcp_pose() {
   timeout 3s ros2 run tf2_ros tf2_echo base_link tcp_link || [[ "$?" -eq 124 ]]
 }
 
-group_spur_gear_relative_counts() {
+group_gripper_action() {
   load_ros
   require_csp_session
   require_active_controllers
@@ -479,16 +476,27 @@ group_spur_gear_relative_counts() {
   is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
     die "Drive 3 URDF 限位必须是数字"
 
-  local snapshot shoulder upperarm lowerarm spur delta_counts target_rad minimum_duration motion_duration entered_duration
+  local snapshot shoulder upperarm lowerarm spur gripper_action action_label
+  local delta_counts target_rad minimum_duration motion_duration
   if ! snapshot="$(read_csp_joint_snapshot)"; then
     die "3 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
-  echo "Drive 3 当前 joint position = $spur rad。输入的是相对 encoder 增量，不依赖 Home。"
-  read -r -p "Drive 3 相对运动 counts（正/负，默认 2000）: " delta_counts
-  delta_counts="${delta_counts:-2000}"
-  is_integer "$delta_counts" || die "相对步长必须是整数 counts：$delta_counts"
-  (( delta_counts != 0 )) || die "相对步长不能为 0"
+  echo "Drive 3 当前 joint position = $spur rad；抓夹动作以当前位置为基准，不依赖 Home。"
+  read -r -p "确认抓夹动作（收=夹紧，放=松开放下）[收/放]：" gripper_action
+  case "$gripper_action" in
+    收)
+      action_label="收紧夹持"
+      delta_counts="$GRIPPER_GRIP_DELTA_COUNTS"
+      ;;
+    放)
+      action_label="松开放下"
+      delta_counts="$GRIPPER_RELEASE_DELTA_COUNTS"
+      ;;
+    *)
+      die "未执行抓夹动作：请输入“收”或“放”"
+      ;;
+  esac
   if ! read -r target_rad minimum_duration < <(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" "$SPUR_GEAR_SPEED_COUNTS_PER_S" "$SPUR_GEAR_MIN_MOTION_DURATION_S" <<'PY'
 import math
 import sys
@@ -514,25 +522,14 @@ minimum_duration = max(abs(delta_counts) / speed_counts_per_s, minimum_duration)
 print(f"{target_rad:.17g} {minimum_duration:.17g}")
 PY
 ); then
-    die "Drive 3 相对 counts 指令被 URDF 软件限位拒绝"
+    die "抓夹 $action_label 指令被 Drive 3 URDF 软件限位拒绝"
   fi
 
-  read -r -p "Drive 3 运动时长 [s]（至少 ${minimum_duration}；直接回车使用此安全时长）: " entered_duration
-  motion_duration="${entered_duration:-$minimum_duration}"
-  is_positive_number "$motion_duration" || die "运动时长必须是正数秒：$motion_duration"
-  if ! python3 - "$motion_duration" "$minimum_duration" <<'PY'
-import sys
-
-duration, minimum = map(float, sys.argv[1:])
-if duration + 1e-9 < minimum:
-    raise ValueError(f"duration {duration:g} s is below safe minimum {minimum:g} s")
-PY
-  then
-    die "运动时长低于安全下限 ${minimum_duration} s；请使用更长时间"
-  fi
+  motion_duration="$minimum_duration"
 
   clear_plan_state
-  echo "Drive 3 将以 50 Hz minimum-jerk CSP 轨迹运动 $delta_counts counts，时长 $motion_duration s。"
+  echo "抓夹将执行“$action_label”：Drive 3 相对运动 $delta_counts counts。"
+  echo "使用 50 Hz minimum-jerk CSP 轨迹，自动时长 $motion_duration s。"
   echo "前三轴保持当前 joint_state；此操作已清除旧组 9 规划授权。"
   if ! python3 - "$shoulder" "$upperarm" "$lowerarm" "$spur" "$target_rad" \
     "$delta_counts" "$motion_duration" "$SPUR_GEAR_DIRECTION" \
@@ -655,7 +652,7 @@ PY
     die "Drive 3 CSP 轨迹中断；请立即执行组 12 并提交日志"
   fi
   require_active_controllers
-  echo "Drive 3 CSP 相对运动完成：delta=$delta_counts counts。随后执行组 9 时，Task 1 会保持此 spur gear 角度。"
+  echo "抓夹动作完成：$action_label，delta=$delta_counts counts。随后执行组 9 时，Task 1 会保持此 spur gear 角度。"
 }
 
 group_set_target() {
@@ -705,12 +702,12 @@ print_menu() {
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
     " 13  查看当前模型 TCP 坐标                              [T3]" \
     " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
-    " 15  在 CSP 中让 Drive 3 spur gear 相对运动 counts     [T3，会运动]" \
+    " 15  抓夹收紧/松开放下（固定 ±110000 counts）          [T3，会运动]" \
     " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3 相对 counts：T3=15。"
+    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。抓夹收/放：T3=15。"
 }
 
 run_group() {
@@ -729,7 +726,7 @@ run_group() {
     12) group_pack_logs ;;
     13) group_tcp_pose ;;
     14) group_set_target ;;
-    15) group_spur_gear_relative_counts ;;
+    15) group_gripper_action ;;
     16) group_stall_snapshot ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;

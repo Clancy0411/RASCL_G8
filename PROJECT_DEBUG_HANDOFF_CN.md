@@ -21,8 +21,8 @@ commit message: 减少抖动
 ```
 
 `214477e` 曾在实机验证 Drive 0–3 能正确定位到指定空间点，并包含
-`0x2332:00=200` 的 CSP 插值修复。当前版本在它的基础上继续加入了 Drive 3 相对
-counts 控制、Drive 2 参数与故障诊断，以及最新 TCP 偏移修正。
+`0x2332:00=200` 的 CSP 插值修复。当前版本在它的基础上继续加入了 Drive 3 抓夹
+收放控制、Drive 2 参数与故障诊断，以及最新 TCP 偏移修正。
 
 进入新环境后首先执行：
 
@@ -279,20 +279,21 @@ PDO 由 bridge 内部独立循环持续发送，不能只依赖 ROS read/write �
 
 ## 8. Drive 3 / gripper
 
-Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 接受有符号相对 counts：
+Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 只接受抓夹动作选择：
 
 ```text
-+2000 = 从当前位置正向增加 2000 counts
--2000 = 从当前位置反向减少 2000 counts
+收 = 从当前位置相对 -110000 counts，收紧夹持
+放 = 从当前位置相对 +110000 counts，松开放下
 ```
 
-它不是绝对 encoder 目标。默认速度为：
+两者都不是绝对 encoder 目标；连续重复同一动作会继续累加。默认速度为：
 
 ```text
 10000 counts/s
 ```
 
-组 `15` 使用 50 Hz minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
+固定 `110000 counts` 在默认速度下自动使用约 11 秒。组 `15` 使用 50 Hz
+minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
 
 ## 9. Drive 2 当前参数
@@ -497,7 +498,7 @@ bash ./rascl_debug.sh <组号>
 12 打包完整 ROS 日志
 13 查询 base_link -> tcp_link
 14 设置下一目标 XYZ 与运动时间
-15 CSP 下 Drive 3 相对 counts
+15 CSP 下抓夹收紧/松开放下
 16 读取最近 CSP_STALL_SNAPSHOT
 ```
 
@@ -639,7 +640,7 @@ MOTION_RESULT
 3. Homing→CSP 必须复用同一 EtherCAT master；
 4. 保留 `0x2332:00=200`；
 5. 不把 `0x6060/0x6061` 重新加入周期 PDO；
-6. 不让 Drive 3 相对运动与 Cartesian trajectory 并发冲突；
+6. 不让 Drive 3 抓夹收放与 Cartesian trajectory 并发冲突；
 7. 不无依据改变四轴 direction；
 8. 不使用 `0x607C` 修正 TCP 几何；
 9. 不直接清除或改写 `0x607B/0x607D`；

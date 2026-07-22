@@ -171,14 +171,15 @@ The values correspond to:
 [shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
 ```
 
-For the CSP session, `rascl_debug.sh` group `15` is the supported way to command
-`spur_gear_joint` by a signed **relative** Drive 3 encoder increment in counts.
-It adds the increment to the current spur joint state, then publishes a 50 Hz
-minimum-jerk four-joint CSP trajectory that preserves the measured arm pose.
-Its default average speed is 10000 counts/s, with a per-command duration that
-cannot be shorter than the derived safe minimum. It does not require Drive 3
-Homing. Do not send a direct Profile Position command while ros2_control owns
-the CSP connection.
+For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
+command. Choosing `收` applies a relative `-110000` count grip/close move;
+choosing `放` applies a relative `+110000` count release/open move. It starts
+from the current spur joint state, then publishes a 50 Hz minimum-jerk
+four-joint CSP trajectory that preserves the measured arm pose. At the default
+10000 counts/s, the duration is derived automatically as about 11 seconds. It
+does not require Drive 3 Homing. Repeating the same action accumulates another
+relative move, subject to the URDF limit. Do not send a direct Profile Position
+command while ros2_control owns the CSP connection.
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

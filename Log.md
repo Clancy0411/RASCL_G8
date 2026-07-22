@@ -366,3 +366,6 @@ self.configure_pdo_mapping = False
 ```
 
 然后重新 build。
+## 2026-07-22 组 15 抓夹收放简化
+
+组 `15` 不再询问任意相对 counts 和运动时间。用户输入 `收` 时，Drive 3 从当前位置相对运动 `-110000 counts` 以收紧夹持；输入 `放` 时相对运动 `+110000 counts` 以松开放下。两种动作继续使用 50 Hz minimum-jerk CSP、默认 `10000 counts/s`（约 11 秒）并保持 Drive 0–2 当前位置；CSP、反馈、并发和 URDF 限位检查不变。

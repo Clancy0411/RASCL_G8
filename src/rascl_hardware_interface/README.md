@@ -233,13 +233,15 @@ After successful Homing, the first three joint positions should be approximately
 ```
 
 Drive 3 has no Homing zero in this workflow, but it participates in both CSP
-state validation and position targets. `rascl_debug.sh` group `15` accepts a
-signed **relative** Drive 3 encoder increment in counts. It adds that increment
-to the current joint state using the configured direction and counts per
+state validation and position targets. `rascl_debug.sh` group `15` accepts one
+gripper action: `收` applies a relative `-110000` count grip/close move, and
+`放` applies a relative `+110000` count release/open move. Each action starts
+from the current joint state, uses the configured direction and counts per
 revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
-positions. The default average speed is 10000 counts/s; group `15` derives a
-safe minimum duration and records `SPUR_TRACE` feedback in the ROS log.
+positions. At the default 10000 counts/s, either action takes about 11 seconds.
+Group `15` derives the duration automatically and records `SPUR_TRACE` feedback
+in the ROS log.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search for Drives 0--2; Drive 3 does not execute that
