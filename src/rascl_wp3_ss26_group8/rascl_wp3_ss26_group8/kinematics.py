@@ -26,17 +26,23 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-3.1415, 3.1415)
 
-# Fixed TCP position in the lowerarm frame.  The current single-pose
-# recalibration maps the former model TCP [0.16, -0.16, 0.05] m to the measured
-# base_link TCP [0.14, -0.16, 0.05] m at that joint pose.  It is deliberately
-# independent of the gripper's spur_gear_joint angle.
-TCP_ORIGIN_IN_LOWERARM = (0.11478978, 0.02881369, 0.03193108)
+# The measured single-pose calibration locates the old gear-surface reference
+# in the lowerarm frame.  The commanded TCP is 20 mm farther along lowerarm +X,
+# halfway along the jaws, so Cartesian targets refer to the grasp center rather
+# than the gear surface.  It remains independent of spur_gear_joint motion.
+CALIBRATED_GEAR_SURFACE_IN_LOWERARM = (0.11478978, 0.02881369, 0.03193108)
+GRASP_CENTER_EXTENSION_M = 0.020
+TCP_ORIGIN_IN_LOWERARM = (
+    CALIBRATED_GEAR_SURFACE_IN_LOWERARM[0] + GRASP_CENTER_EXTENSION_M,
+    CALIBRATED_GEAR_SURFACE_IN_LOWERARM[1],
+    CALIBRATED_GEAR_SURFACE_IN_LOWERARM[2],
+)
 
 # Nominal position of the TCP in base_link when q=[0,0,0].  This is useful when
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.27318978, -0.01580108, 0.07181469)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29318978, -0.01580108, 0.07181469)
 
 
 @dataclass

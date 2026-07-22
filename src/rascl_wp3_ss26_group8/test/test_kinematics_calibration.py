@@ -58,23 +58,22 @@ def test_urdf_and_python_use_the_same_tcp_origin():
 def test_reference_tcp_positions_match_calibrated_geometry():
     _assert_vector_close(
         forward_tcp((0.0, 0.0, 0.0)),
-        (0.27318978, -0.01580108, 0.07181469),
+        (0.29318978, -0.01580108, 0.07181469),
     )
     _assert_vector_close(
         forward_tcp((0.0, math.pi / 2.0, math.pi / 2.0)),
-        (0.18318978, -0.01580108, 0.32181469),
+        (0.20318978, -0.01580108, 0.32181469),
     )
 
 
-def test_measured_pose_is_reproduced_by_forward_kinematics():
-    # Joint pose that the previous TCP definition reported as
-    # [0.16, -0.16, 0.05] m.  The physical Y/X/Z reading was
-    # [0.14, -0.16, 0.05] m, which maps to the same numeric
-    # base_link XYZ tuple.
+def test_grasp_center_extends_twenty_mm_from_measured_surface_point():
+    # At this measured pose the calibrated gear-surface point was
+    # [0.14, -0.16, 0.05] m.  Moving 20 mm along the local jaw direction gives
+    # the fixed grasp center below.
     measured_joint_pose = (0.777575714851, 0.646147976068, 2.120655279445)
     _assert_vector_close(
         forward_tcp(measured_joint_pose),
-        (0.14, -0.16, 0.05),
+        (0.14137022054036882, -0.16134895242506456, 0.030092640926086274),
     )
 
 

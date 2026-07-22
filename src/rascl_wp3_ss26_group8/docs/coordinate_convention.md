@@ -4,8 +4,9 @@ Frame: `base_link` from `rascl_description/urdf/rascl.urdf`.
 
 Unit: meter.
 
-TCP for the first milestone: calibrated fixed `tcp_link`, attached to
-`lowerarm` and independent of `spur_gear_joint` motion.
+TCP for the first milestone: fixed grasp-center `tcp_link`, attached to
+`lowerarm` and independent of `spur_gear_joint` motion.  It is 20 mm outward
+from the calibrated gear-surface point along `lowerarm` +X.
 
 Calibration for real hardware uses the validated reference-switch search from
 the `auto_homing` branch. Start in its safe search region, validate each axis
@@ -20,7 +21,7 @@ the URDF zero pose. With the nominal software count calibration, it must read:
 In this automatic-Home pose, the kinematic model gives:
 
 ```text
-TCP in base_link = [0.18318978, -0.01580108, 0.32181469] m
+TCP in base_link = [0.20318978, -0.01580108, 0.32181469] m
 ```
 
 The original physical URDF-zero joint-angle convention remains; the listed TCP
@@ -28,7 +29,7 @@ uses the new calibrated `tcp_link`:
 
 ```text
 q = [0, 0, 0, 0] rad
-TCP in base_link = [0.27318978, -0.01580108, 0.07181469] m
+TCP in base_link = [0.29318978, -0.01580108, 0.07181469] m
 ```
 
 The current 2026-07-22 TCP definition applies a second single-pose calibration.
@@ -36,7 +37,9 @@ At the joint pose that the former model reported as `[0.16, -0.16, 0.05] m`,
 the external Y/X/Z measurement was `[0.14, -0.16, 0.05] m`.  Under the
 project's physical-axis convention, the correction is `[-0.020, 0, 0] m` in
 numeric `base_link` XYZ.  Transforming that correction into `lowerarm` gives
-the fixed origin `[0.11478978, 0.02881369, 0.03193108] m`.  This calibration
+the calibrated gear-surface point `[0.11478978, 0.02881369, 0.03193108] m`.
+The grasp-center requirement then adds 20 mm along `lowerarm` +X, producing the
+fixed TCP `[0.13478978, 0.02881369, 0.03193108] m`.  The surface calibration
 prioritizes that measured pose; Home and additional poses must be rechecked.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware

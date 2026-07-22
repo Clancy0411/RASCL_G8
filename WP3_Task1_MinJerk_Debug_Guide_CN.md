@@ -83,9 +83,9 @@ T3：8 → 13 → 14 → 9 → 10
    - `/joint_states` 必须连续输出；前三轴应接近 `[0,+1.5708,+1.5708]`。
    - 任一项不满足，禁止执行组 9/10。
 5. **T3 组 13：查看当前模型 TCP。**
-   - 读取 TF `base_link -> tcp_link`；当前二次单姿态标定后的名义 Home 应接近
-     `[0.18318978,-0.01580108,0.32181469] m`。该标定优先修正
-     `XYZ=[0.16,-0.16,0.05] m` 测试点，必须记录 Home 新输出并重新测量实体 TCP。
+   - 读取 TF `base_link -> tcp_link`；当前抓取中心 TCP 的名义 Home 应接近
+     `[0.20318978,-0.01580108,0.32181469] m`。它在原齿轮表面校准点基础上沿
+     夹爪方向向外延伸 `0.020 m`，必须记录 Home 新输出并重新测量实体抓取中心。
 6. **T3 组 14：输入下一目标。**
    - 依次输入 TCP 的 `x/y/z`（米）和运动时间（秒）。
    - 整数或小数都可，例如输入 `5` 会自动作为 `5.0` 秒发送给 ROS。
@@ -207,8 +207,8 @@ Drive 2（`lowerarm_joint`）发生的 `statusword=0x3027` 是 CSP following err
 坐标约定：
 
 ```text
-URDF q=[0,0,0,0] TCP                    = [0.27318978,-0.01580108,0.07181469] m
-自动 Home（D0–D2）q~=[0,+pi/2,+pi/2] TCP = [0.18318978,-0.01580108,0.32181469] m
+URDF q=[0,0,0,0] TCP                    = [0.29318978,-0.01580108,0.07181469] m
+自动 Home（D0–D2）q~=[0,+pi/2,+pi/2] TCP = [0.20318978,-0.01580108,0.32181469] m
 Drive 3                                  = 保持上电时位置，不定义 Home 零位
 direction（D0–D3）                       = [+1,+1,+1,+1]
 home_offset_counts（D0–D2）名义值         = [0,-802816,-802816]
@@ -318,6 +318,33 @@ source /opt/ros/jazzy/setup.bash
 source install/local_setup.bash
 export ROS_DOMAIN_ID=88
 ```
+
+### 2.1 只修改 TCP/URDF 后快速重新编译
+
+如果只修改了夹爪 TCP、URDF 或 `rascl_wp3_ss26_group8` 运动学代码，不必删除整个
+`build/install/log`。先停止 T1 的 Homing bridge 和 T2 的 ros2_control，确认没有旧实机
+进程继续占用 EtherCAT，然后在容器 T1 执行：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select \
+  rascl_description rascl_wp3_ss26_group8
+source install/local_setup.bash
+```
+
+T2、T3 也必须重新加载新的安装环境：
+
+```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source install/local_setup.bash
+export ROS_DOMAIN_ID=88
+```
+
+TCP/URDF 改变后，旧 robot description、TF、已生成轨迹和组 `9` 的执行授权全部失效。
+重新执行 `T1:4 → T2:6→7 → T3:8→13`，确认新 TCP 后，再执行
+`T3:14→9→10`。不得复用修改前的 CSV 或直接执行旧目标授权。
 
 在 `T1` 运行 TCP 标定、robot description 参数类型和两个硬件功能测试目标：
 
@@ -549,14 +576,14 @@ Homing 后选择组 `13` 可直接查看实时模型 TCP。脚本读取 TF
 `base_link -> tcp_link`；其中 `Translation` 的 `x/y/z` 单位为米。名义 Home 值为：
 
 ```text
-[0.18318978, -0.01580108, 0.32181469] m
+[0.20318978, -0.01580108, 0.32181469] m
 ```
 
-该值由实时 joint state 和 URDF 正运动学计算，不是对实体夹爪位置的外部测量。当前二次
-单姿态标定使用程序 `XYZ=[0.16,-0.16,0.05] m`、外部实测
+该值由实时 joint state 和 URDF 正运动学计算，不是对实体夹爪位置的外部测量。二次
+单姿态标定使用程序 `XYZ=[0.16,-0.16,0.05] m`、齿轮表面外部实测
 `YXZ=[0.14,-0.16,0.05] m`，把对应 `base_link` 数值误差 `[-0.020,0,0] m`
-转换为 `lowerarm` 固定 TCP 修正。该修改优先保证这一测试姿态；Home 和其他姿态必须
-重新测量，不能用模型 TF 自身证明实体位置正确。
+转换为 `lowerarm` 表面参考点。当前抓取中心再沿 `lowerarm +X` 向夹爪外侧增加
+`0.020 m`；Home 和其他姿态必须重新测量，不能用模型 TF 自身证明实体位置正确。
 
 `T3`：
 
