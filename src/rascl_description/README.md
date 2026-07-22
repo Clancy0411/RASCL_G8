@@ -180,6 +180,12 @@ cannot be shorter than the derived safe minimum. It does not require Drive 3
 Homing. Do not send a direct Profile Position command while ros2_control owns
 the CSP connection.
 
+For Cartesian Task 1 moves, group `10` now reports success only after fresh
+joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains
+Operation Enabled but stops progressing, the bridge records a staged
+`CSP_STALL_SNAPSHOT`; group `10` prints it automatically on failure and group
+`16` returns the most recent snapshot without opening another EtherCAT client.
+
 ## Notes
 
 This package does not implement the low-level EtherCAT communication itself. The actual hardware access is implemented in the `rascl_hardware_interface` package.

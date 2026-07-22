@@ -202,6 +202,19 @@ captures it without a second TCP client. A `TORQUE_SNAPSHOT` is appended as
 well, recording torque demand/actual value and all three torque limits for
 Drives 0--3 at the same fault boundary.
 
+The bridge also detects the non-fault failure mode where a drive remains
+Operation Enabled but stops making encoder progress. By default, an error of at
+least 25000 counts with less than 100 counts of progress for 500 ms emits
+`CSP_STALL_DETECTED`. It then reads at most one diagnostic SDO per PDO cycle so
+the 50 Hz process-data stream continues, and records a `CSP_STALL_SNAPSHOT`
+containing the PDO target/actual/status, decoded `0x2324:01` limit flags,
+position demand, following error, velocity, torque/current, position and speed
+limits, position gain, motor current parameters, and the `0x2325:01-.07`
+voltage thresholds plus actual device/motor supply voltages (10 mV units). The read-only
+`read_csp_stall_snapshot` Trigger service returns the latest completed snapshot.
+The thresholds are exposed as `csp_stall_error_counts`,
+`csp_stall_progress_counts`, and `csp_stall_timeout_ms`.
+
 If the network interface has a different name, replace `robot_interface` with the actual interface name.
 
 ## Home Service

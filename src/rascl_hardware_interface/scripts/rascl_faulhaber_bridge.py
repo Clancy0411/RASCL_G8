@@ -13,7 +13,7 @@ import struct
 import sys
 import threading
 import time
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import pysoem
 import rclpy
@@ -56,6 +56,7 @@ FOLLOWING_ERROR_ACTUAL_VALUE = 0x60F4
 
 # FAULHABER manufacturer objects used only for failure diagnostics.
 DEVICE_STATUS = 0x2324
+VOLTAGE_MONITOR = 0x2325
 DEVICE_STATUS_FLAGS = {
     2: "velocity_deviation",
     5: "following_error",
@@ -132,9 +133,53 @@ STATUS_SWITCHED_ON = 0x0023
 STATUS_OPERATION_ENABLED_STATE = 0x0027
 STATUS_FAULT = 1 << 3
 STATUS_TARGET_REACHED = 1 << 10
+STATUS_INTERNAL_LIMIT_ACTIVE = 1 << 11
 STATUS_CSP_TARGET_ACCEPTED = 1 << 12
 STATUS_HOMING_ATTAINED = 1 << 12
 STATUS_FOLLOWING_OR_HOMING_ERROR = 1 << 13
+
+STATUSWORD_MONITOR_FLAGS = {
+    10: "target_reached",
+    11: "internal_limit_active",
+    12: "csp_target_accepted",
+    13: "following_error",
+}
+
+# Read-only objects sampled one at a time after a non-fault CSP stall is
+# detected.  One mailbox request per PDO cycle keeps process data flowing while
+# preserving the drive-side evidence that is absent from /joint_states.
+LIVE_DIAGNOSTIC_READS = (
+    ("device_status", DEVICE_STATUS, 1, False),
+    ("device_supply_actual_10mv", VOLTAGE_MONITOR, 6, False),
+    ("motor_supply_actual_10mv", VOLTAGE_MONITOR, 7, False),
+    ("error_register", ERROR_REGISTER, 0, False),
+    ("position_demand", POSITION_DEMAND_VALUE, 0, True),
+    ("position_actual", ACTUAL_POSITION, 0, True),
+    ("following_error_actual", FOLLOWING_ERROR_ACTUAL_VALUE, 0, True),
+    ("velocity_actual", VELOCITY_ACTUAL_VALUE, 0, True),
+    ("torque_demand", TORQUE_DEMAND, 0, True),
+    ("torque_actual", ACTUAL_TORQUE, 0, True),
+    ("current_actual", ACTUAL_CURRENT, 0, True),
+    ("maximum_torque", MAX_TORQUE, 0, False),
+    ("positive_torque_limit", POSITIVE_TORQUE_LIMIT, 0, False),
+    ("negative_torque_limit", NEGATIVE_TORQUE_LIMIT, 0, False),
+    ("maximum_motor_speed", MAX_MOTOR_SPEED, 0, False),
+    ("position_range_min", POSITION_RANGE_LIMIT, 1, True),
+    ("position_range_max", POSITION_RANGE_LIMIT, 2, True),
+    ("software_limit_min", SOFTWARE_POSITION_LIMIT, 1, True),
+    ("software_limit_max", SOFTWARE_POSITION_LIMIT, 2, True),
+    ("following_window", FOLLOWING_ERROR_WINDOW, 0, False),
+    ("following_timeout_ms", FOLLOWING_ERROR_TIMEOUT, 0, False),
+    ("position_gain", POSITION_CONTROL_PARAMETER_SET, 1, False),
+    ("rated_current_ma", MOTOR_APPLICATION_DATA, 1, False),
+    ("continuous_current_ma", MOTOR_APPLICATION_DATA, 2, False),
+    ("peak_current_ma", MOTOR_APPLICATION_DATA, 3, False),
+    ("device_supply_lower_10mv", VOLTAGE_MONITOR, 1, False),
+    ("motor_supply_lower_10mv", VOLTAGE_MONITOR, 2, False),
+    ("motor_supply_max_10mv", VOLTAGE_MONITOR, 3, False),
+    ("motor_supply_upper_10mv", VOLTAGE_MONITOR, 4, False),
+    ("voltage_error_delay_ms", VOLTAGE_MONITOR, 5, False),
+)
 
 # The FAULHABER EtherCAT manual defines RxPDO2/TxPDO2 as the standard position
 # process image for PP and CSP.  Their mapping-count subindices are read-only,
@@ -601,6 +646,12 @@ class FaulhaberDrive:
         torque_demand = read("torque_demand", TORQUE_DEMAND, signed=True)
         torque_actual = read("torque_actual", ACTUAL_TORQUE, signed=True)
         current_actual = read("current_actual", ACTUAL_CURRENT, signed=True)
+        device_supply_actual = read(
+            "device_supply_actual", VOLTAGE_MONITOR, 6
+        )
+        motor_supply_actual = read(
+            "motor_supply_actual", VOLTAGE_MONITOR, 7
+        )
         maximum_torque = read("maximum_torque", MAX_TORQUE)
         positive_torque_limit = read("positive_torque_limit", POSITIVE_TORQUE_LIMIT)
         negative_torque_limit = read("negative_torque_limit", NEGATIVE_TORQUE_LIMIT)
@@ -631,6 +682,10 @@ class FaulhaberDrive:
         parts.append(f"0x6074/0x6077(demand/actual)={torque_demand}/{torque_actual}")
         parts.append(f"0x6078(current_actual)={current_actual}")
         parts.append(
+            "voltage_10mV(0x2325.06/.07 device/motor_actual)="
+            f"{device_supply_actual}/{motor_supply_actual}"
+        )
+        parts.append(
             "limits(0x6072/0x60E0/0x60E1/0x6080)="
             f"{maximum_torque}/{positive_torque_limit}/{negative_torque_limit}/"
             f"{maximum_motor_speed}"
@@ -640,6 +695,73 @@ class FaulhaberDrive:
             f"{rated_current}/{continuous_current}/{peak_current}"
         )
         parts.append(f"0x2348.01(Kv)={position_gain}")
+        if unavailable:
+            parts.append("unavailable=" + ",".join(unavailable))
+        return "; ".join(parts)
+
+    def format_live_diagnostics(
+        self, values: Dict[str, int], unavailable: Sequence[str]
+    ) -> str:
+        """Format a staged, read-only diagnostic sample for a live CSP stall."""
+
+        device_status = values.get("device_status")
+        error_register = values.get("error_register")
+        parts = [f"LIVE_DIAG D{self.drive_id}"]
+        if device_status is not None:
+            parts.append(
+                f"0x2324.01=0x{device_status:08X}"
+                f"[{self._decode_flags(device_status, DEVICE_STATUS_FLAGS)}]"
+            )
+        if error_register is not None:
+            parts.append(
+                f"0x1001=0x{error_register:02X}"
+                f"[{self._decode_flags(error_register, ERROR_REGISTER_FLAGS)}]"
+            )
+        parts.append(
+            "position(0x6062/0x6064/0x60F4 demand/actual/following)="
+            f"{values.get('position_demand')}/{values.get('position_actual')}/"
+            f"{values.get('following_error_actual')}"
+        )
+        parts.append(f"0x606C(velocity)={values.get('velocity_actual')}")
+        parts.append(
+            "torque(0x6074/0x6077 demand/actual)="
+            f"{values.get('torque_demand')}/{values.get('torque_actual')}"
+        )
+        parts.append(f"0x6078(current)={values.get('current_actual')}")
+        parts.append(
+            "torque_speed_limits(0x6072/0x60E0/0x60E1/0x6080)="
+            f"{values.get('maximum_torque')}/{values.get('positive_torque_limit')}/"
+            f"{values.get('negative_torque_limit')}/{values.get('maximum_motor_speed')}"
+        )
+        parts.append(
+            "position_range(0x607B)="
+            f"[{values.get('position_range_min')},{values.get('position_range_max')}]"
+        )
+        parts.append(
+            "software_limit(0x607D)="
+            f"[{values.get('software_limit_min')},{values.get('software_limit_max')}]"
+        )
+        parts.append(
+            "following_monitor(0x6065/0x6066)="
+            f"{values.get('following_window')}/{values.get('following_timeout_ms')}"
+        )
+        parts.append(f"0x2348.01(Kv)={values.get('position_gain')}")
+        parts.append(
+            "motor_mA(0x2329.01/.02/.03 rated/continuous/peak)="
+            f"{values.get('rated_current_ma')}/{values.get('continuous_current_ma')}/"
+            f"{values.get('peak_current_ma')}"
+        )
+        parts.append(
+            "voltage_10mV(0x2325.01-.07 device_low/motor_low/motor_max/"
+            "motor_high/delay_ms/device_actual/motor_actual)="
+            f"{values.get('device_supply_lower_10mv')}/"
+            f"{values.get('motor_supply_lower_10mv')}/"
+            f"{values.get('motor_supply_max_10mv')}/"
+            f"{values.get('motor_supply_upper_10mv')}/"
+            f"{values.get('voltage_error_delay_ms')}/"
+            f"{values.get('device_supply_actual_10mv')}/"
+            f"{values.get('motor_supply_actual_10mv')}"
+        )
         if unavailable:
             parts.append("unavailable=" + ",".join(unavailable))
         return "; ".join(parts)
@@ -661,6 +783,10 @@ class FaulhaberBus:
         csp_torque_limit_per_mille: int = 1000,
         ignored_csp_drive_indices: Optional[Sequence[int]] = None,
         required_homing_drive_indices: Optional[Sequence[int]] = None,
+        csp_stall_error_counts: int = 25_000,
+        csp_stall_progress_counts: int = 100,
+        csp_stall_timeout_ms: int = 500,
+        diagnostic_logger: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.interface = interface
         self.slave_indices = slave_indices
@@ -676,6 +802,18 @@ class FaulhaberBus:
                 "csp_torque_limit_per_mille must be "
                 f"1..{MAX_TORQUE_PER_MILLE}"
             )
+        self.csp_stall_error_counts = int(csp_stall_error_counts)
+        self.csp_stall_progress_counts = int(csp_stall_progress_counts)
+        self.csp_stall_timeout_ms = int(csp_stall_timeout_ms)
+        if self.csp_stall_error_counts <= 0:
+            raise ValueError("csp_stall_error_counts must be positive")
+        if self.csp_stall_progress_counts <= 0:
+            raise ValueError("csp_stall_progress_counts must be positive")
+        if self.csp_stall_timeout_ms <= 0:
+            raise ValueError("csp_stall_timeout_ms must be positive")
+        self.diagnostic_logger = diagnostic_logger or (
+            lambda message: print(f"[EtherCAT] {message}")
+        )
         self.ignored_csp_drive_ids = {
             int(index) for index in (ignored_csp_drive_indices or [])
         }
@@ -719,6 +857,18 @@ class FaulhaberBus:
         self.homing_complete = False
         self.homed_drive_ids = set()
         self.deferred_csp_prepared = False
+
+        self._stall_anchor_ns: List[int] = []
+        self._stall_anchor_actual: List[int] = []
+        self._stall_anchor_error: List[int] = []
+        self._stall_reported_drive_ids: set[int] = set()
+        self._live_diagnostic_queue: List[Tuple[int, str, int, int, bool]] = []
+        self._live_diagnostic_values: Dict[int, Dict[str, int]] = {}
+        self._live_diagnostic_unavailable: Dict[int, List[str]] = {}
+        self._live_diagnostic_base = ""
+        self._live_diagnostic_targets: List[int] = []
+        self.live_diagnostic_pending = False
+        self.last_stall_snapshot = "No CSP stall has been detected in this session."
 
         self._validate_cycle_configuration()
 
@@ -1111,11 +1261,13 @@ class FaulhaberBus:
                 f"{self._format_torque_limits(after)}"
                 f"{current_text}"
             )
-        print(
-            "[EtherCAT] CSP directional torque limits verified for this session only "
+        message = (
+            "CSP directional torque limits verified for this session only "
             "(0x6072 read-only; 0x60E0/0x60E1 writable; 1000=rated torque): "
             + "; ".join(changes)
         )
+        print("[EtherCAT] " + message)
+        self.diagnostic_logger("CSP_TORQUE_CONFIGURATION " + message)
 
     def _capture_torque_snapshot(self) -> str:
         """Capture actual torque and limits for all drives after a CSP fault."""
@@ -1312,6 +1464,7 @@ class FaulhaberBus:
                 self._safeop_locked()
                 raise RuntimeError(f"Unexpected CSP mode displays: {modes}")
 
+            self._reset_stall_monitor_locked(states)
             self.csp_active = True
             self.pdo_stop_event.clear()
             self.pdo_thread = threading.Thread(
@@ -1347,8 +1500,203 @@ class FaulhaberBus:
             entries.append(
                 f"D{drive_id}(target={target_text},actual={actual},"
                 f"error={error_text},status=0x{statusword:04X},mode={mode})"
+                f"[flags={FaulhaberDrive._decode_flags(statusword, STATUSWORD_MONITOR_FLAGS)}]"
             )
         return "CSP_SNAPSHOT " + "; ".join(entries)
+
+    def _reset_stall_monitor_locked(self, states: Sequence[PDOState]) -> None:
+        now_ns = time.monotonic_ns()
+        self._stall_anchor_ns = [now_ns for _ in states]
+        self._stall_anchor_actual = [int(state[0]) for state in states]
+        self._stall_anchor_error = [
+            abs(int(self.target_counts[index]) - int(state[0]))
+            for index, state in enumerate(states)
+        ]
+        self._stall_reported_drive_ids.clear()
+        self._live_diagnostic_queue.clear()
+        self._live_diagnostic_values.clear()
+        self._live_diagnostic_unavailable.clear()
+        self._live_diagnostic_base = ""
+        self._live_diagnostic_states: List[PDOState] = []
+        self._live_diagnostic_targets = []
+        self.live_diagnostic_pending = False
+        self.last_stall_snapshot = "No CSP stall has been detected in this session."
+
+    def _detect_csp_stalls_locked(
+        self, states: Sequence[PDOState], now_ns: Optional[int] = None
+    ) -> List[int]:
+        """Return axes that have a large command error and no encoder progress."""
+
+        current_ns = time.monotonic_ns() if now_ns is None else int(now_ns)
+        if len(self._stall_anchor_ns) != len(states):
+            self._reset_stall_monitor_locked(states)
+            return []
+
+        stalled: List[int] = []
+        timeout_ns = self.csp_stall_timeout_ms * 1_000_000
+        for drive_id, (actual, _statusword, _mode) in enumerate(states):
+            if drive_id in self.ignored_csp_drive_ids:
+                continue
+            target = int(self.target_counts[drive_id])
+            actual = int(actual)
+            error = abs(target - actual)
+            if error < self.csp_stall_error_counts:
+                self._stall_anchor_ns[drive_id] = current_ns
+                self._stall_anchor_actual[drive_id] = actual
+                self._stall_anchor_error[drive_id] = error
+                self._stall_reported_drive_ids.discard(drive_id)
+                continue
+
+            encoder_progress = abs(actual - self._stall_anchor_actual[drive_id])
+            error_progress = self._stall_anchor_error[drive_id] - error
+            if (
+                encoder_progress >= self.csp_stall_progress_counts
+                or error_progress >= self.csp_stall_progress_counts
+            ):
+                self._stall_anchor_ns[drive_id] = current_ns
+                self._stall_anchor_actual[drive_id] = actual
+                self._stall_anchor_error[drive_id] = error
+                continue
+
+            if (
+                drive_id not in self._stall_reported_drive_ids
+                and current_ns - self._stall_anchor_ns[drive_id] >= timeout_ns
+            ):
+                self._stall_reported_drive_ids.add(drive_id)
+                stalled.append(drive_id)
+        return stalled
+
+    @staticmethod
+    def _classify_live_stall(
+        statusword: int,
+        target: int,
+        actual: int,
+        values: Dict[str, int],
+    ) -> str:
+        """Classify only evidence exposed by the drive; never invent a cause."""
+
+        device_status = int(values.get("device_status", 0))
+        reported: List[str] = []
+        if device_status & (1 << 14):
+            reported.append("TORQUE_LIMIT_REPORTED")
+        if device_status & ((1 << 13) | (1 << 18) | (1 << 19) | (1 << 20)):
+            reported.append("VOLTAGE_OR_SUPPLY_LIMIT_REPORTED")
+        if device_status & ((1 << 6) | (1 << 7) | (1 << 8) | (1 << 9)):
+            reported.append("POSITION_OR_LIMIT_SWITCH_REPORTED")
+        if device_status & ((1 << 2) | (1 << 15) | (1 << 21)):
+            reported.append("VELOCITY_OR_SPEED_LIMIT_REPORTED")
+        if device_status & ((1 << 16) | (1 << 17)):
+            reported.append("TEMPERATURE_LIMIT_REPORTED")
+        if device_status & (1 << 22):
+            reported.append("SAFETY_MONITORING_REPORTED")
+        if device_status & (1 << 5):
+            reported.append("FOLLOWING_ERROR_REPORTED")
+        if reported:
+            return "+".join(reported)
+        if statusword & STATUS_INTERNAL_LIMIT_ACTIVE:
+            return "INTERNAL_LIMIT_ACTIVE_UNSPECIFIED"
+
+        demand = values.get("position_demand")
+        velocity = values.get("velocity_actual")
+        if demand is not None and abs(target - int(demand)) >= 25_000:
+            return "DRIVE_DEMAND_NOT_FOLLOWING_PDO_TARGET"
+        if velocity is not None and abs(int(velocity)) <= 1 and abs(target - actual) >= 25_000:
+            return "POSITION_LOOP_STALLED_WITHOUT_LIMIT_FLAG"
+        return "UNCLASSIFIED_STALL"
+
+    def _start_live_stall_diagnostics_locked(
+        self, states: Sequence[PDOState], stalled_drive_ids: Sequence[int]
+    ) -> None:
+        drive_ids = sorted(set(int(value) for value in stalled_drive_ids))
+        if not drive_ids:
+            return
+        detected = (
+            "CSP_STALL_DETECTED drives="
+            + ",".join(f"D{drive_id}" for drive_id in drive_ids)
+            + f"; no_progress_ms={self.csp_stall_timeout_ms}; "
+            + self._format_csp_snapshot(states)
+        )
+        self.diagnostic_logger(detected)
+        if self.live_diagnostic_pending:
+            new_drive_ids = [
+                drive_id
+                for drive_id in drive_ids
+                if drive_id not in self._live_diagnostic_values
+            ]
+            for drive_id in new_drive_ids:
+                self._live_diagnostic_values[drive_id] = {}
+                self._live_diagnostic_unavailable[drive_id] = []
+                self._live_diagnostic_states[drive_id] = states[drive_id]
+                self._live_diagnostic_targets[drive_id] = self.target_counts[drive_id]
+                self._live_diagnostic_queue.extend(
+                    (drive_id, label, index, subindex, signed)
+                    for label, index, subindex, signed in LIVE_DIAGNOSTIC_READS
+                )
+            if new_drive_ids:
+                self._live_diagnostic_base += "; ADDITIONAL_" + detected
+                self.last_stall_snapshot = (
+                    self._live_diagnostic_base + "; LIVE_DIAG=pending"
+                )
+            return
+
+        self._live_diagnostic_base = detected
+        self._live_diagnostic_states = list(states)
+        self._live_diagnostic_targets = list(self.target_counts)
+        self._live_diagnostic_values = {drive_id: {} for drive_id in drive_ids}
+        self._live_diagnostic_unavailable = {drive_id: [] for drive_id in drive_ids}
+        self._live_diagnostic_queue = [
+            (drive_id, label, index, subindex, signed)
+            for label, index, subindex, signed in LIVE_DIAGNOSTIC_READS
+            for drive_id in drive_ids
+        ]
+        self.live_diagnostic_pending = True
+        self.last_stall_snapshot = detected + "; LIVE_DIAG=pending"
+
+    def _advance_live_stall_diagnostics_locked(self) -> None:
+        """Read at most one SDO per PDO cycle and publish the completed snapshot."""
+
+        if not self.live_diagnostic_pending:
+            return
+        if self._live_diagnostic_queue:
+            drive_id, label, index, subindex, signed = self._live_diagnostic_queue.pop(0)
+            try:
+                value = self.drives[drive_id].sdo_read_int(
+                    index, subindex, signed=signed
+                )
+                self._live_diagnostic_values[drive_id][label] = value
+            except Exception as exc:
+                self._live_diagnostic_unavailable[drive_id].append(
+                    f"{label}:{type(exc).__name__}"
+                )
+            if self._live_diagnostic_queue:
+                return
+
+        details: List[str] = []
+        causes: List[str] = []
+        for drive_id in sorted(self._live_diagnostic_values):
+            values = self._live_diagnostic_values[drive_id]
+            actual, statusword, _mode = self._live_diagnostic_states[drive_id]
+            target = int(self._live_diagnostic_targets[drive_id])
+            cause = self._classify_live_stall(
+                statusword, target, int(actual), values
+            )
+            causes.append(f"D{drive_id}={cause}")
+            details.append(
+                self.drives[drive_id].format_live_diagnostics(
+                    values, self._live_diagnostic_unavailable[drive_id]
+                )
+            )
+        snapshot = (
+            "CSP_STALL_SNAPSHOT causes="
+            + ",".join(causes)
+            + "; "
+            + self._live_diagnostic_base
+            + "; "
+            + "; ".join(details)
+        )
+        self.last_stall_snapshot = snapshot
+        self.live_diagnostic_pending = False
+        self.diagnostic_logger(snapshot)
 
     def _validate_running_states(self, states: Sequence[PDOState]) -> None:
         for drive_id, (_, statusword, mode) in enumerate(states):
@@ -1392,6 +1740,11 @@ class FaulhaberBus:
                         CMD_ENABLE_OPERATION, require_expected_wkc=True
                     )
                     self._validate_running_states(states)
+                    stalled_drive_ids = self._detect_csp_stalls_locked(states)
+                    self._start_live_stall_diagnostics_locked(
+                        states, stalled_drive_ids
+                    )
+                    self._advance_live_stall_diagnostics_locked()
 
                 next_cycle_ns += self.pdo_cycle_ns
                 remaining_s = (next_cycle_ns - time.monotonic_ns()) / 1_000_000_000.0
@@ -1407,6 +1760,7 @@ class FaulhaberBus:
                 # process-data outputs.  Keep the original error for the TCP
                 # client, then make the best-effort EtherCAT state transition.
                 self._safeop_locked()
+            self.diagnostic_logger(f"CSP_PDO_STOPPED {exc}")
             print(f"[EtherCAT] CSP/PDO loop stopped: {exc}")
         finally:
             with self.pdo_lock:
@@ -1538,6 +1892,9 @@ class RASCLFaulhaberBridge(Node):
         # local monitor for CSP instead of disabling following-error detection.
         self.declare_parameter("drive2_following_error_window_counts", 25_000)
         self.declare_parameter("drive2_following_error_timeout_ms", 250)
+        self.declare_parameter("csp_stall_error_counts", 25_000)
+        self.declare_parameter("csp_stall_progress_counts", 100)
+        self.declare_parameter("csp_stall_timeout_ms", 500)
 
         # Values validated on the auto_homing branch.
         self.declare_parameter("homing_methods", [28, 28, 24, 24])
@@ -1579,6 +1936,15 @@ class RASCLFaulhaberBridge(Node):
         self.drive2_following_error_timeout_ms = int(
             self.get_parameter("drive2_following_error_timeout_ms").value
         )
+        self.csp_stall_error_counts = int(
+            self.get_parameter("csp_stall_error_counts").value
+        )
+        self.csp_stall_progress_counts = int(
+            self.get_parameter("csp_stall_progress_counts").value
+        )
+        self.csp_stall_timeout_ms = int(
+            self.get_parameter("csp_stall_timeout_ms").value
+        )
 
         self.homing_methods = self._int_parameter_list("homing_methods")
         self.reference_inputs = self._int_parameter_list("reference_inputs")
@@ -1606,9 +1972,19 @@ class RASCLFaulhaberBridge(Node):
                 if self.skip_spur_gear_homing
                 else list(range(len(self.slave_indices)))
             ),
+            csp_stall_error_counts=self.csp_stall_error_counts,
+            csp_stall_progress_counts=self.csp_stall_progress_counts,
+            csp_stall_timeout_ms=self.csp_stall_timeout_ms,
+            diagnostic_logger=self.get_logger().warning,
         )
         self.get_logger().info(
             f"Connecting EtherCAT on {self.interface}; control_mode={self.control_mode}"
+        )
+        self.get_logger().info(
+            "CSP stall diagnostics: "
+            f"error>={self.csp_stall_error_counts} counts, "
+            f"progress<{self.csp_stall_progress_counts} counts for "
+            f"{self.csp_stall_timeout_ms} ms"
         )
         if self.ignore_spur_gear_in_csp:
             self.get_logger().warning(
@@ -1640,6 +2016,9 @@ class RASCLFaulhaberBridge(Node):
         )
         self.read_drive2_diagnostics_srv = self.create_service(
             Trigger, "~/read_drive2_diagnostics", self.on_read_drive2_diagnostics
+        )
+        self.read_csp_stall_snapshot_srv = self.create_service(
+            Trigger, "~/read_csp_stall_snapshot", self.on_read_csp_stall_snapshot
         )
         self.blink_digout1_srv = self.create_service(
             Trigger, "~/blink_digout1", self.on_blink_digout1
@@ -1899,6 +2278,20 @@ class RASCLFaulhaberBridge(Node):
         except Exception as exc:
             response.success = False
             response.message = f"Read Drive 2 diagnostics failed: {exc}"
+        return response
+
+    def on_read_csp_stall_snapshot(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        """Return the latest auto-captured stall without issuing live SDOs here."""
+
+        deadline = time.monotonic() + 3.0
+        while self.bus.live_diagnostic_pending and time.monotonic() < deadline:
+            time.sleep(0.05)
+        response.success = not self.bus.live_diagnostic_pending
+        response.message = self.bus.last_stall_snapshot
+        if self.bus.live_diagnostic_pending:
+            response.message += "; staged LIVE_DIAG still pending; wait and retry"
         return response
 
     def on_digout1(self, msg: Bool) -> None:

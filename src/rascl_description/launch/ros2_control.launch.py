@@ -75,6 +75,21 @@ def generate_launch_description():
         default_value="250",
         description="Drive 2 CSP following-error timeout in milliseconds.",
     )
+    csp_stall_error_arg = DeclareLaunchArgument(
+        "csp_stall_error_counts",
+        default_value="25000",
+        description="Command/feedback error that arms live CSP stall diagnostics.",
+    )
+    csp_stall_progress_arg = DeclareLaunchArgument(
+        "csp_stall_progress_counts",
+        default_value="100",
+        description="Minimum encoder progress that resets the CSP stall timer.",
+    )
+    csp_stall_timeout_arg = DeclareLaunchArgument(
+        "csp_stall_timeout_ms",
+        default_value="500",
+        description="No-progress time before a staged drive diagnostic snapshot starts.",
+    )
 
     axis_counts_arg = DeclareLaunchArgument(
         "axis_counts_per_revolution",
@@ -191,6 +206,15 @@ def generate_launch_description():
                 "drive2_following_error_timeout_ms": ParameterValue(
                     LaunchConfiguration("drive2_following_error_timeout_ms"), value_type=int
                 ),
+                "csp_stall_error_counts": ParameterValue(
+                    LaunchConfiguration("csp_stall_error_counts"), value_type=int
+                ),
+                "csp_stall_progress_counts": ParameterValue(
+                    LaunchConfiguration("csp_stall_progress_counts"), value_type=int
+                ),
+                "csp_stall_timeout_ms": ParameterValue(
+                    LaunchConfiguration("csp_stall_timeout_ms"), value_type=int
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -251,6 +275,9 @@ def generate_launch_description():
             csp_torque_limit_arg,
             drive2_following_error_window_arg,
             drive2_following_error_timeout_arg,
+            csp_stall_error_arg,
+            csp_stall_progress_arg,
+            csp_stall_timeout_arg,
             axis_counts_arg,
             gripper_counts_arg,
             lowerarm_direction_arg,

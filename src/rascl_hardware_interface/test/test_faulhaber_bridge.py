@@ -112,6 +112,12 @@ class FakeSlave:
         self.values[(bridge.MOTOR_APPLICATION_DATA, 1)] = int(1000).to_bytes(2, "little")
         self.values[(bridge.MOTOR_APPLICATION_DATA, 2)] = int(1000).to_bytes(2, "little")
         self.values[(bridge.MOTOR_APPLICATION_DATA, 3)] = int(2000).to_bytes(2, "little")
+        for subindex, value in enumerate(
+            [1200, 1200, 5200, 5200, 200, 2400, 2400], start=1
+        ):
+            self.values[(bridge.VOLTAGE_MONITOR, subindex)] = int(value).to_bytes(
+                2, "little"
+            )
 
     def sdo_read(self, index, subindex):
         return self.values[(index, subindex)]
@@ -749,6 +755,93 @@ class BridgePDOTest(unittest.TestCase):
             r"D2\(demand/actual=0/0,max/pos/neg=6000/6000/6000\)",
         ):
             bus._validate_running_states(states)
+
+    def test_non_fault_stall_triggers_staged_live_diagnostics(self):
+        messages = []
+        bus = make_bus(
+            csp_stall_error_counts=25_000,
+            csp_stall_progress_counts=100,
+            csp_stall_timeout_ms=500,
+            diagnostic_logger=messages.append,
+        )
+        slaves = [FakeSlave() for _ in range(4)]
+        slaves[1].values[(bridge.DEVICE_STATUS, 1)] = int(1 << 14).to_bytes(
+            4, "little"
+        )
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+        bus.target_counts = [0, 100_000, 0, 0]
+        states = [
+            (0, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
+            (
+                0,
+                bridge.STATUS_OPERATION_ENABLED_STATE
+                | bridge.STATUS_INTERNAL_LIMIT_ACTIVE,
+                bridge.MODE_CYCLIC_SYNC_POSITION,
+            ),
+            (0, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
+            (0, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION),
+        ]
+        bus._reset_stall_monitor_locked(states)
+        detected = bus._detect_csp_stalls_locked(
+            states, now_ns=bus._stall_anchor_ns[1] + 500_000_000
+        )
+        self.assertEqual(detected, [1])
+
+        bus._start_live_stall_diagnostics_locked(states, detected)
+        while bus.live_diagnostic_pending:
+            bus._advance_live_stall_diagnostics_locked()
+
+        self.assertIn("CSP_STALL_DETECTED drives=D1", messages[0])
+        self.assertIn("CSP_STALL_SNAPSHOT causes=D1=TORQUE_LIMIT_REPORTED", messages[-1])
+        self.assertIn("0x2324.01=0x00004000[torque_limited]", messages[-1])
+        self.assertIn(
+            "voltage_10mV(0x2325.01-.07", messages[-1]
+        )
+        self.assertIn("/2400/2400", messages[-1])
+        self.assertIn("internal_limit_active", messages[-1])
+        self.assertEqual(bus.last_stall_snapshot, messages[-1])
+
+    def test_encoder_progress_resets_stall_timer(self):
+        bus = make_bus(
+            csp_stall_error_counts=25_000,
+            csp_stall_progress_counts=100,
+            csp_stall_timeout_ms=500,
+        )
+        bus.target_counts = [0, 100_000, 0, 0]
+        initial_states = [
+            (0, bridge.STATUS_OPERATION_ENABLED_STATE, bridge.MODE_CYCLIC_SYNC_POSITION)
+            for _ in range(4)
+        ]
+        bus._reset_stall_monitor_locked(initial_states)
+        start_ns = bus._stall_anchor_ns[1]
+        progressed_states = list(initial_states)
+        progressed_states[1] = (
+            200,
+            bridge.STATUS_OPERATION_ENABLED_STATE,
+            bridge.MODE_CYCLIC_SYNC_POSITION,
+        )
+
+        self.assertEqual(
+            bus._detect_csp_stalls_locked(
+                progressed_states, now_ns=start_ns + 500_000_000
+            ),
+            [],
+        )
+        self.assertEqual(
+            bus._detect_csp_stalls_locked(
+                progressed_states, now_ns=start_ns + 999_000_000
+            ),
+            [],
+        )
+        self.assertEqual(
+            bus._detect_csp_stalls_locked(
+                progressed_states, now_ns=start_ns + 1_000_000_000
+            ),
+            [1],
+        )
 
 
 if __name__ == "__main__":

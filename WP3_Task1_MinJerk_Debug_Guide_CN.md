@@ -96,7 +96,10 @@ T3：8 → 13 → 14 → 9 → 10
 8. **T3 组 10：执行。**
    - 脚本再次确认两个 controller 为 `active` 且 `/joint_states` 可用。
    - 组 `10` 不再要求输入二次确认，执行后立即开始已规划的轨迹。
-   - 运动结束后脚本再次检查 controller 和 `/joint_states`；失败时必须完整重启。
+   - 结束时必须出现 `MOTION_RESULT reached=true`。节点会核对最终四轴反馈和 TCP；仅把
+     命令发布完、但实机中途停住会返回失败，不再显示为运动成功。
+   - 失败时脚本自动打印最近一次 `CSP_STALL_SNAPSHOT`；随后立即执行组 `12` 打包日志，
+     不要继续发送目标。组 `16` 可再次查看同一快照。
    - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
 
 ### Drive 3 / gripper 的 CSP 相对 counts 指令
@@ -136,8 +139,8 @@ IK/规划失败但 T1/T2 没有 PDO、WKC、following error，且两个 controll
 
 ### D. CSP 或 controller 失败后的完整重启
 
-出现 PDO/WKC/following error、SAFE-OP、controller inactive、组 `7` 退出或 T1/T2
-报错时，旧 EtherCAT 会话不得直接重试：
+出现 PDO/WKC/following error、`MOTION_RESULT reached=false`、SAFE-OP、controller
+inactive、组 `7` 退出或 T1/T2 报错时，旧 EtherCAT 会话不得直接重试：
 
 1. 停止发送目标，立即支撑机械臂；必要时急停。
 2. 若 T2 仍在运行，在 T2 按 `Ctrl-C`，等待 ros2_control 完全退出。
@@ -268,6 +271,7 @@ bash ./rascl_debug.sh
 | 13 | T3 | CSP 启动后查看实时模型 TCP |
 | 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
 | 15 | T3 | 在 CSP 中发送 Drive 3 相对 counts 增量 |
+| 16 | T3 | 查看最近一次 CSP 停滞自动诊断快照 |
 
 日常实机顺序以本指南最前面的
 `T1:4 → T2:6→7 → T3:8→13→14→9→10` 为准。下面保留原始命令用于排错。
@@ -389,6 +393,9 @@ ros2 launch rascl_description homing.launch.py \
   csp_torque_limit_per_mille:=1000 \
   drive2_following_error_window_counts:=25000 \
   drive2_following_error_timeout_ms:=250 \
+  csp_stall_error_counts:=25000 \
+  csp_stall_progress_counts:=100 \
+  csp_stall_timeout_ms:=500 \
   skip_spur_gear_homing:=true
 ```
 
@@ -575,6 +582,9 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
   -p duration:=12.0 -p rate_hz:=50.0 -p execute:=true
 ```
 
+成功必须看到 `MOTION_RESULT reached=true`。默认验收阈值为每轴 `0.03 rad`、TCP
+`0.01 m`；超出任一项，命令以非零状态退出，脚本组 `10` 会自动读取停滞快照。
+
 旧目标 `[0.295,0,0.048]` 接近 URDF 零位，不能作为自动 Home 后的首次运动。
 
 ## 10. 故障与停机
@@ -615,6 +625,23 @@ ss -ltnp | grep 15001
   列出 D0–D3 的转矩需求/实际值及 `0x6072/0x60E0/0x60E1` 回读值。停止 T1/T2 后选择
   组 `12` 打包并提交该
   `tar.gz`；无需手动复制终端。
+- **无 following error 但中途停住**：bridge 监测每轴 PDO `target-actual`。误差至少
+  `25000 counts`，且连续 `500 ms` 的编码器进展不足 `100 counts` 时，会先记录
+  `CSP_STALL_DETECTED`，再以每个 PDO 周期最多一次只读 SDO 的方式生成
+  `CSP_STALL_SNAPSHOT`，不停止 50 Hz PDO。快照包含 `cause`、statusword 的
+  `internal_limit_active`、`0x2324.01`、位置需求/实际值、速度、转矩、电流、位置/速度/
+  following-error 限值、`0x2329` 电流参数，以及 `0x2325.01-.07` 电压阈值和两路
+  实际电压（单位 `10 mV`）。组 `10` 会自动读取；也可在 T3 执行：
+
+  ```bash
+  bash ./rascl_debug.sh 16
+  bash ./rascl_debug.sh 12
+  ```
+
+  `TORQUE_LIMIT_REPORTED`、`VOLTAGE_OR_SUPPLY_LIMIT_REPORTED`、
+  `POSITION_OR_LIMIT_SWITCH_REPORTED` 等是驱动器明确上报；
+  `POSITION_LOOP_STALLED_WITHOUT_LIMIT_FLAG` 表示已确认停滞但驱动未给出单一限制标志，
+  此时仍需结合快照中的 demand/actual torque/current 区分负载、制动或位置环问题。
 - controller inactive：
 
 ```bash
@@ -646,7 +673,7 @@ source install/local_setup.bash
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
 4. Drive 0–2 连续交接；Drive 3 通过独立 CiA-402 使能后也进入 CSP。
 5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动；Drive 3 无 PDO 故障。
-6. 20 ms PDO 循环无 WKC/following error。
+6. 20 ms PDO 循环无 WKC/following error，运动结束有 `MOTION_RESULT reached=true`。
 7. Drive 3 的组 `15` 相对 counts 命令可在 CSP 中执行，且随后 Task 1 保持该角度。
 8. Home 附近 12 秒 minimum-jerk 小轨迹成功。
 

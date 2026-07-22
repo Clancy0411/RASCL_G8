@@ -8,7 +8,9 @@ The current milestone focuses on Task 1 preparation:
 - the tool center point (TCP) is defined as the `spur_gear_joint` origin,
 - the node solves inverse kinematics for the three arm joints,
 - it generates a joint-space minimum-jerk trajectory,
-- it publishes the trajectory to `/rascl_position_controller/commands`.
+- it publishes the trajectory to `/rascl_position_controller/commands`,
+- after execution it requires fresh `/joint_states` feedback and verifies the
+  final four-joint and TCP errors before returning success.
 
 This version does **not** yet control the gripper or constrain arbitrary
 end-effector orientation. Joint position samples are executed through the
@@ -96,6 +98,12 @@ ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
   -p rate_hz:=50.0 \
   -p execute:=true
 ```
+
+Successful execution prints `MOTION_RESULT reached=true`. The default final
+tolerances are `0.03 rad` per joint and `0.01 m` at the TCP. A publish loop that
+finishes while one or more drives remain short of the endpoint exits non-zero;
+`rascl_debug.sh` group `10` then retrieves the bridge's latest staged
+`CSP_STALL_SNAPSHOT`, and group `16` can display it again.
 
 ## Combined launch
 

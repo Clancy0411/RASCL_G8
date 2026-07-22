@@ -50,6 +50,21 @@ def generate_launch_description():
         default_value="250",
         description="Drive 2 CSP following-error timeout in milliseconds.",
     )
+    csp_stall_error_arg = DeclareLaunchArgument(
+        "csp_stall_error_counts",
+        default_value="25000",
+        description="Command/feedback error that arms live CSP stall diagnostics.",
+    )
+    csp_stall_progress_arg = DeclareLaunchArgument(
+        "csp_stall_progress_counts",
+        default_value="100",
+        description="Minimum encoder progress that resets the CSP stall timer.",
+    )
+    csp_stall_timeout_arg = DeclareLaunchArgument(
+        "csp_stall_timeout_ms",
+        default_value="500",
+        description="No-progress time before a staged drive diagnostic snapshot starts.",
+    )
     ignore_spur_gear_arg = DeclareLaunchArgument(
         "ignore_spur_gear_in_csp",
         default_value="false",
@@ -100,6 +115,15 @@ def generate_launch_description():
                 "drive2_following_error_timeout_ms": ParameterValue(
                     LaunchConfiguration("drive2_following_error_timeout_ms"), value_type=int
                 ),
+                "csp_stall_error_counts": ParameterValue(
+                    LaunchConfiguration("csp_stall_error_counts"), value_type=int
+                ),
+                "csp_stall_progress_counts": ParameterValue(
+                    LaunchConfiguration("csp_stall_progress_counts"), value_type=int
+                ),
+                "csp_stall_timeout_ms": ParameterValue(
+                    LaunchConfiguration("csp_stall_timeout_ms"), value_type=int
+                ),
                 "ignore_spur_gear_in_csp": ParameterValue(
                     LaunchConfiguration("ignore_spur_gear_in_csp"), value_type=bool
                 ),
@@ -132,6 +156,9 @@ def generate_launch_description():
             csp_torque_limit_arg,
             drive2_following_error_window_arg,
             drive2_following_error_timeout_arg,
+            csp_stall_error_arg,
+            csp_stall_progress_arg,
+            csp_stall_timeout_arg,
             ignore_spur_gear_arg,
             skip_spur_homing_arg,
             bridge_node,
