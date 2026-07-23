@@ -38,7 +38,8 @@ SPUR_GEAR_FEEDBACK_TIMEOUT_S="${RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S:-5.0}"
 # following-error window is reached, then hold the measured contact position.
 # open and custom signed counts remain exact relative moves.
 GRIPPER_CONTACT_ERROR_COUNTS="${RASCL_GRIPPER_CONTACT_ERROR_COUNTS:-2000}"
-GRIPPER_CONTACT_CONFIRM_S="${RASCL_GRIPPER_CONTACT_CONFIRM_S:-0.04}"
+GRIPPER_CONTACT_MAX_PROGRESS_COUNTS="${RASCL_GRIPPER_CONTACT_MAX_PROGRESS_COUNTS:-100}"
+GRIPPER_CONTACT_CONFIRM_S="${RASCL_GRIPPER_CONTACT_CONFIRM_S:-0.10}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
@@ -492,6 +493,9 @@ group_gripper_action() {
   is_integer "$GRIPPER_CONTACT_ERROR_COUNTS" &&
     (( GRIPPER_CONTACT_ERROR_COUNTS > 0 )) ||
     die "RASCL_GRIPPER_CONTACT_ERROR_COUNTS 必须是正整数"
+  is_integer "$GRIPPER_CONTACT_MAX_PROGRESS_COUNTS" &&
+    (( GRIPPER_CONTACT_MAX_PROGRESS_COUNTS > 0 )) ||
+    die "RASCL_GRIPPER_CONTACT_MAX_PROGRESS_COUNTS 必须是正整数"
   is_positive_number "$GRIPPER_CONTACT_CONFIRM_S" ||
     die "RASCL_GRIPPER_CONTACT_CONFIRM_S 必须是正数"
   is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
@@ -560,7 +564,7 @@ PY
   echo "抓夹将执行“$action_label”：Drive 3 相对运动 $delta_counts counts。"
   echo "使用 50 Hz minimum-jerk CSP 轨迹，自动时长 $motion_duration s。"
   if (( stop_on_contact )); then
-    echo "快捷动作将在持续跟踪误差达到 $GRIPPER_CONTACT_ERROR_COUNTS counts、维持 $GRIPPER_CONTACT_CONFIRM_S s 时判定接触/端点，立即保持实测位置；该结果按成功处理。"
+    echo "快捷动作将在跟踪误差达到 $GRIPPER_CONTACT_ERROR_COUNTS counts，且 $GRIPPER_CONTACT_CONFIRM_S s 内编码器进度不超过 $GRIPPER_CONTACT_MAX_PROGRESS_COUNTS counts 时判定接触/端点，立即保持实测位置；该结果按成功处理。"
   else
     echo "本动作要求精确运动 $delta_counts counts，不启用接触提前终止。"
   fi
@@ -570,7 +574,7 @@ PY
     "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" \
     "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" "$SPUR_GEAR_SETTLE_DURATION_S" \
     "$stop_on_contact" "$GRIPPER_CONTACT_ERROR_COUNTS" \
-    "$GRIPPER_CONTACT_CONFIRM_S" <<'PY'
+    "$GRIPPER_CONTACT_MAX_PROGRESS_COUNTS" "$GRIPPER_CONTACT_CONFIRM_S" <<'PY'
 import math
 import sys
 import time
@@ -594,16 +598,20 @@ from std_msgs.msg import Float64MultiArray
     settle_s,
     stop_on_contact,
     contact_error_counts,
+    contact_max_progress_counts,
     contact_confirm_s,
 ) = map(float, sys.argv[1:])
 stop_on_contact = bool(int(stop_on_contact))
 contact_error_counts = int(contact_error_counts)
+contact_max_progress_counts = int(contact_max_progress_counts)
 
 JOINTS = ("shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint")
 TAU = 2.0 * math.pi
 latest_spur = None
 last_feedback_time = None
 contact_error_since = None
+contact_anchor_actual_counts = None
+contact_last_feedback_time = None
 
 
 def rad_to_counts(angle):
@@ -639,18 +647,34 @@ def log_feedback(logger, phase, reference_spur=None):
 
 
 def detect_contact(command_spur):
-    global contact_error_since
-    if not stop_on_contact or latest_spur is None:
+    global contact_error_since, contact_anchor_actual_counts, contact_last_feedback_time
+    if not stop_on_contact or latest_spur is None or last_feedback_time is None:
         return None
+    # Evaluate each /joint_states sample once. Reusing a stale sample would make
+    # a temporary feedback pause look like a stationary gripper.
+    if contact_last_feedback_time == last_feedback_time:
+        return None
+    contact_last_feedback_time = last_feedback_time
     command_counts = rad_to_counts(command_spur)
     actual_counts = rad_to_counts(latest_spur)
-    tracking_error = abs(command_counts - actual_counts)
-    now = time.monotonic()
+    # Contact can only create lag in the commanded closing direction. Ignore an
+    # overshoot on the opposite side of the command.
+    tracking_error = direction * (command_counts - actual_counts)
+    now = last_feedback_time
     if tracking_error < contact_error_counts:
         contact_error_since = None
+        contact_anchor_actual_counts = None
         return None
     if contact_error_since is None:
         contact_error_since = now
+        contact_anchor_actual_counts = actual_counts
+        return None
+    encoder_progress = abs(actual_counts - contact_anchor_actual_counts)
+    if encoder_progress > contact_max_progress_counts:
+        # The drive is still moving normally. Restart the stationary-contact
+        # window instead of treating ordinary trajectory lag as contact.
+        contact_error_since = now
+        contact_anchor_actual_counts = actual_counts
         return None
     if now - contact_error_since < contact_confirm_s:
         return None
@@ -660,6 +684,8 @@ def detect_contact(command_spur):
         f"command_counts={command_counts} actual_counts={actual_counts} "
         f"tracking_error_counts={tracking_error} "
         f"threshold_counts={contact_error_counts} "
+        f"encoder_progress_counts={encoder_progress} "
+        f"max_progress_counts={contact_max_progress_counts} "
         f"confirm_s={contact_confirm_s:.3f}; "
         "holding measured Drive 3 position before following error"
     )

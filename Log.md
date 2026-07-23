@@ -411,3 +411,7 @@ Real-hardware testing showed that the additional `lowerarm +X` shift projected m
 ## 2026-07-23 Global physical-X +20 mm calibration
 
 The remaining target-to-real-position discrepancy is handled as a project-level global calibration rather than a manual target edit or another rotating TCP offset. External measurements use Y/X/Z, so physical +X maps to numeric `base_link` +Y. The `base_link -> shoulder_joint` model origin now uses Y=`-0.020 m`; with unchanged requested targets, IK consequently moves the real gripper `+0.020 m` in physical X. The fixed TCP remains `[0.13478978,0.02881369,0.03193108] m`. Nominal zero TCP becomes `[0.29318978,-0.03580108,0.07181469] m`, and nominal automatic Home TCP becomes `[0.20318978,-0.03580108,0.32181469] m`.
+
+## 2026-07-23 Group 15 false-contact rejection
+
+Logs `ros_logs_20260723_141113.tar.gz` showed repeated `close` actions stopping after about `25k counts` while Drive 3 was still progressing normally. The old detector interpreted ordinary minimum-jerk command lag (`2019/2150 counts`) as contact because it checked only `error>=2000 counts` for `0.04 s`. Contact confirmation now additionally requires encoder progress to remain at or below `100 counts` for `0.10 s`, evaluates each fresh `/joint_states` sample only once, and accepts lag only in the commanded closing direction. The `2000-count` pre-following-error threshold, `+500000-count` maximum close travel, exact `open=-200000 counts`, torque configuration, and drive protections remain unchanged.

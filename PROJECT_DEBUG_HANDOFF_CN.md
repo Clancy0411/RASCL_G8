@@ -292,9 +292,11 @@ open  或 o = 固定相对 -200000 counts，要求完整到位
 -500000     = 从当前位置反向减少 500000 counts
 ```
 
-这些都不是绝对 encoder 目标。只有 `close` 是接触感知快捷动作：持续跟踪误差达到
-默认 `2000 counts / 0.04 s` 时，脚本在 drive following error 前保持实测位置，并
-记录 `SPUR_CONTACT` 和 `SPUR_RESULT outcome=contact_or_endpoint`。`+500000 counts`
+这些都不是绝对 encoder 目标。只有 `close` 是接触感知快捷动作：跟踪误差达到
+默认 `2000 counts`，并且连续 `0.10 s` 内编码器进度不超过 `100 counts` 时，脚本才在
+drive following error 前保持实测位置，并记录 `SPUR_CONTACT` 和
+`SPUR_RESULT outcome=contact_or_endpoint`。增加近似静止条件是为了避免 minimum-jerk
+正常跟踪滞后被误判为接触。`+500000 counts`
 是最大闭合行程，不保证走满。`open=-200000 counts` 和直接输入的有符号 counts 均要求
 精确相对运动，不启用接触提前终止。Drive 3 的 URDF、ros2_control、运动学和脚本预检
 限位已统一为 `[-2*pi,+2*pi]`；这不会修改驱动器对象 `0x607B/0x607D`。默认速度为：

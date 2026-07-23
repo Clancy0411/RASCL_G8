@@ -174,9 +174,11 @@ The values correspond to:
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
 command. Entering ASCII `close` (or `c`) requests at most `+500000` counts and
 stops early at object contact. Entering `open` (or `o`) requests an exact
-`-200000`-count relative move. Only `close` uses persistent tracking lag to
-hold the measured Drive 3 position before expected contact becomes a following
-error. `open` and signed non-zero integer commands request exact relative
+`-200000`-count relative move. Only `close` uses tracking lag together with a
+near-stationary encoder condition (`<=100 counts` progress for `0.10 s`) to hold
+the measured Drive 3 position before expected contact becomes a following
+error. This prevents ordinary minimum-jerk tracking lag from becoming a false
+contact. `open` and signed non-zero integer commands request exact relative
 increments and do not use contact termination. Every command starts from the
 current spur joint state, then
 publishes a 50 Hz minimum-jerk
