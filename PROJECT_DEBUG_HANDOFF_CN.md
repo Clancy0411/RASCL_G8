@@ -286,7 +286,7 @@ Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 接受快捷动�
 相对 counts：
 
 ```text
-close 或 c = 最多相对 +110000 counts，夹住物体后提前停止并保持
+close 或 c = 最多相对 +500000 counts，夹住物体后提前停止并保持
 open  或 o = 固定相对 -200000 counts，要求完整到位
 +2000       = 从当前位置正向增加 2000 counts
 -500000     = 从当前位置反向减少 500000 counts
@@ -294,7 +294,7 @@ open  或 o = 固定相对 -200000 counts，要求完整到位
 
 这些都不是绝对 encoder 目标。只有 `close` 是接触感知快捷动作：持续跟踪误差达到
 默认 `2000 counts / 0.04 s` 时，脚本在 drive following error 前保持实测位置，并
-记录 `SPUR_CONTACT` 和 `SPUR_RESULT outcome=contact_or_endpoint`。`+110000 counts`
+记录 `SPUR_CONTACT` 和 `SPUR_RESULT outcome=contact_or_endpoint`。`+500000 counts`
 是最大闭合行程，不保证走满。`open=-200000 counts` 和直接输入的有符号 counts 均要求
 精确相对运动，不启用接触提前终止。默认速度为：
 
@@ -302,7 +302,7 @@ open  或 o = 固定相对 -200000 counts，要求完整到位
 10000 counts/s
 ```
 
-运动时间由 counts 自动计算；`close` 最长约 11 秒，`open` 约 20 秒。组 `15` 使用 50 Hz
+运动时间由 counts 自动计算；`close` 最长约 50 秒，`open` 约 20 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
 预检查和实际运动节点取得完整 `/joint_states` 的默认超时均为 5 秒；运动节点异常会以

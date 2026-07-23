@@ -172,7 +172,7 @@ The values correspond to:
 ```
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
-command. Entering ASCII `close` (or `c`) requests at most `+110000` counts and
+command. Entering ASCII `close` (or `c`) requests at most `+500000` counts and
 stops early at object contact. Entering `open` (or `o`) requests an exact
 `-200000`-count relative move. Only `close` uses persistent tracking lag to
 hold the measured Drive 3 position before expected contact becomes a following

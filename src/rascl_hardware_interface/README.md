@@ -235,7 +235,7 @@ After successful Homing, the first three joint positions should be approximately
 
 Drive 3 has no Homing zero in this workflow, but it participates in both CSP
 state validation and position targets. `rascl_debug.sh` group `15` accepts one
-ASCII gripper action: `close` (or `c`) requests up to `+110000` counts, while
+ASCII gripper action: `close` (or `c`) requests up to `+500000` counts, while
 `open` (or `o`) requests an exact `-200000`-count relative move. Only `close`
 monitors command/feedback lag; a persistent default `2000`-count lag for
 `0.04 s` is treated as object contact. The command is then replaced with the

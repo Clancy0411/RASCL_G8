@@ -28,7 +28,7 @@ SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-3.1415}"
 # Group 15 uses opposite Drive 3 directions for closing and opening. Closing
 # travels toward contact with a maximum positive increment; opening is an exact
 # negative relative move.
-GRIPPER_GRIP_DELTA_COUNTS=110000
+GRIPPER_GRIP_DELTA_COUNTS=500000
 GRIPPER_RELEASE_DELTA_COUNTS=-200000
 SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-10000}"
 SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
