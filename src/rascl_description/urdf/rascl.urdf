@@ -119,13 +119,13 @@
     Fixed grasp center.  Keep this separate from spur_gear_joint: opening or
     closing the gripper must not move the Cartesian planning frame.  The
     calibrated gear-surface reference is [0.11478978, 0.02881369, 0.03193108]
-    in lowerarm.  The grasp center is 20 mm farther along lowerarm +X, halfway
-    along the physical jaws.
+    in lowerarm.  The commanded point was shifted 20 mm to the grasp center,
+    then another user-requested 20 mm along lowerarm +X.
   -->
   <joint name="tcp_fixed_joint" type="fixed">
     <parent link="lowerarm"/>
     <child link="tcp_link"/>
-    <origin xyz="0.13478978 0.02881369 0.03193108" rpy="0 -1.570796327 0"/>
+    <origin xyz="0.15478978 0.02881369 0.03193108" rpy="0 -1.570796327 0"/>
   </joint>
 
   <link name="tcp_link"/>

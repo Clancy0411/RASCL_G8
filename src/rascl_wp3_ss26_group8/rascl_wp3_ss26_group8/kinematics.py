@@ -27,11 +27,11 @@ ARM_LIMITS = [
 SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 
 # The measured single-pose calibration locates the old gear-surface reference
-# in the lowerarm frame.  The commanded TCP is 20 mm farther along lowerarm +X,
-# halfway along the jaws, so Cartesian targets refer to the grasp center rather
-# than the gear surface.  It remains independent of spur_gear_joint motion.
+# in the lowerarm frame. Cartesian targets now use the prior grasp-center shift
+# plus a second user-requested 20 mm move along lowerarm +X. It remains
+# independent of spur_gear_joint motion.
 CALIBRATED_GEAR_SURFACE_IN_LOWERARM = (0.11478978, 0.02881369, 0.03193108)
-GRASP_CENTER_EXTENSION_M = 0.020
+GRASP_CENTER_EXTENSION_M = 0.040
 TCP_ORIGIN_IN_LOWERARM = (
     CALIBRATED_GEAR_SURFACE_IN_LOWERARM[0] + GRASP_CENTER_EXTENSION_M,
     CALIBRATED_GEAR_SURFACE_IN_LOWERARM[1],
@@ -42,7 +42,7 @@ TCP_ORIGIN_IN_LOWERARM = (
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29318978, -0.01580108, 0.07181469)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.31318978, -0.01580108, 0.07181469)
 
 
 @dataclass

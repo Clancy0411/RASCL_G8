@@ -88,22 +88,22 @@ def test_spur_gear_limits_match_urdf_and_ros2_control():
 def test_reference_tcp_positions_match_calibrated_geometry():
     _assert_vector_close(
         forward_tcp((0.0, 0.0, 0.0)),
-        (0.29318978, -0.01580108, 0.07181469),
+        (0.31318978, -0.01580108, 0.07181469),
     )
     _assert_vector_close(
         forward_tcp((0.0, math.pi / 2.0, math.pi / 2.0)),
-        (0.20318978, -0.01580108, 0.32181469),
+        (0.22318978, -0.01580108, 0.32181469),
     )
 
 
-def test_grasp_center_extends_twenty_mm_from_measured_surface_point():
+def test_commanded_tcp_extends_forty_mm_from_measured_surface_point():
     # At this measured pose the calibrated gear-surface point was
-    # [0.14, -0.16, 0.05] m.  Moving 20 mm along the local jaw direction gives
-    # the fixed grasp center below.
+    # [0.14, -0.16, 0.05] m.  Moving 40 mm along the local jaw direction gives
+    # the fixed commanded TCP below.
     measured_joint_pose = (0.777575714851, 0.646147976068, 2.120655279445)
     _assert_vector_close(
         forward_tcp(measured_joint_pose),
-        (0.14137022054036882, -0.16134895242506456, 0.030092640926086274),
+        (0.14274044108073767, -0.1626979048501291, 0.010185281852172552),
     )
 
 
