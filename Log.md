@@ -373,6 +373,11 @@ self.configure_pdo_mapping = False
 ## 2026-07-22 组 15 抓夹收放简化
 
 组 `15` 不再询问任意相对 counts 和运动时间。用户输入 ASCII `close`/`c` 时，Drive 3 从当前位置相对运动 `-110000 counts` 以收紧夹持；输入 `open`/`o` 时相对运动 `+110000 counts` 以松开放下。两种动作继续使用 50 Hz minimum-jerk CSP、默认 `10000 counts/s`（约 11 秒）并保持 Drive 0–2 当前位置；CSP、反馈、并发和 URDF 限位检查不变。
+
 ## 2026-07-22 组 15 joint state 启动超时修复
 
 组 `15` 原先预检查等待 `/joint_states` 3 秒，但真正运动节点只等待 1 秒。实机日志连续两次只有 `SPUR_TRACE start`、没有 `progress/complete`，且 Drive 3 始终约为 `-1536 counts`，说明轨迹发布前因 DDS 首帧反馈超时退出。现将两段等待统一为默认 5 秒，可用 `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S` 覆盖；运动节点异常同时记录 `SPUR_TRACE failed`，EtherCAT、CSP、counts、方向和转矩参数不改。
+
+## 2026-07-23 恢复 Drive 3 自定义相对 counts
+
+保留组 `15` 的 `close/c=-110000` 与 `open/o=+110000` 快捷动作，同时恢复直接输入任意非零有符号整数 counts 的功能。自定义值仍以当前 Drive 3 位置为基准，共用相同的 URDF 限位、controller/并发检查、50 Hz minimum-jerk、自动时长和 `SPUR_TRACE` 反馈；不是绝对 encoder 目标。

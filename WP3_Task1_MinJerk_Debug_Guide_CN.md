@@ -103,20 +103,23 @@ T3：8 → 13 → 14 → 9 → 10
      不要继续发送目标。组 `16` 可再次查看同一快照。
    - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
 
-### Drive 3 / gripper 的收放动作
+### Drive 3 / gripper 的收放与自定义 counts
 
-完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。电脑不需要中文输入法，用户只需
-输入一次 ASCII 动作词（也可只输入单字母缩写）：
+完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。可以输入 ASCII 快捷动作，也可以
+直接输入任意非零的有符号整数 counts：
 
 ```text
 close 或 c = 从当前位置相对 -110000 counts，收紧并夹持物体
 open  或 o = 从当前位置相对 +110000 counts，松开并放下物体
++2000       = 从当前位置正向增加 2000 counts
+-500000     = 从当前位置反向减少 500000 counts
 ```
 
-Drive 3 没有 Home，因此两种动作仍以执行时的当前位置为基准；连续重复同一动作会继续
-沿同一方向累加，但 URDF 软件限位仍会拒绝越界目标。脚本以 50 Hz minimum-jerk CSP
+Drive 3 没有 Home，因此所有动作都以执行时的当前位置为基准；连续指令会继续累加，但
+URDF 软件限位仍会拒绝越界目标。脚本以 50 Hz minimum-jerk CSP
 轨迹平滑发送，前三轴使用刚读到的 `/joint_states` 保持不动。默认平均速度为
-`10000 counts/s`，每次 `110000 counts` 自动使用约 11 秒；不再询问 counts 或运动时间。
+`10000 counts/s`，运动时间根据 counts 自动计算；例如 `110000 counts` 约 11 秒、
+`500000 counts` 约 50 秒，不再单独询问运动时间。
 组 `15` 的预检查和实际运动节点都会等待最多 5 秒取得完整 `/joint_states`，避免新建
 DDS 节点时 1 秒发现窗口过短；仍未收到反馈才禁止运动。可通过
 `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S` 有意覆盖该超时。每次组 `15` 会等待运动和
@@ -280,7 +283,7 @@ bash ./rascl_debug.sh
 | 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
 | 13 | T3 | CSP 启动后查看实时模型 TCP |
 | 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
-| 15 | T3 | 输入 `close`/`open`，控制抓夹夹紧或松开 |
+| 15 | T3 | 输入 `close`/`open`，或输入任意非零相对 counts 控制 Drive 3 |
 | 16 | T3 | 查看最近一次 CSP 停滞自动诊断快照 |
 
 日常实机顺序以本指南最前面的
@@ -722,7 +725,7 @@ source install/local_setup.bash
 4. Drive 0–2 连续交接；Drive 3 通过独立 CiA-402 使能后也进入 CSP。
 5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动；Drive 3 无 PDO 故障。
 6. 20 ms PDO 循环无 WKC/following error，运动结束有 `MOTION_RESULT reached=true`。
-7. Drive 3 的组 `15` `close`/`open` 动作可在 CSP 中执行，且随后 Task 1 保持该角度。
+7. Drive 3 的组 `15` 快捷动作和自定义相对 counts 均可在 CSP 中执行，且随后 Task 1 保持该角度。
 8. Home 附近 12 秒 minimum-jerk 小轨迹成功。
 
 ## 12. 参数速查

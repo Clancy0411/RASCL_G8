@@ -100,6 +100,10 @@ is_number() {
   [[ "$1" =~ ^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]
 }
 
+is_integer() {
+  [[ "$1" =~ ^[-+]?[0-9]+$ ]]
+}
+
 is_positive_number() {
   [[ "$1" =~ ^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || return 1
   local digits="${1#+}"
@@ -488,8 +492,8 @@ group_gripper_action() {
     die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
-  echo "Drive 3 当前 joint position = $spur rad；抓夹动作以当前位置为基准，不依赖 Home。"
-  read -r -p "Gripper action [close/open] (c/o): " gripper_action
+  echo "Drive 3 当前 joint position = $spur rad；所有动作均以当前位置为基准，不依赖 Home。"
+  read -r -p "Gripper action [close/open] (c/o) 或相对 counts（正/负整数）: " gripper_action
   gripper_action="${gripper_action,,}"
   case "$gripper_action" in
     close | c)
@@ -501,7 +505,11 @@ group_gripper_action() {
       delta_counts="$GRIPPER_RELEASE_DELTA_COUNTS"
       ;;
     *)
-      die "未执行抓夹动作：请输入 close/c 或 open/o"
+      is_integer "$gripper_action" ||
+        die "未执行 Drive 3 动作：请输入 close/c、open/o 或非零整数 counts"
+      [[ "$gripper_action" =~ [1-9] ]] || die "相对 counts 不能为 0"
+      action_label="自定义相对 counts"
+      delta_counts="$gripper_action"
       ;;
   esac
   if ! read -r target_rad minimum_duration < <(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" "$SPUR_GEAR_SPEED_COUNTS_PER_S" "$SPUR_GEAR_MIN_MOTION_DURATION_S" <<'PY'
@@ -716,12 +724,12 @@ print_menu() {
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
     " 13  查看当前模型 TCP 坐标                              [T3]" \
     " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
-    " 15  抓夹收紧/松开放下（固定 ±110000 counts）          [T3，会运动]" \
+    " 15  抓夹 close/open 或 Drive 3 自定义相对 counts      [T3，会运动]" \
     " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。抓夹 close/open：T3=15。"
+    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3：T3=15。"
 }
 
 run_group() {

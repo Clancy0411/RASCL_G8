@@ -174,12 +174,13 @@ The values correspond to:
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
 command. Entering ASCII `close` (or `c`) applies a relative `-110000` count
 grip/close move; entering `open` (or `o`) applies a relative `+110000` count
-release/open move. It starts
-from the current spur joint state, then publishes a 50 Hz minimum-jerk
+release/open move. A signed non-zero integer instead requests that exact
+relative Drive 3 increment in counts. Every command starts from the current
+spur joint state, then publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
-10000 counts/s, the duration is derived automatically as about 11 seconds. It
-does not require Drive 3 Homing. Repeating the same action accumulates another
-relative move, subject to the URDF limit. Do not send a direct Profile Position
+10000 counts/s, the duration is derived automatically from the requested
+increment. It does not require Drive 3 Homing. Repeating commands accumulates
+another relative move, subject to the URDF limit. Do not send a direct Profile Position
 command while ros2_control owns the CSP connection.
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh

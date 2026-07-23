@@ -7,14 +7,17 @@
 
 ```text
 branch: main
-base commit: 7d9b55f5f33b8102b70863c0d4707d7ba6dded58
-commit message: 坐标系变化
+upstream commit: fb6c97fe104f5f2983ccf151f3821aedac323f31
+commit message: 改到抓夹中心
 remote: https://github.com/Clancy0411/RASCL_G8.git
 ```
 
 重要历史基线：
 
 ```text
+7d9b55f5f33b8102b70863c0d4707d7ba6dded58
+commit message: 坐标系变化（本轮队友修改前的比较基线）
+
 214477ef7c9f4cca7f52b41106f4863b9f68442b
 tag: 已经验证
 commit message: 减少抖动
@@ -22,7 +25,7 @@ commit message: 减少抖动
 
 `214477e` 曾在实机验证 Drive 0–3 能正确定位到指定空间点，并包含
 `0x2332:00=200` 的 CSP 插值修复。当前版本在它的基础上继续加入了 Drive 3 抓夹
-收放控制、Drive 2 参数与故障诊断，以及最新 TCP 偏移修正。
+收放及自定义 counts 控制、Drive 2 参数与故障诊断，以及当前抓夹中心 TCP。
 
 进入新环境后首先执行：
 
@@ -55,9 +58,9 @@ Cyclic Synchronous Position (CSP) + EtherCAT PDO
 已实现。现在的首要目标是：
 
 1. 在新机器上重新编译并启动实机；
-2. 验证 commit `7d9b55f` 的最新 TCP 偏移修正；
-3. 在 Home 和额外姿态中比较模型 TCP 与外部真实测量；
-4. 根据多姿态结果判断剩余误差是固定 TCP offset、base frame、连杆几何还是 encoder
+2. 验证 commit `fb6c97f` 的抓夹中心 TCP，并保留组 `15` 快捷动作及自定义相对 counts；
+3. 在 Home 和额外姿态中比较模型抓夹中心与外部真实测量；
+4. 如仍有系统误差，根据多姿态结果判断来源是固定 TCP offset、base frame、连杆几何还是 encoder
    零位问题。
 
 Drive 2 停滞问题目前视为已经解决，后续先忽略，不要主动继续调整它的转矩、限位、
@@ -279,20 +282,23 @@ PDO 由 bridge 内部独立循环持续发送，不能只依赖 ROS read/write �
 
 ## 8. Drive 3 / gripper
 
-Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 只接受抓夹动作选择：
+Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 接受快捷动作或任意非零的有符号
+相对 counts：
 
 ```text
 close 或 c = 从当前位置相对 -110000 counts，收紧夹持
 open  或 o = 从当前位置相对 +110000 counts，松开放下
++2000       = 从当前位置正向增加 2000 counts
+-500000     = 从当前位置反向减少 500000 counts
 ```
 
-两者都不是绝对 encoder 目标；连续重复同一动作会继续累加。默认速度为：
+这些都不是绝对 encoder 目标；连续命令会继续累加。默认速度为：
 
 ```text
 10000 counts/s
 ```
 
-固定 `110000 counts` 在默认速度下自动使用约 11 秒。组 `15` 使用 50 Hz
+运动时间由 counts 自动计算；`110000 counts` 约 11 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
 预检查和实际运动节点取得完整 `/joint_states` 的默认超时均为 5 秒；运动节点异常会以
@@ -350,7 +356,7 @@ Drive 2 原峰值电流 `0x2329:03=220 mA` 导致只读有效最大转矩 `0x607
 当前用户认为 Drive 2 停滞问题已经解决，所以不要继续主动调参。若再次复现，使用现有
 `CSP_STALL_SNAPSHOT` 和打包日志分析，不要先增大阈值。
 
-## 10. 最新 TCP 修正
+## 10. TCP 标定历史与当前抓夹中心
 
 commit `7d9b55f` 之前，在同一个自动 Home 姿态：
 
@@ -409,7 +415,7 @@ q=[0,+pi/2,+pi/2]
 TCP=[0.20318978,-0.01580108,0.32181469] m
 ```
 
-最新 TCP 修改已通过：
+当前抓夹中心修改已通过：
 
 - URDF XML 与 fixed frame 检查；
 - FK 零位和 nominal Home 检查；
@@ -418,27 +424,23 @@ TCP=[0.20318978,-0.01580108,0.32181469] m
 - `bash -n rascl_debug.sh`；
 - `git diff --check`。
 
-当前二次单姿态修改仍须在 Home 和其他姿态重新实测；它按用户要求优先当前测试点。
+当前代码中的 URDF、TF、FK、IK 与回归测试在数值上保持一致。单元测试只能证明软件内部
+一致，不能证明 `20 mm` 的物理方向和长度一定等于实机抓夹中心；实机调整后仍应在 Home
+和至少一个额外姿态比较模型 `tcp_link` 与外部测得的抓夹中心。
 
 ## 11. 为什么必须做多姿态验证
 
-本次只有一个 Home 姿态的外部测量。一个姿态不能区分：
+当前表面标定和抓夹中心延伸仍主要来自单姿态测量与实体尺寸。一个姿态不能区分：
 
 - 固定 TCP 安装偏移；
 - `base_link` 原点/方向误差；
 - 连杆长度或 joint origin 误差；
 - encoder/home offset 误差。
 
-首先在同一实际 Home joint state 检查新 TF 是否从约：
+首先在实际 Home joint state 检查组 `13` 的抓夹中心是否接近当前名义值：
 
 ```text
-(0.208,0,0.292) m
-```
-
-变为接近：
-
-```text
-(0.185,0,0.335) m
+(0.20318978,-0.01580108,0.32181469) m
 ```
 
 随后至少在另外 2–3 个不过奇异、不碰撞的姿态重复外部测量。若误差随姿态变化，就不能
@@ -507,7 +509,7 @@ bash ./rascl_debug.sh <组号>
 12 打包完整 ROS 日志
 13 查询 base_link -> tcp_link
 14 设置下一目标 XYZ 与运动时间
-15 CSP 下输入 close/open 控制抓夹收紧/松开
+15 CSP 下输入 close/open，或输入任意非零相对 counts 控制 Drive 3
 16 读取最近 CSP_STALL_SNAPSHOT
 ```
 
@@ -670,12 +672,13 @@ MOTION_RESULT
 4. 确认新机器的 EtherCAT 网卡名；
 5. 指导完成组 `1 → T1:4 → T2:6 → T2:7 → T3:8 → T3:13`；
 6. 获取新 TF、`/joint_states` 和外部真实 TCP；
-7. 判断单姿态 TCP offset 是否正确；
+7. 判断当前抓夹中心 TCP 是否正确；
 8. 验证额外姿态，决定是否需要进一步运动学标定。
 
 当前最重要的状态：
 
 ```text
-最新 TCP 修正已经进入 commit 7d9b55f，但尚未实机复测。
+当前上游基线是 commit fb6c97f，TCP 已改为固定抓夹中心。
+组 15 同时支持 close/open 快捷动作和任意非零相对 counts。
 Drive 2 停滞目前视为已经解决，除非复现，否则不再主动调整。
 ```
