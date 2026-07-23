@@ -135,7 +135,7 @@
     <child link="spur_gear"/>
     <origin xyz="0.13916 0 0.0179" rpy="0 -1.570796327 0"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-3.1415" upper="3.1415" effort="100" velocity="1.0"/>
+    <limit lower="-6.283185307" upper="6.283185307" effort="100" velocity="1.0"/>
   </joint>
 
   <link name="spur_gear">
@@ -269,8 +269,8 @@
       <param name="encoder_cpr">4096</param>
       <param name="direction">$(arg gripper_direction)</param>
       <param name="home_offset_counts">$(arg spur_gear_home_offset_counts)</param>
-      <param name="min_position">-3.1415</param>
-      <param name="max_position">3.1415</param>
+      <param name="min_position">-6.283185307</param>
+      <param name="max_position">6.283185307</param>
       <param name="initial_position">0</param>
       <param name="calibrate_on_activate">true</param>
     </joint>

@@ -248,7 +248,9 @@ revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
 positions. At the default 10000 counts/s, group `15` derives the duration from
 the requested increment and records `SPUR_TRACE` feedback
-in the ROS log.
+in the ROS log. The Drive 3 project-side position limit is
+`[-2*pi,+2*pi]` rad in the physical URDF, ros2_control parameters, kinematics,
+and script precheck. This does not overwrite drive-side `0x607B/0x607D`.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search for Drives 0--2; Drive 3 does not execute that

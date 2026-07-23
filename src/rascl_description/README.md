@@ -183,8 +183,10 @@ publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
 10000 counts/s, the duration is derived automatically from the requested
 increment. It does not require Drive 3 Homing. Repeating commands accumulates
-another relative move, subject to the URDF limit. Do not send a direct Profile Position
-command while ros2_control owns the CSP connection.
+another relative move, subject to the unified Drive 3 URDF/ros2_control limit
+of `[-2*pi,+2*pi]` rad. This project limit does not overwrite drive objects
+`0x607B` or `0x607D`. Do not send a direct Profile Position command while
+ros2_control owns the CSP connection.
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

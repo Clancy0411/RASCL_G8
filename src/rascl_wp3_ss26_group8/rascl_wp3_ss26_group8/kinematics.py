@@ -24,7 +24,7 @@ ARM_LIMITS = [
     (-3.141592654, 3.141592654),
     (-3.141592654, 3.141592654),
 ]
-SPUR_GEAR_LIMIT = (-3.1415, 3.1415)
+SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 
 # The measured single-pose calibration locates the old gear-surface reference
 # in the lowerarm frame.  The commanded TCP is 20 mm farther along lowerarm +X,

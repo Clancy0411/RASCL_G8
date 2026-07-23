@@ -395,3 +395,7 @@ self.configure_pdo_mapping = False
 ## 2026-07-23 Drive 3 最大闭合行程扩大
 
 挂载 gripper 后，`close/c` 的 `+110000 counts` 最大行程不足以接触方块。现只将最大闭合行程提高为 `+500000 counts`；`2000 counts / 0.04 s` 接触停止、`open/o=-200000 counts` 以及自定义 counts 逻辑均不变。默认 `10000 counts/s` 下，未提前接触时最长约 50 秒。
+
+## 2026-07-23 Drive 3 项目侧位置限位扩大
+
+日志 `ros_logs_20260723_131436.tar.gz` 表明，前一次 `open=-200000 counts` 完成后 Drive 3 约为 `374357 counts / 1.777884 rad`；随后 `close=+500000 counts` 的目标约为 `874357 counts / 4.1525 rad`，超过旧的 `+3.1415 rad`，因此在脚本预检阶段被拒绝，命令尚未发送给驱动器。现将 `spur_gear_joint` 在实体 URDF、ros2_control、Python 运动学和调试脚本中的项目侧限位统一由约 `[-pi,+pi]` 放宽为 `[-2*pi,+2*pi] = [-6.283185307,+6.283185307] rad`。Drive 0–2 限位、Drive 3 的 `close/open` 方向与行程、接触停止、Homing、CSP 以及驱动器内部 `0x607B/0x607D` 均未修改。

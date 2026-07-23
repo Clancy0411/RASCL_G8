@@ -212,7 +212,7 @@ encoder_cpr = 4096
 shoulder_joint  = [-pi/2,+pi/2]
 upperarm_joint  = [-pi,+pi]
 lowerarm_joint  = [-pi,+pi]
-spur_gear_joint = [-3.1415,+3.1415]
+spur_gear_joint = [-2*pi,+2*pi] = [-6.283185307,+6.283185307]
 ```
 
 ## 6. 自动 Homing——必须保持不变
@@ -296,7 +296,8 @@ open  或 o = 固定相对 -200000 counts，要求完整到位
 默认 `2000 counts / 0.04 s` 时，脚本在 drive following error 前保持实测位置，并
 记录 `SPUR_CONTACT` 和 `SPUR_RESULT outcome=contact_or_endpoint`。`+500000 counts`
 是最大闭合行程，不保证走满。`open=-200000 counts` 和直接输入的有符号 counts 均要求
-精确相对运动，不启用接触提前终止。默认速度为：
+精确相对运动，不启用接触提前终止。Drive 3 的 URDF、ros2_control、运动学和脚本预检
+限位已统一为 `[-2*pi,+2*pi]`；这不会修改驱动器对象 `0x607B/0x607D`。默认速度为：
 
 ```text
 10000 counts/s

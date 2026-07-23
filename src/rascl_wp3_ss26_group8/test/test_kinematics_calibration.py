@@ -5,6 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from rascl_wp3_ss26_group8.kinematics import (
+    SPUR_GEAR_LIMIT,
     TCP_ORIGIN_IN_LOWERARM,
     forward_tcp,
     inverse_tcp,
@@ -53,6 +54,35 @@ def test_urdf_and_python_use_the_same_tcp_origin():
         for value in origin_text.split()
     )
     _assert_vector_close(urdf_origin, TCP_ORIGIN_IN_LOWERARM)
+
+
+def test_spur_gear_limits_match_urdf_and_ros2_control():
+    root = ET.parse(_find_urdf()).getroot()
+    spur_joint = next(
+        joint
+        for joint in root.findall("joint")
+        if joint.get("name") == "spur_gear_joint"
+    )
+    urdf_limit = spur_joint.find("limit")
+    _assert_vector_close(
+        (float(urdf_limit.get("lower")), float(urdf_limit.get("upper"))),
+        SPUR_GEAR_LIMIT,
+    )
+
+    control_joint = next(
+        joint
+        for joint in root.find("ros2_control").findall("joint")
+        if joint.get("name") == "spur_gear_joint"
+    )
+    control_params = {
+        param.get("name"): float(param.text)
+        for param in control_joint.findall("param")
+        if param.get("name") in ("min_position", "max_position")
+    }
+    _assert_vector_close(
+        (control_params["min_position"], control_params["max_position"]),
+        SPUR_GEAR_LIMIT,
+    )
 
 
 def test_reference_tcp_positions_match_calibrated_geometry():
