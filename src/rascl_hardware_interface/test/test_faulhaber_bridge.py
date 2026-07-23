@@ -396,6 +396,63 @@ class BridgePDOTest(unittest.TestCase):
             slave.writes,
         )
 
+    def test_csp_handoff_corrects_drive2_and_drive3_peak_current(self):
+        slaves = [FakeSlave() for _ in range(4)]
+        for drive_id, rated_current, peak_current in (
+            (2, 1100, 220),
+            (3, 540, 81),
+        ):
+            slave = slaves[drive_id]
+            slave.values[(bridge.MOTOR_APPLICATION_DATA, 1)] = int(
+                rated_current
+            ).to_bytes(2, "little")
+            slave.values[(bridge.MOTOR_APPLICATION_DATA, 2)] = int(
+                rated_current
+            ).to_bytes(2, "little")
+            slave.values[(bridge.MOTOR_APPLICATION_DATA, 3)] = int(
+                peak_current
+            ).to_bytes(2, "little")
+            slave.values[(bridge.MAX_TORQUE, 0)] = int(
+                peak_current * 1000 // rated_current
+            ).to_bytes(2, "little")
+
+        bus = make_bus()
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+        bus._configure_csp_torque_limits_locked()
+
+        for drive_id, rated_current in ((2, 1100), (3, 540)):
+            slave = slaves[drive_id]
+            self.assertEqual(
+                int.from_bytes(
+                    slave.values[(bridge.MOTOR_APPLICATION_DATA, 3)], "little"
+                ),
+                rated_current,
+            )
+            self.assertEqual(
+                int.from_bytes(slave.values[(bridge.MAX_TORQUE, 0)], "little"),
+                1000,
+            )
+            self.assertIn(
+                (
+                    bridge.MOTOR_APPLICATION_DATA,
+                    3,
+                    int(rated_current).to_bytes(2, "little"),
+                ),
+                slave.writes,
+            )
+
+        for drive_id in (0, 1):
+            self.assertNotIn(
+                (bridge.MOTOR_APPLICATION_DATA, 3),
+                {
+                    (index, subindex)
+                    for index, subindex, _payload in slaves[drive_id].writes
+                },
+            )
+
     def test_above_bridge_csp_torque_ceiling_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "1..6000"):
             make_bus(csp_torque_limit_per_mille=6001)

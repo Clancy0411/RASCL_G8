@@ -180,14 +180,15 @@ of rated motor torque. The MC5004 EtherCAT firmware used on the robot rejects
 writes to `0x6072` as read-only, so the bridge observes that effective maximum
 but never writes it. On this firmware, `0x6072` is derived from
 `0x2329:03 peak_current / 0x2329:01 rated_current * 1000`. Drive 2 was
-configured as `220 / 1100 * 1000 = 200`, so changing only `0x60E0/0x60E1`
-could not raise its effective ceiling. At CSP handoff, the bridge now raises
-only Drive 2's undersized `0x2329:03` to the current limit's required value
-(`220 -> 1100 mA` for the default 1000-per-mille limit), then verifies both
-that write and read-only `0x6072 >= 1000`. Drive 2's rated and continuous
-currents are unchanged, as are all motor-current parameters on Drives 0, 1,
-and 3. The correction is applied only after Homing, so the validated
-reference-search behavior is unchanged. Any readback mismatch rejects CSP.
+configured as `220 / 1100 * 1000 = 200`, and Drive 3 as
+`81 / 540 * 1000 = 150`, so changing only `0x60E0/0x60E1` could not raise
+their effective ceilings. At CSP handoff, the bridge now raises the
+undersized `0x2329:03` on both drives to the requested limit's required value
+(`220 -> 1100 mA` and `81 -> 540 mA` for the default 1000-per-mille limit),
+then verifies both writes and read-only `0x6072 >= 1000`. Rated and continuous
+currents are unchanged, as are all motor-current parameters on Drives 0 and 1.
+The correction is applied only after Homing, so the validated reference-search
+behavior is unchanged. Any readback mismatch rejects CSP.
 The limit is exposed as `csp_torque_limit_per_mille` (valid range 1--6000),
 but the default stops at rated torque and no parameter-store request is issued.
 
@@ -234,10 +235,14 @@ After successful Homing, the first three joint positions should be approximately
 
 Drive 3 has no Homing zero in this workflow, but it participates in both CSP
 state validation and position targets. `rascl_debug.sh` group `15` accepts one
-ASCII gripper action: `close` (or `c`) applies a relative `-110000` count
-grip/close move, and `open` (or `o`) applies a relative `+110000` count
-release/open move. A signed non-zero integer requests that exact relative
-Drive 3 increment in counts. Each command starts
+ASCII gripper action: `close` (or `c`) requests up to `-110000` counts, and
+`open` (or `o`) requests up to `+110000` counts. These shortcuts monitor the
+command/feedback lag; a persistent default `2000`-count lag for `0.04 s` is
+treated as object contact or a mechanical endpoint. The command is then
+replaced with the measured Drive 3 position before the drive's following-error
+window is reached, and `SPUR_CONTACT`/`SPUR_RESULT` are logged. A signed
+non-zero integer still requests that exact relative Drive 3 increment and does
+not use contact termination. Each command starts
 from the current joint state, uses the configured direction and counts per
 revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current

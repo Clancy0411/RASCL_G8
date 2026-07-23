@@ -172,11 +172,14 @@ The values correspond to:
 ```
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
-command. Entering ASCII `close` (or `c`) applies a relative `-110000` count
-grip/close move; entering `open` (or `o`) applies a relative `+110000` count
-release/open move. A signed non-zero integer instead requests that exact
-relative Drive 3 increment in counts. Every command starts from the current
-spur joint state, then publishes a 50 Hz minimum-jerk
+command. Entering ASCII `close` (or `c`) requests at most `-110000` counts;
+entering `open` (or `o`) requests at most `+110000` counts. These shortcuts
+stop early and hold the measured Drive 3 position when persistent tracking lag
+indicates object contact or a mechanical endpoint, preventing an expected
+contact from becoming a drive following error. A signed non-zero integer
+instead requests that exact relative Drive 3 increment and does not use contact
+termination. Every command starts from the current spur joint state, then
+publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
 10000 counts/s, the duration is derived automatically from the requested
 increment. It does not require Drive 3 Homing. Repeating commands accumulates

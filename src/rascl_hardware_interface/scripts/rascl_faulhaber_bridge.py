@@ -553,9 +553,9 @@ class FaulhaberDrive:
         """Raise an undersized peak current for the requested torque limit.
 
         On this MC5004 firmware, read-only ``0x6072`` is derived from
-        ``peak_current / rated_current * 1000``.  Drive 2 was configured with
-        220 mA peak versus 1100 mA rated, which explains its effective
-        200-per-mille torque ceiling.  At the default 1000-per-mille limit this
+        ``peak_current / rated_current * 1000``.  An undersized peak-current
+        parameter therefore caps the effective torque even when writable
+        ``0x60E0/0x60E1`` are higher.  At the default 1000-per-mille limit this
         raises peak current to rated current.  The session-only correction
         leaves the rated and continuous-current motor parameters unchanged.
         """
@@ -1222,7 +1222,11 @@ class FaulhaberBus:
             before, after = drive.configure_csp_torque_limit(
                 self.csp_torque_limit_per_mille
             )
-            if drive.drive_id == 2:
+            # Drives 2 and 3 were both found with undersized stored peak-current
+            # parameters (220/1100 mA and 81/540 mA respectively).  Since
+            # read-only 0x6072 is derived from that ratio, merely raising the
+            # writable directional limits leaves either axis torque-capped.
+            if drive.drive_id in (2, 3):
                 current_before, current_after, effective_maximum = (
                     drive.ensure_peak_current_for_torque_limit(
                         self.csp_torque_limit_per_mille
@@ -1231,7 +1235,8 @@ class FaulhaberBus:
                 after = drive.read_torque_limits(retry=True)
                 if effective_maximum != after["maximum_torque"]:
                     raise RuntimeError(
-                        "Drive 2 inconsistent 0x6072 readback after peak-current "
+                        f"Drive {drive.drive_id} inconsistent 0x6072 readback "
+                        "after peak-current "
                         f"correction: {effective_maximum} != "
                         f"{after['maximum_torque']}"
                     )

@@ -33,6 +33,11 @@ SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-10000}"
 SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
 SPUR_GEAR_SETTLE_DURATION_S="${RASCL_SPUR_GEAR_SETTLE_DURATION_S:-1.0}"
 SPUR_GEAR_FEEDBACK_TIMEOUT_S="${RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S:-5.0}"
+# close/open are travel-until-contact shortcuts, not exact endpoint commands.
+# Stop them before the drive's following-error window is reached, then hold the
+# measured contact/endpoint position. Custom signed counts remain exact moves.
+GRIPPER_CONTACT_ERROR_COUNTS="${RASCL_GRIPPER_CONTACT_ERROR_COUNTS:-2000}"
+GRIPPER_CONTACT_CONFIRM_S="${RASCL_GRIPPER_CONTACT_CONFIRM_S:-0.04}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
@@ -286,7 +291,7 @@ group_homing_bridge() {
   echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；内部限位只读取、不改写。"
   echo "CSP 停滞诊断：误差 >= $CSP_STALL_ERROR_COUNTS counts 且 $CSP_STALL_TIMEOUT_MS ms 内进展 < $CSP_STALL_PROGRESS_COUNTS counts 时自动抓取驱动快照。"
   echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
-  echo "Drive 2 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（首次通常为 220→1100 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1/3 电流参数不改。"
+  echo "Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1 电流参数不改。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
     csp_torque_limit_per_mille:="$CSP_TORQUE_LIMIT_PER_MILLE" \
@@ -483,11 +488,16 @@ group_gripper_action() {
     die "RASCL_SPUR_GEAR_SETTLE_DURATION_S 必须是正数"
   is_positive_number "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" ||
     die "RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S 必须是正数"
+  is_integer "$GRIPPER_CONTACT_ERROR_COUNTS" &&
+    (( GRIPPER_CONTACT_ERROR_COUNTS > 0 )) ||
+    die "RASCL_GRIPPER_CONTACT_ERROR_COUNTS 必须是正整数"
+  is_positive_number "$GRIPPER_CONTACT_CONFIRM_S" ||
+    die "RASCL_GRIPPER_CONTACT_CONFIRM_S 必须是正数"
   is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
     die "Drive 3 URDF 限位必须是数字"
 
   local snapshot shoulder upperarm lowerarm spur gripper_action action_label
-  local delta_counts target_rad minimum_duration motion_duration
+  local delta_counts target_rad minimum_duration motion_duration stop_on_contact
   if ! snapshot="$(read_csp_joint_snapshot)"; then
     die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
@@ -499,10 +509,12 @@ group_gripper_action() {
     close | c)
       action_label="收紧夹持"
       delta_counts="$GRIPPER_GRIP_DELTA_COUNTS"
+      stop_on_contact=1
       ;;
     open | o)
       action_label="松开放下"
       delta_counts="$GRIPPER_RELEASE_DELTA_COUNTS"
+      stop_on_contact=1
       ;;
     *)
       is_integer "$gripper_action" ||
@@ -510,6 +522,7 @@ group_gripper_action() {
       [[ "$gripper_action" =~ [1-9] ]] || die "相对 counts 不能为 0"
       action_label="自定义相对 counts"
       delta_counts="$gripper_action"
+      stop_on_contact=0
       ;;
   esac
   if ! read -r target_rad minimum_duration < <(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" "$SPUR_GEAR_SPEED_COUNTS_PER_S" "$SPUR_GEAR_MIN_MOTION_DURATION_S" <<'PY'
@@ -545,11 +558,18 @@ PY
   clear_plan_state
   echo "抓夹将执行“$action_label”：Drive 3 相对运动 $delta_counts counts。"
   echo "使用 50 Hz minimum-jerk CSP 轨迹，自动时长 $motion_duration s。"
+  if (( stop_on_contact )); then
+    echo "快捷动作将在持续跟踪误差达到 $GRIPPER_CONTACT_ERROR_COUNTS counts、维持 $GRIPPER_CONTACT_CONFIRM_S s 时判定接触/端点，立即保持实测位置；该结果按成功处理。"
+  else
+    echo "自定义 counts 要求精确到位，不启用快捷动作的接触提前终止。"
+  fi
   echo "前三轴保持当前 joint_state；此操作已清除旧组 9 规划授权。"
   if ! python3 - "$shoulder" "$upperarm" "$lowerarm" "$spur" "$target_rad" \
     "$delta_counts" "$motion_duration" "$SPUR_GEAR_DIRECTION" \
     "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" \
-    "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" "$SPUR_GEAR_SETTLE_DURATION_S" <<'PY'
+    "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" "$SPUR_GEAR_SETTLE_DURATION_S" \
+    "$stop_on_contact" "$GRIPPER_CONTACT_ERROR_COUNTS" \
+    "$GRIPPER_CONTACT_CONFIRM_S" <<'PY'
 import math
 import sys
 import time
@@ -571,12 +591,18 @@ from std_msgs.msg import Float64MultiArray
     home_offset_counts,
     feedback_timeout_s,
     settle_s,
+    stop_on_contact,
+    contact_error_counts,
+    contact_confirm_s,
 ) = map(float, sys.argv[1:])
+stop_on_contact = bool(int(stop_on_contact))
+contact_error_counts = int(contact_error_counts)
 
 JOINTS = ("shoulder_joint", "upperarm_joint", "lowerarm_joint", "spur_gear_joint")
 TAU = 2.0 * math.pi
 latest_spur = None
 last_feedback_time = None
+contact_error_since = None
 
 
 def rad_to_counts(angle):
@@ -597,16 +623,46 @@ def publish(publisher, spur_command):
     publisher.publish(message)
 
 
-def log_feedback(logger, phase):
+def log_feedback(logger, phase, reference_spur=None):
     if latest_spur is None:
         logger.warning(f"SPUR_TRACE {phase}: no /joint_states feedback yet")
         return
+    if reference_spur is None:
+        reference_spur = target_spur
     actual_counts = rad_to_counts(latest_spur)
-    remaining_counts = rad_to_counts(target_spur) - actual_counts
+    remaining_counts = rad_to_counts(reference_spur) - actual_counts
     logger.info(
         f"SPUR_TRACE {phase}: actual_rad={latest_spur:.6f} "
         f"actual_counts={actual_counts} remaining_counts={remaining_counts}"
     )
+
+
+def detect_contact(command_spur):
+    global contact_error_since
+    if not stop_on_contact or latest_spur is None:
+        return None
+    command_counts = rad_to_counts(command_spur)
+    actual_counts = rad_to_counts(latest_spur)
+    tracking_error = abs(command_counts - actual_counts)
+    now = time.monotonic()
+    if tracking_error < contact_error_counts:
+        contact_error_since = None
+        return None
+    if contact_error_since is None:
+        contact_error_since = now
+        return None
+    if now - contact_error_since < contact_confirm_s:
+        return None
+
+    logger.warning(
+        "SPUR_CONTACT detected: "
+        f"command_counts={command_counts} actual_counts={actual_counts} "
+        f"tracking_error_counts={tracking_error} "
+        f"threshold_counts={contact_error_counts} "
+        f"confirm_s={contact_confirm_s:.3f}; "
+        "holding measured Drive 3 position before following error"
+    )
+    return latest_spur
 
 
 rclpy.init()
@@ -636,19 +692,28 @@ try:
     start = time.monotonic()
     next_tick = start
     next_log = start
+    outcome = "target_reached"
+    final_target_spur = target_spur
     while True:
         now = time.monotonic()
         elapsed = now - start
         u = min(1.0, elapsed / duration_s)
         # Fifth-order minimum jerk: zero velocity and acceleration at both ends.
         blend = 10.0 * u**3 - 15.0 * u**4 + 6.0 * u**5
-        publish(publisher, source_spur + (target_spur - source_spur) * blend)
+        command_spur = source_spur + (target_spur - source_spur) * blend
+        publish(publisher, command_spur)
         rclpy.spin_once(node, timeout_sec=0.0)
         if now >= next_log:
             log_feedback(logger, "progress")
             next_log += 1.0
         if last_feedback_time is not None and now - last_feedback_time > 0.5:
             raise RuntimeError("/joint_states stopped during Drive 3 CSP motion")
+        contact_hold_spur = detect_contact(command_spur)
+        if contact_hold_spur is not None:
+            outcome = "contact_or_endpoint"
+            final_target_spur = contact_hold_spur
+            publish(publisher, final_target_spur)
+            break
         if u >= 1.0:
             break
         next_tick += period_s
@@ -656,12 +721,23 @@ try:
 
     settle_deadline = time.monotonic() + settle_s
     while time.monotonic() < settle_deadline:
-        publish(publisher, target_spur)
+        publish(publisher, final_target_spur)
         rclpy.spin_once(node, timeout_sec=0.0)
         if last_feedback_time is not None and time.monotonic() - last_feedback_time > 0.5:
             raise RuntimeError("/joint_states stopped while Drive 3 was settling")
+        if outcome == "target_reached":
+            contact_hold_spur = detect_contact(final_target_spur)
+            if contact_hold_spur is not None:
+                outcome = "contact_or_endpoint"
+                final_target_spur = contact_hold_spur
+                publish(publisher, final_target_spur)
         time.sleep(period_s)
-    log_feedback(logger, "complete")
+    log_feedback(logger, "complete", final_target_spur)
+    logger.info(
+        f"SPUR_RESULT outcome={outcome} "
+        f"requested_target_counts={target_counts} "
+        f"held_target_counts={rad_to_counts(final_target_spur)}"
+    )
 except Exception as exc:
     logger.error(f"SPUR_TRACE failed: {exc}")
     raise

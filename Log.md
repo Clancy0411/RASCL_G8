@@ -381,3 +381,9 @@ self.configure_pdo_mapping = False
 ## 2026-07-23 恢复 Drive 3 自定义相对 counts
 
 保留组 `15` 的 `close/c=-110000` 与 `open/o=+110000` 快捷动作，同时恢复直接输入任意非零有符号整数 counts 的功能。自定义值仍以当前 Drive 3 位置为基准，共用相同的 URDF 限位、controller/并发检查、50 Hz minimum-jerk、自动时长和 `SPUR_TRACE` 反馈；不是绝对 encoder 目标。
+
+## 2026-07-23 Drive 3 转矩上限与接触终止修复
+
+实机日志确认 Drive 3 的 `0x2329:03=81 mA` 只产生 `0x6072=150`（额定转矩 15%）；虽然 `0x60E0/0x60E1` 已写成 `1000`，负方向夹持时仍会 `torque_limited`，最终以 `statusword=0x3027` following error 停止整个 CSP。现将 Drive 3 与 Drive 2 一样在 CSP 交接时做会话级峰值电流修正：Drive 3 通常为 `81→540 mA`，并强制回读 `0x6072>=1000`；不执行永久参数存储。
+
+组 `15` 的 `close/open` 改为最大行程快捷动作。若命令/反馈持续误差达到默认 `2000 counts / 0.04 s`，脚本会在 drive following error 前记录 `SPUR_CONTACT`、把目标收回到实测位置并返回 `SPUR_RESULT outcome=contact_or_endpoint`。直接输入的有符号 counts 仍要求精确相对运动，不启用接触提前终止。
