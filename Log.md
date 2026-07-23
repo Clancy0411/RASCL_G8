@@ -387,3 +387,7 @@ self.configure_pdo_mapping = False
 实机日志确认 Drive 3 的 `0x2329:03=81 mA` 只产生 `0x6072=150`（额定转矩 15%）；虽然 `0x60E0/0x60E1` 已写成 `1000`，负方向夹持时仍会 `torque_limited`，最终以 `statusword=0x3027` following error 停止整个 CSP。现将 Drive 3 与 Drive 2 一样在 CSP 交接时做会话级峰值电流修正：Drive 3 通常为 `81→540 mA`，并强制回读 `0x6072>=1000`；不执行永久参数存储。
 
 组 `15` 的 `close/open` 改为最大行程快捷动作。若命令/反馈持续误差达到默认 `2000 counts / 0.04 s`，脚本会在 drive following error 前记录 `SPUR_CONTACT`、把目标收回到实测位置并返回 `SPUR_RESULT outcome=contact_or_endpoint`。直接输入的有符号 counts 仍要求精确相对运动，不启用接触提前终止。
+
+## 2026-07-23 Drive 3 抓夹快捷动作方向修正
+
+按实机方向将组 `15` 的快捷动作反向：`close/c` 改为最多相对 `+110000 counts`，继续使用 `2000 counts / 0.04 s` 跟踪误差检测，夹住后提前停止并保持实测位置；`open/o` 改为固定相对 `-200000 counts`，要求完整到位且不启用接触提前终止。直接输入的自定义有符号 counts 语义不变。

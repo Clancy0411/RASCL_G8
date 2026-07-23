@@ -25,17 +25,18 @@ SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
 SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
 SPUR_GEAR_MIN_POSITION_RAD="${RASCL_SPUR_GEAR_MIN_POSITION_RAD:--3.1415}"
 SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-3.1415}"
-# Group 15 maps one explicit gripper action to a fixed relative Drive 3 move.
-# It limits the average speed instead of sending one large CSP setpoint step.
-GRIPPER_GRIP_DELTA_COUNTS=-110000
-GRIPPER_RELEASE_DELTA_COUNTS=110000
+# Group 15 uses opposite Drive 3 directions for closing and opening. Closing
+# travels toward contact with a maximum positive increment; opening is an exact
+# negative relative move.
+GRIPPER_GRIP_DELTA_COUNTS=110000
+GRIPPER_RELEASE_DELTA_COUNTS=-200000
 SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-10000}"
 SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
 SPUR_GEAR_SETTLE_DURATION_S="${RASCL_SPUR_GEAR_SETTLE_DURATION_S:-1.0}"
 SPUR_GEAR_FEEDBACK_TIMEOUT_S="${RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S:-5.0}"
-# close/open are travel-until-contact shortcuts, not exact endpoint commands.
-# Stop them before the drive's following-error window is reached, then hold the
-# measured contact/endpoint position. Custom signed counts remain exact moves.
+# close is a travel-until-contact shortcut. Stop it before the drive's
+# following-error window is reached, then hold the measured contact position.
+# open and custom signed counts remain exact relative moves.
 GRIPPER_CONTACT_ERROR_COUNTS="${RASCL_GRIPPER_CONTACT_ERROR_COUNTS:-2000}"
 GRIPPER_CONTACT_CONFIRM_S="${RASCL_GRIPPER_CONTACT_CONFIRM_S:-0.04}"
 TARGET_X="${RASCL_TARGET_X:-0.2108}"
@@ -514,7 +515,7 @@ group_gripper_action() {
     open | o)
       action_label="松开放下"
       delta_counts="$GRIPPER_RELEASE_DELTA_COUNTS"
-      stop_on_contact=1
+      stop_on_contact=0
       ;;
     *)
       is_integer "$gripper_action" ||
@@ -561,7 +562,7 @@ PY
   if (( stop_on_contact )); then
     echo "快捷动作将在持续跟踪误差达到 $GRIPPER_CONTACT_ERROR_COUNTS counts、维持 $GRIPPER_CONTACT_CONFIRM_S s 时判定接触/端点，立即保持实测位置；该结果按成功处理。"
   else
-    echo "自定义 counts 要求精确到位，不启用快捷动作的接触提前终止。"
+    echo "本动作要求精确运动 $delta_counts counts，不启用接触提前终止。"
   fi
   echo "前三轴保持当前 joint_state；此操作已清除旧组 9 规划授权。"
   if ! python3 - "$shoulder" "$upperarm" "$lowerarm" "$spur" "$target_rad" \

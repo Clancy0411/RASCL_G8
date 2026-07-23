@@ -235,14 +235,14 @@ After successful Homing, the first three joint positions should be approximately
 
 Drive 3 has no Homing zero in this workflow, but it participates in both CSP
 state validation and position targets. `rascl_debug.sh` group `15` accepts one
-ASCII gripper action: `close` (or `c`) requests up to `-110000` counts, and
-`open` (or `o`) requests up to `+110000` counts. These shortcuts monitor the
-command/feedback lag; a persistent default `2000`-count lag for `0.04 s` is
-treated as object contact or a mechanical endpoint. The command is then
-replaced with the measured Drive 3 position before the drive's following-error
-window is reached, and `SPUR_CONTACT`/`SPUR_RESULT` are logged. A signed
-non-zero integer still requests that exact relative Drive 3 increment and does
-not use contact termination. Each command starts
+ASCII gripper action: `close` (or `c`) requests up to `+110000` counts, while
+`open` (or `o`) requests an exact `-200000`-count relative move. Only `close`
+monitors command/feedback lag; a persistent default `2000`-count lag for
+`0.04 s` is treated as object contact. The command is then replaced with the
+measured Drive 3 position before the drive's following-error window is reached,
+and `SPUR_CONTACT`/`SPUR_RESULT` are logged. `open` and a signed non-zero
+integer request exact relative Drive 3 increments and do not use contact
+termination. Each command starts
 from the current joint state, uses the configured direction and counts per
 revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
