@@ -403,3 +403,11 @@ self.configure_pdo_mapping = False
 ## 2026-07-23 TCP X +20 mm from current command point
 
 Per user request, the fixed TCP was moved another `0.020 m` along `lowerarm +X` from the current commanded point. The TCP origin changed from `[0.13478978,0.02881369,0.03193108] m` to `[0.15478978,0.02881369,0.03193108] m`, for a total `40 mm` offset from the calibrated gear-surface reference. Nominal zero TCP is now `[0.31318978,-0.01580108,0.07181469] m`; nominal automatic Home TCP is now `[0.22318978,-0.01580108,0.32181469] m`.
+
+## 2026-07-23 Revert additional local TCP X +20 mm
+
+Real-hardware testing showed that the additional `lowerarm +X` shift projected mainly into `base_link` Z at the tested poses, increasing the physical Z discrepancy without removing the horizontal error. The last additional `0.020 m` was therefore reverted. The fixed TCP origin is again `[0.13478978,0.02881369,0.03193108] m`, which is `20 mm` from the calibrated gear-surface reference. Nominal zero TCP is `[0.29318978,-0.01580108,0.07181469] m`; nominal automatic Home TCP is `[0.20318978,-0.01580108,0.32181469] m`.
+
+## 2026-07-23 Global physical-X +20 mm calibration
+
+The remaining target-to-real-position discrepancy is handled as a project-level global calibration rather than a manual target edit or another rotating TCP offset. External measurements use Y/X/Z, so physical +X maps to numeric `base_link` +Y. The `base_link -> shoulder_joint` model origin now uses Y=`-0.020 m`; with unchanged requested targets, IK consequently moves the real gripper `+0.020 m` in physical X. The fixed TCP remains `[0.13478978,0.02881369,0.03193108] m`. Nominal zero TCP becomes `[0.29318978,-0.03580108,0.07181469] m`, and nominal automatic Home TCP becomes `[0.20318978,-0.03580108,0.32181469] m`.

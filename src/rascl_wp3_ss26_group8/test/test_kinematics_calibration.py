@@ -5,6 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from rascl_wp3_ss26_group8.kinematics import (
+    BASE_TO_SHOULDER_ORIGIN,
     SPUR_GEAR_LIMIT,
     TCP_ORIGIN_IN_LOWERARM,
     forward_tcp,
@@ -56,6 +57,18 @@ def test_urdf_and_python_use_the_same_tcp_origin():
     _assert_vector_close(urdf_origin, TCP_ORIGIN_IN_LOWERARM)
 
 
+def test_urdf_and_python_use_the_same_base_calibration():
+    root = ET.parse(_find_urdf()).getroot()
+    shoulder_joint = next(
+        joint
+        for joint in root.findall("joint")
+        if joint.get("name") == "shoulder_joint"
+    )
+    origin_text = shoulder_joint.find("origin").get("xyz")
+    urdf_origin = tuple(float(value) for value in origin_text.split())
+    _assert_vector_close(urdf_origin, BASE_TO_SHOULDER_ORIGIN)
+
+
 def test_spur_gear_limits_match_urdf_and_ros2_control():
     root = ET.parse(_find_urdf()).getroot()
     spur_joint = next(
@@ -88,22 +101,22 @@ def test_spur_gear_limits_match_urdf_and_ros2_control():
 def test_reference_tcp_positions_match_calibrated_geometry():
     _assert_vector_close(
         forward_tcp((0.0, 0.0, 0.0)),
-        (0.31318978, -0.01580108, 0.07181469),
+        (0.29318978, -0.03580108, 0.07181469),
     )
     _assert_vector_close(
         forward_tcp((0.0, math.pi / 2.0, math.pi / 2.0)),
-        (0.22318978, -0.01580108, 0.32181469),
+        (0.20318978, -0.03580108, 0.32181469),
     )
 
 
-def test_commanded_tcp_extends_forty_mm_from_measured_surface_point():
+def test_commanded_tcp_extends_twenty_mm_from_measured_surface_point():
     # At this measured pose the calibrated gear-surface point was
-    # [0.14, -0.16, 0.05] m.  Moving 40 mm along the local jaw direction gives
+    # [0.14, -0.16, 0.05] m.  Moving 20 mm along the local jaw direction gives
     # the fixed commanded TCP below.
     measured_joint_pose = (0.777575714851, 0.646147976068, 2.120655279445)
     _assert_vector_close(
         forward_tcp(measured_joint_pose),
-        (0.14274044108073767, -0.1626979048501291, 0.010185281852172552),
+        (0.14137022054036882, -0.18134895242506456, 0.030092640926086274),
     )
 
 

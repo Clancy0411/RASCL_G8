@@ -26,12 +26,18 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 
+# Global base calibration. External measurements are written as physical Y/X/Z,
+# so physical +X corresponds to base_link +Y. The real TCP was 20 mm short in
+# physical +X; shifting the model arm origin by -20 mm in base_link Y makes IK
+# command the required +20 mm motion without changing user-entered targets.
+BASE_TO_SHOULDER_ORIGIN = (0.0, -0.020, 0.057441)
+
 # The measured single-pose calibration locates the old gear-surface reference
-# in the lowerarm frame. Cartesian targets now use the prior grasp-center shift
-# plus a second user-requested 20 mm move along lowerarm +X. It remains
-# independent of spur_gear_joint motion.
+# in the lowerarm frame. Cartesian targets use a 20 mm grasp-center shift along
+# lowerarm +X. The later additional 20 mm shift was reverted after real-hardware
+# testing showed that it projected mainly into base_link Z at the tested poses.
 CALIBRATED_GEAR_SURFACE_IN_LOWERARM = (0.11478978, 0.02881369, 0.03193108)
-GRASP_CENTER_EXTENSION_M = 0.040
+GRASP_CENTER_EXTENSION_M = 0.020
 TCP_ORIGIN_IN_LOWERARM = (
     CALIBRATED_GEAR_SURFACE_IN_LOWERARM[0] + GRASP_CENTER_EXTENSION_M,
     CALIBRATED_GEAR_SURFACE_IN_LOWERARM[1],
@@ -42,7 +48,7 @@ TCP_ORIGIN_IN_LOWERARM = (
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.31318978, -0.01580108, 0.07181469)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29318978, -0.03580108, 0.07181469)
 
 
 @dataclass
@@ -172,7 +178,7 @@ def forward_tcp(q_arm: Sequence[float]) -> Vector3:
     transform = _identity()
 
     # shoulder_joint, base_link -> shoulder
-    transform = _matmul(transform, _origin((0.0, 0.0, 0.057441), (0.0, 0.0, 0.0)))
+    transform = _matmul(transform, _origin(BASE_TO_SHOULDER_ORIGIN, (0.0, 0.0, 0.0)))
     transform = _matmul(transform, _axis_rotation((0.0, 0.0, -1.0), q1))
 
     # upperarm_joint, shoulder -> upperarm

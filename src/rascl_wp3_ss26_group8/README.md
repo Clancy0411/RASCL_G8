@@ -20,9 +20,16 @@ FAULHABER CSP mode and cyclic EtherCAT Position PDOs on real hardware.
 
 All target coordinates are expressed in the URDF `base_link` frame, in meters.
 The TCP is the fixed `tcp_link` attached to `lowerarm`; it does not move when
-`spur_gear_joint` opens or closes the gripper.  It is 40 mm outward from the
-calibrated gear-surface reference along `lowerarm` +X: the prior 20 mm
-grasp-center shift plus a second 20 mm user-requested X shift.
+`spur_gear_joint` opens or closes the gripper.  It is 20 mm outward from the
+calibrated gear-surface reference along `lowerarm` +X.  A later additional
+20 mm shift was reverted after real-hardware testing.
+
+The project also applies a global physical-X calibration. External measurements
+use the order Y/X/Z, so physical +X corresponds to numeric `base_link` +Y. The
+arm model origin is translated by `-0.020 m` in `base_link` Y; therefore IK
+moves the real gripper `+0.020 m` in physical X while the requested Cartesian
+target remains unchanged. This is a base-frame correction, not a rotating TCP
+offset.
 
 Calibration convention for real hardware:
 
@@ -36,7 +43,7 @@ The joint-coordinate convention from `3588dc98` is preserved:
 calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.31318978, -0.01580108, 0.07181469] m
+base_link TCP = [0.29318978, -0.03580108, 0.07181469] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -44,7 +51,7 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.22318978, -0.01580108, 0.32181469] m
+base_link auto-home TCP = [0.20318978, -0.03580108, 0.32181469] m
 ```
 
 The current TCP uses a second single-pose calibration.  At the joint pose that
@@ -53,8 +60,8 @@ measurement was `[0.14, -0.16, 0.05] m`; in the project's physical-axis
 convention this is the numeric `base_link` XYZ correction `[-0.020, 0, 0] m`.
 The resulting calibrated gear-surface origin in `lowerarm` is
 `[0.11478978, 0.02881369, 0.03193108] m`.  The commanded TCP now adds
-40 mm along the local jaw direction and is therefore
-`[0.15478978, 0.02881369, 0.03193108] m`.  The surface calibration intentionally
+20 mm along the local jaw direction and is therefore
+`[0.13478978, 0.02881369, 0.03193108] m`.  The surface calibration intentionally
 prioritizes that measured pose and must be rechecked at Home and other arm poses.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware

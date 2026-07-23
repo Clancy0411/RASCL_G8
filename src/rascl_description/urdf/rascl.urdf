@@ -55,7 +55,12 @@
   <joint name="shoulder_joint" type="revolute">
     <parent link="base_link"/>
     <child link="shoulder"/>
-    <origin xyz="0 0 0.057441" rpy="0 0 0"/>
+    <!--
+      Global Cartesian calibration: physical coordinates are recorded as Y/X/Z,
+      so physical +X is base_link +Y.  A -20 mm model translation makes IK move
+      the real TCP +20 mm in physical X while requested targets stay unchanged.
+    -->
+    <origin xyz="0 -0.020 0.057441" rpy="0 0 0"/>
     <axis xyz="0 0 -1"/>
     <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
   </joint>
@@ -119,13 +124,13 @@
     Fixed grasp center.  Keep this separate from spur_gear_joint: opening or
     closing the gripper must not move the Cartesian planning frame.  The
     calibrated gear-surface reference is [0.11478978, 0.02881369, 0.03193108]
-    in lowerarm.  The commanded point was shifted 20 mm to the grasp center,
-    then another user-requested 20 mm along lowerarm +X.
+    in lowerarm.  The commanded point is shifted 20 mm along lowerarm +X to
+    the grasp center.  The later additional 20 mm shift was reverted.
   -->
   <joint name="tcp_fixed_joint" type="fixed">
     <parent link="lowerarm"/>
     <child link="tcp_link"/>
-    <origin xyz="0.15478978 0.02881369 0.03193108" rpy="0 -1.570796327 0"/>
+    <origin xyz="0.13478978 0.02881369 0.03193108" rpy="0 -1.570796327 0"/>
   </joint>
 
   <link name="tcp_link"/>
