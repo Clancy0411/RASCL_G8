@@ -25,12 +25,12 @@ the historical `spur_gear_joint` origin at
 `[0.13916, 0, 0.0179] m` in `lowerarm`. It does not move when
 `spur_gear_joint` opens or closes the gripper.
 
-The project also applies a global physical-X calibration. External measurements
-use the order Y/X/Z, so physical +X corresponds to numeric `base_link` +Y. The
-arm model origin is translated by `-0.020 m` in `base_link` Y; therefore IK
-moves the real gripper `+0.020 m` in physical X while the requested Cartesian
-target remains unchanged. This is a base-frame correction, not a rotating TCP
-offset.
+The project applies a global XY translation from a physical calibration point:
+model XY `[0.12, 0.12] m` coincided with measured XY `[0.16, 0.16] m`.
+Accordingly, the complete arm model is shifted by `[+0.040, +0.040, 0] m`
+relative to the preceding calibration, giving the current shoulder origin
+`[0.040, 0.020, 0.057441] m` in `base_link`. This is a fixed base-frame
+translation, not a rotating TCP offset; Z is unchanged.
 
 Calibration convention for real hardware:
 
@@ -44,7 +44,7 @@ The joint-coordinate convention from `3588dc98` is preserved:
 calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.29756, -0.02177, 0.043001] m
+base_link TCP = [0.33756, 0.01823, 0.043001] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -52,13 +52,13 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.20756, -0.02177, 0.293001] m
+base_link auto-home TCP = [0.24756, 0.01823, 0.293001] m
 ```
 
 The earlier single-pose gear-surface and grasp-center offsets are not applied
 to the current TCP. Calibration measurements now refer directly to the fixed
 `spur_gear_joint` center. The separate global base-frame calibration above
-remains unchanged.
+contains the current XY correction.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

@@ -26,11 +26,11 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 
-# Global base calibration. External measurements are written as physical Y/X/Z,
-# so physical +X corresponds to base_link +Y. The real TCP was 20 mm short in
-# physical +X; shifting the model arm origin by -20 mm in base_link Y makes IK
-# command the required +20 mm motion without changing user-entered targets.
-BASE_TO_SHOULDER_ORIGIN = (0.0, -0.020, 0.057441)
+# Global XY calibration. A joint pose reported at model XY [0.12, 0.12] was
+# measured at physical XY [0.16, 0.16]. Relative to the previous base origin,
+# the complete arm model is therefore translated +40 mm in both base_link X
+# and Y. The Z origin and all rotating/local geometry remain unchanged.
+BASE_TO_SHOULDER_ORIGIN = (0.040, 0.020, 0.057441)
 
 # Fixed Cartesian TCP at the spur_gear_joint center in the lowerarm frame.
 # Keeping a separate fixed link prevents gripper rotation from moving the
@@ -41,7 +41,7 @@ TCP_ORIGIN_IN_LOWERARM = (0.13916, 0.0, 0.0179)
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29756, -0.02177, 0.043001)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.33756, 0.01823, 0.043001)
 
 
 @dataclass
