@@ -76,8 +76,39 @@ def generate_launch_description():
         "skip_spur_gear_homing",
         default_value="true",
         description=(
-            "Do not reference-home the pre-installed Drive 3 gripper; it still joins CSP/PDO."
+            "Skip Drive 3 sensor search. After Drives 0-2 Home, move Drive 3 by the "
+            "configured relative increment and set the reached position to zero."
         ),
+    )
+    spur_reference_delta_arg = DeclareLaunchArgument(
+        "spur_gear_reference_delta_counts",
+        default_value="-50000",
+        description="Drive 3 relative move after Drives 0-2 Home and before Method 37 zeroing.",
+    )
+    spur_reference_timeout_arg = DeclareLaunchArgument(
+        "spur_gear_reference_timeout_s",
+        default_value="15.0",
+        description="Timeout for the Drive 3 reference move and current-position zeroing.",
+    )
+    spur_reference_tolerance_arg = DeclareLaunchArgument(
+        "spur_gear_reference_tolerance_counts",
+        default_value="100",
+        description="Allowed endpoint error for the Drive 3 -50000-count reference move.",
+    )
+    spur_reference_velocity_arg = DeclareLaunchArgument(
+        "spur_gear_reference_profile_velocity",
+        default_value="10000",
+        description="Profile Position velocity for the Drive 3 reference move [counts/s].",
+    )
+    spur_reference_acceleration_arg = DeclareLaunchArgument(
+        "spur_gear_reference_profile_acceleration",
+        default_value="10000",
+        description="Profile Position acceleration for the Drive 3 reference move.",
+    )
+    spur_reference_deceleration_arg = DeclareLaunchArgument(
+        "spur_gear_reference_profile_deceleration",
+        default_value="10000",
+        description="Profile Position deceleration for the Drive 3 reference move.",
     )
 
     bridge_node = Node(
@@ -130,6 +161,24 @@ def generate_launch_description():
                 "skip_spur_gear_homing": ParameterValue(
                     LaunchConfiguration("skip_spur_gear_homing"), value_type=bool
                 ),
+                "spur_gear_reference_delta_counts": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_delta_counts"), value_type=int
+                ),
+                "spur_gear_reference_timeout_s": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_timeout_s"), value_type=float
+                ),
+                "spur_gear_reference_tolerance_counts": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_tolerance_counts"), value_type=int
+                ),
+                "spur_gear_reference_profile_velocity": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_profile_velocity"), value_type=int
+                ),
+                "spur_gear_reference_profile_acceleration": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_profile_acceleration"), value_type=int
+                ),
+                "spur_gear_reference_profile_deceleration": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_profile_deceleration"), value_type=int
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -161,6 +210,12 @@ def generate_launch_description():
             csp_stall_timeout_arg,
             ignore_spur_gear_arg,
             skip_spur_homing_arg,
+            spur_reference_delta_arg,
+            spur_reference_timeout_arg,
+            spur_reference_tolerance_arg,
+            spur_reference_velocity_arg,
+            spur_reference_acceleration_arg,
+            spur_reference_deceleration_arg,
             bridge_node,
         ]
     )

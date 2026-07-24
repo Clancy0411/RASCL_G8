@@ -211,6 +211,134 @@ def make_bus(**overrides):
 
 
 class BridgePDOTest(unittest.TestCase):
+    def test_drive3_reference_move_is_relative_to_live_counts(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=3, sdo_delay_s=0.0, verbose=False
+        )
+        with (
+            mock.patch.object(
+                drive,
+                "read_actual_position_counts",
+                side_effect=[120_000, 70_050],
+            ),
+            mock.patch.object(
+                drive,
+                "read_status",
+                return_value=(
+                    bridge.STATUS_OPERATION_ENABLED_STATE
+                    | bridge.STATUS_TARGET_REACHED
+                ),
+            ),
+            mock.patch.object(drive, "move_absolute_counts") as move_absolute,
+        ):
+            source, target, actual = drive.move_relative_counts_and_wait(
+                -50_000, timeout_s=1.0, tolerance_counts=100
+            )
+
+        self.assertEqual((source, target, actual), (120_000, 70_000, 70_050))
+        move_absolute.assert_called_once_with(70_000)
+
+    def test_homing_method_37_sets_current_drive_position_to_zero(self):
+        slave = FakeSlave()
+        drive = bridge.FaulhaberDrive(
+            slave, drive_id=3, sdo_delay_s=0.0, verbose=False
+        )
+        completed_status = (
+            bridge.STATUS_OPERATION_ENABLED_STATE
+            | bridge.STATUS_TARGET_REACHED
+            | bridge.STATUS_HOMING_ATTAINED
+        )
+
+        def write_controlword(command, delay=None):
+            del delay
+            if command == bridge.CMD_ENABLE_OPERATION:
+                return bridge.STATUS_OPERATION_ENABLED_STATE
+            return 0
+
+        with (
+            mock.patch.object(drive, "reset_fault_if_needed"),
+            mock.patch.object(
+                drive, "set_operation_mode", side_effect=lambda mode: mode
+            ),
+            mock.patch.object(
+                drive, "write_controlword", side_effect=write_controlword
+            ),
+            mock.patch.object(drive, "read_status", return_value=completed_status),
+            mock.patch.object(drive, "read_actual_position_counts", return_value=0),
+        ):
+            zero = drive.home_current_position(timeout_s=1.0)
+
+        self.assertEqual(zero, 0)
+        written_values = {
+            (index, subindex): payload
+            for index, subindex, payload in slave.writes
+        }
+        self.assertEqual(
+            written_values[(bridge.HOMING_METHOD, 0)],
+            int(bridge.HOMING_METHOD_CURRENT_POSITION).to_bytes(
+                1, "little", signed=True
+            ),
+        )
+        self.assertEqual(
+            written_values[(bridge.HOMING_OFFSET, 0)],
+            int(0).to_bytes(4, "little", signed=True),
+        )
+
+    def test_node_drive3_reference_records_method37_zero(self):
+        drive = mock.Mock()
+        drive.move_relative_counts_and_wait.return_value = (
+            120_000,
+            70_000,
+            70_025,
+        )
+        drive.home_current_position.return_value = 0
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            homing_complete=True,
+            drives=[mock.Mock(), mock.Mock(), mock.Mock(), drive],
+        )
+        node.ignore_spur_gear_in_csp = False
+        node.skip_spur_gear_homing = True
+        node.spur_gear_reference_delta_counts = -50_000
+        node.spur_gear_reference_timeout_s = 15.0
+        node.spur_gear_reference_tolerance_counts = 100
+        node.spur_gear_reference_profile_velocity = 10_000
+        node.spur_gear_reference_profile_acceleration = 10_000
+        node.spur_gear_reference_profile_deceleration = 10_000
+        node.spur_gear_reference_complete = False
+        node.spur_gear_reference_source_counts = None
+        node.spur_gear_reference_target_counts = None
+        node.spur_gear_reference_pre_zero_counts = None
+        node.spur_gear_reference_zero_readback = None
+        logger = mock.Mock()
+        node.get_logger = lambda: logger
+
+        message = node._reference_spur_gear_after_arm_homing()
+
+        drive.enable_operation.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
+        drive.configure_profile_motion.assert_called_once_with(10_000, 10_000, 10_000)
+        drive.move_relative_counts_and_wait.assert_called_once_with(
+            -50_000, 15.0, 100
+        )
+        drive.home_current_position.assert_called_once_with(15.0, 10)
+        self.assertTrue(node.spur_gear_reference_complete)
+        self.assertEqual(node.spur_gear_reference_pre_zero_counts, 70_025)
+        self.assertEqual(node.spur_gear_reference_zero_readback, 0)
+        self.assertIn("delta=-50000", message)
+
+    def test_homing_csp_rejects_handoff_until_drive3_reference_is_complete(self):
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.control_mode = "homing_csp"
+        node.ignore_spur_gear_in_csp = False
+        node.spur_gear_reference_complete = False
+        node.spur_gear_reference_delta_counts = -50_000
+
+        with self.assertRaisesRegex(RuntimeError, "Drive 3 reference is incomplete"):
+            node._require_spur_gear_reference_for_csp()
+
+        node.spur_gear_reference_complete = True
+        node._require_spur_gear_reference_for_csp()
+
     def test_position_pdo_payload_is_six_bytes_and_little_endian(self):
         payload = bridge.FaulhaberBus._pack_rxpdo(0x000F, -123456)
         self.assertEqual(len(payload), bridge.PDO_RX_SIZE_BYTES)

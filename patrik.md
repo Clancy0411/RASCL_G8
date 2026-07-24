@@ -1,3 +1,7 @@
+> 历史调试输出，仅用于保留当时报错。当前流程已变化：Drive 0–2 Homing 成功后，
+> Drive 3 会相对运动 `-50000 counts` 并用 Method 37 置零；请以
+> `WP3_Task1_MinJerk_Debug_Guide_CN.md` 和当前脚本输出为准。
+
 rascl-container:~/ws$ bash ./rascl_debug.sh 6
 waiting for service to become available...
 requester: making request: std_srvs.srv.Trigger_Request()

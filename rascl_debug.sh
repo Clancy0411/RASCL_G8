@@ -23,6 +23,9 @@ CSP_STALL_TIMEOUT_MS="${RASCL_CSP_STALL_TIMEOUT_MS:-500}"
 SPUR_GEAR_DIRECTION="${RASCL_SPUR_GEAR_DIRECTION:-1}"
 SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
 SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
+SPUR_GEAR_REFERENCE_DELTA_COUNTS="${RASCL_SPUR_GEAR_REFERENCE_DELTA_COUNTS:--50000}"
+SPUR_GEAR_REFERENCE_TIMEOUT_S="${RASCL_SPUR_GEAR_REFERENCE_TIMEOUT_S:-15.0}"
+SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS="${RASCL_SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS:-100}"
 SPUR_GEAR_MIN_POSITION_RAD="${RASCL_SPUR_GEAR_MIN_POSITION_RAD:--6.283185307}"
 SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-6.283185307}"
 # Group 15 uses opposite Drive 3 directions for closing and opening. Closing
@@ -286,10 +289,18 @@ group_fake_check() {
 group_homing_bridge() {
   load_ros
   require_real_packages
+  is_integer "$SPUR_GEAR_REFERENCE_DELTA_COUNTS" &&
+    [[ "$SPUR_GEAR_REFERENCE_DELTA_COUNTS" =~ [1-9] ]] ||
+    die "RASCL_SPUR_GEAR_REFERENCE_DELTA_COUNTS 必须是非零整数"
+  is_positive_number "$SPUR_GEAR_REFERENCE_TIMEOUT_S" ||
+    die "RASCL_SPUR_GEAR_REFERENCE_TIMEOUT_S 必须是正数"
+  is_integer "$SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS" &&
+    (( SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS >= 0 )) ||
+    die "RASCL_SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS 必须是非负整数"
   ensure_state_dir
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
-  echo "Drive 0-2 自动 Homing；预装的 Drive 3 不 Homing，但会参与后续 CSP。"
+  echo "Drive 0-2 自动 Homing；三轴到位后 Drive 3 相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，并以 Method 37 把到达位置设为 0 counts。"
   echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；内部限位只读取、不改写。"
   echo "CSP 停滞诊断：误差 >= $CSP_STALL_ERROR_COUNTS counts 且 $CSP_STALL_TIMEOUT_MS ms 内进展 < $CSP_STALL_PROGRESS_COUNTS counts 时自动抓取驱动快照。"
   echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
@@ -302,6 +313,9 @@ group_homing_bridge() {
     csp_stall_error_counts:="$CSP_STALL_ERROR_COUNTS" \
     csp_stall_progress_counts:="$CSP_STALL_PROGRESS_COUNTS" \
     csp_stall_timeout_ms:="$CSP_STALL_TIMEOUT_MS" \
+    spur_gear_reference_delta_counts:="$SPUR_GEAR_REFERENCE_DELTA_COUNTS" \
+    spur_gear_reference_timeout_s:="$SPUR_GEAR_REFERENCE_TIMEOUT_S" \
+    spur_gear_reference_tolerance_counts:="$SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS" \
     skip_spur_gear_homing:=true
 }
 
@@ -322,8 +336,14 @@ read_csp_stall_snapshot() {
 
 home_one() {
   local drive="$1"
+  local response
   ros2 param set /rascl_faulhaber_bridge test_drive_index "$drive"
-  ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
+  response="$(
+    ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
+  )" || die "Drive $drive Homing 服务调用失败"
+  printf '%s\n' "$response"
+  grep -q "success=True" <<<"$response" ||
+    die "Drive $drive Homing 未成功；停止后续流程"
 }
 
 group_home_individual() {
@@ -332,14 +352,21 @@ group_home_individual() {
   home_one 0
   home_one 1
   home_one 2
-  echo "Drive 0-2 Homing 已结束；Drive 3 不执行 Home。确认最后响应包含 CSP handoff armed。"
+  echo "Drive 0-2 Homing 已结束；最后一轴完成后 Drive 3 会自动执行 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts 参考运动并置零。"
 }
 
 group_home_all() {
+  local response
   load_ros
   read_inputs
-  echo "home_all 只会运动 Drive 0-2；预装的 Drive 3 不执行 Home，随后仍会进入 CSP。"
-  ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
+  echo "home_all 先 Homing Drive 0-2；成功后 Drive 3 自动相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，再把到达位置设为 0 counts。"
+  response="$(
+    ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
+  )" || die "home_all 服务调用失败"
+  printf '%s\n' "$response"
+  grep -q "success=True" <<<"$response" ||
+    die "home_all 或 Drive 3 参考运动/置零失败；禁止进入 CSP"
+  group_spur_gear_counts
   read_drive2_diagnostics
 }
 
@@ -354,7 +381,7 @@ group_csp_launch() {
   trap cleanup_csp_state EXIT
   echo "保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。"
   echo "Drive 2 映射：direction=$LOWERARM_DIRECTION，home_offset_counts=$LOWERARM_HOME_OFFSET_COUNTS"
-  echo "Drive 3 CSP 映射：direction=$SPUR_GEAR_DIRECTION，counts_per_revolution=$SPUR_GEAR_COUNTS_PER_REVOLUTION（不执行 Home）"
+  echo "Drive 3 CSP 映射：direction=$SPUR_GEAR_DIRECTION，counts_per_revolution=$SPUR_GEAR_COUNTS_PER_REVOLUTION，Method 37 会话零位=0 counts"
   echo "进入 CSP 后，Home 的 lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。"
   set +e
   ros2 launch rascl_description ros2_control.launch.py \
@@ -449,6 +476,20 @@ group_stall_snapshot() {
   read_csp_stall_snapshot
 }
 
+group_spur_gear_counts() {
+  local response
+  load_ros
+  response="$(
+    timeout 5s ros2 service call \
+      /rascl_faulhaber_bridge/read_spur_gear_counts \
+      std_srvs/srv/Trigger "{}"
+  )" ||
+    die "5 秒内没有读到 Drive 3 counts；确认 T1 组 4 仍在运行"
+  printf '%s\n' "$response"
+  grep -q "success=True" <<<"$response" ||
+    die "Drive 3 counts 已读取，但本次零位参考尚未成功；禁止进入 CSP"
+}
+
 group_process_check() {
   cd "$WORKSPACE"
   echo "仍在运行的 RASCL 进程："
@@ -507,7 +548,7 @@ group_gripper_action() {
     die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
-  echo "Drive 3 当前 joint position = $spur rad；所有动作均以当前位置为基准，不依赖 Home。"
+  echo "Drive 3 当前 joint position = $spur rad；相对动作以当前位置为基准，绝对 counts 以本次 Method 37 零位为基准。"
   read -r -p "Gripper action [close/open] (c/o) 或相对 counts（正/负整数）: " gripper_action
   gripper_action="${gripper_action,,}"
   case "$gripper_action" in
@@ -829,10 +870,11 @@ print_menu() {
     " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
     " 15  抓夹 close/open 或 Drive 3 自定义相对 counts      [T3，会运动]" \
     " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
+    " 17  查看 Drive 3 当前绝对 counts（Method 37 零位）     [T2/T3，只读]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3：T3=15。"
+    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3：T3=15 运动，17 读 counts。"
 }
 
 run_group() {
@@ -853,6 +895,7 @@ run_group() {
     14) group_set_target ;;
     15) group_gripper_action ;;
     16) group_stall_snapshot ;;
+    17) group_spur_gear_counts ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

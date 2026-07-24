@@ -115,6 +115,7 @@ DIGOUT1_TOGGLE = 0x00FE
 MODE_PROFILE_POSITION = 1
 MODE_HOMING = 6
 MODE_CYCLIC_SYNC_POSITION = 8
+HOMING_METHOD_CURRENT_POSITION = 37
 
 # CiA 402 control words.
 CMD_SHUTDOWN = 0x0006
@@ -338,6 +339,122 @@ class FaulhaberDrive:
                 return self.read_actual_position_counts()
             time.sleep(0.05)
         raise TimeoutError(f"Drive {self.drive_id}: motion timed out after {timeout_s:.1f} seconds")
+
+    def move_relative_counts_and_wait(
+        self,
+        delta_counts: int,
+        timeout_s: float,
+        tolerance_counts: int = 100,
+    ) -> Tuple[int, int, int]:
+        """Execute and verify one Profile Position move relative to live feedback."""
+
+        if delta_counts == 0:
+            raise ValueError("Relative position increment must be non-zero")
+        if timeout_s <= 0.0:
+            raise ValueError("Motion timeout must be positive")
+        if tolerance_counts < 0:
+            raise ValueError("Position tolerance must be non-negative")
+
+        source_counts = self.read_actual_position_counts()
+        target_counts = source_counts + int(delta_counts)
+        self.move_absolute_counts(target_counts)
+        deadline = time.monotonic() + timeout_s
+        actual_counts = source_counts
+        status = self.read_status()
+        while time.monotonic() < deadline:
+            status = self.read_status()
+            actual_counts = self.read_actual_position_counts()
+            if status & STATUS_FAULT:
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: fault during relative motion; "
+                    f"statusword=0x{status:04X}"
+                )
+            if status & STATUS_FOLLOWING_OR_HOMING_ERROR:
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: following error during relative motion; "
+                    f"statusword=0x{status:04X}"
+                )
+            if (
+                status & STATUS_TARGET_REACHED
+                and abs(actual_counts - target_counts) <= tolerance_counts
+            ):
+                return source_counts, target_counts, actual_counts
+            time.sleep(0.05)
+
+        raise TimeoutError(
+            f"Drive {self.drive_id}: relative motion timed out after {timeout_s:.1f} seconds; "
+            f"source={source_counts} target={target_counts} actual={actual_counts} "
+            f"statusword=0x{status:04X}"
+        )
+
+    def home_current_position(
+        self,
+        timeout_s: float,
+        tolerance_counts: int = 10,
+    ) -> int:
+        """Use FAULHABER Homing Method 37 to make the current position zero."""
+
+        if timeout_s <= 0.0:
+            raise ValueError("Homing timeout must be positive")
+        if tolerance_counts < 0:
+            raise ValueError("Zero-position tolerance must be non-negative")
+
+        self.reset_fault_if_needed()
+        self.sdo_write_int(
+            HOMING_METHOD,
+            0,
+            HOMING_METHOD_CURRENT_POSITION,
+            size=1,
+            signed=True,
+        )
+        self.sdo_write_int(HOMING_OFFSET, 0, 0, size=4, signed=True)
+        self.write_controlword(CMD_SHUTDOWN)
+        self.write_controlword(CMD_SWITCH_ON)
+        if self.set_operation_mode(MODE_HOMING) != MODE_HOMING:
+            raise RuntimeError(f"Drive {self.drive_id} did not enter Homing mode")
+        status = self.write_controlword(CMD_ENABLE_OPERATION)
+        if (status & STATUS_STATE_MASK) != STATUS_OPERATION_ENABLED_STATE:
+            raise RuntimeError(
+                f"Drive {self.drive_id} is not Operation Enabled; statusword=0x{status:04X}"
+            )
+
+        self.write_controlword(CMD_ENABLE_OPERATION)
+        self.write_controlword(CMD_START_HOMING)
+        deadline = time.monotonic() + timeout_s
+        actual_counts = self.read_actual_position_counts()
+        while time.monotonic() < deadline:
+            status = self.read_status()
+            if status & STATUS_FAULT:
+                self.write_controlword(CMD_DISABLE_VOLTAGE)
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: fault while setting current position as zero; "
+                    f"statusword=0x{status:04X}"
+                )
+            if status & STATUS_FOLLOWING_OR_HOMING_ERROR:
+                self.write_controlword(CMD_DISABLE_VOLTAGE)
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: Homing Method 37 failed; "
+                    f"statusword=0x{status:04X}"
+                )
+            if (status & STATUS_HOMING_ATTAINED) and (status & STATUS_TARGET_REACHED):
+                actual_counts = self.read_actual_position_counts()
+                if abs(actual_counts) > tolerance_counts:
+                    raise RuntimeError(
+                        f"Drive {self.drive_id}: Homing Method 37 completed but "
+                        f"actual position is {actual_counts}, expected 0 "
+                        f"(tolerance {tolerance_counts})"
+                    )
+                self.write_controlword(CMD_ENABLE_OPERATION)
+                self.set_operation_mode(MODE_PROFILE_POSITION)
+                return actual_counts
+            time.sleep(0.05)
+
+        self.write_controlword(CMD_DISABLE_OPERATION)
+        self.write_controlword(CMD_DISABLE_VOLTAGE)
+        raise TimeoutError(
+            f"Drive {self.drive_id}: Homing Method 37 timed out after {timeout_s:.1f} seconds; "
+            f"actual={actual_counts}"
+        )
 
     def home_to_reference_switch(
         self,
@@ -1892,6 +2009,12 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("csp_torque_limit_per_mille", 1000)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
+        self.declare_parameter("spur_gear_reference_delta_counts", -50_000)
+        self.declare_parameter("spur_gear_reference_timeout_s", 15.0)
+        self.declare_parameter("spur_gear_reference_tolerance_counts", 100)
+        self.declare_parameter("spur_gear_reference_profile_velocity", 10_000)
+        self.declare_parameter("spur_gear_reference_profile_acceleration", 10_000)
+        self.declare_parameter("spur_gear_reference_profile_deceleration", 10_000)
         # Drive 2's factory 32-count / 48-ms monitor is far below the normal
         # compliant motion lag of this 196:1 arm axis. Keep a finite, axis-
         # local monitor for CSP instead of disabling following-error detection.
@@ -1935,6 +2058,36 @@ class RASCLFaulhaberBridge(Node):
         self.skip_spur_gear_homing = bool(
             self.get_parameter("skip_spur_gear_homing").value
         )
+        self.spur_gear_reference_delta_counts = int(
+            self.get_parameter("spur_gear_reference_delta_counts").value
+        )
+        self.spur_gear_reference_timeout_s = float(
+            self.get_parameter("spur_gear_reference_timeout_s").value
+        )
+        self.spur_gear_reference_tolerance_counts = int(
+            self.get_parameter("spur_gear_reference_tolerance_counts").value
+        )
+        self.spur_gear_reference_profile_velocity = int(
+            self.get_parameter("spur_gear_reference_profile_velocity").value
+        )
+        self.spur_gear_reference_profile_acceleration = int(
+            self.get_parameter("spur_gear_reference_profile_acceleration").value
+        )
+        self.spur_gear_reference_profile_deceleration = int(
+            self.get_parameter("spur_gear_reference_profile_deceleration").value
+        )
+        if self.spur_gear_reference_delta_counts == 0:
+            raise ValueError("spur_gear_reference_delta_counts must be non-zero")
+        if self.spur_gear_reference_timeout_s <= 0.0:
+            raise ValueError("spur_gear_reference_timeout_s must be positive")
+        if self.spur_gear_reference_tolerance_counts < 0:
+            raise ValueError("spur_gear_reference_tolerance_counts must be non-negative")
+        if min(
+            self.spur_gear_reference_profile_velocity,
+            self.spur_gear_reference_profile_acceleration,
+            self.spur_gear_reference_profile_deceleration,
+        ) <= 0:
+            raise ValueError("Drive 3 reference profile parameters must be positive")
         self.drive2_following_error_window_counts = int(
             self.get_parameter("drive2_following_error_window_counts").value
         )
@@ -1961,6 +2114,11 @@ class RASCLFaulhaberBridge(Node):
 
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
+        self.spur_gear_reference_complete = False
+        self.spur_gear_reference_source_counts: Optional[int] = None
+        self.spur_gear_reference_target_counts: Optional[int] = None
+        self.spur_gear_reference_pre_zero_counts: Optional[int] = None
+        self.spur_gear_reference_zero_readback: Optional[int] = None
         self.bus = FaulhaberBus(
             self.interface,
             self.slave_indices,
@@ -1998,7 +2156,9 @@ class RASCLFaulhaberBridge(Node):
             )
         elif self.skip_spur_gear_homing:
             self.get_logger().info(
-                "Drive 3 spur_gear_joint skips Homing but will be enabled and validated in CSP"
+                "Drive 3 skips sensor Homing; after Drives 0-2 Home it will move "
+                f"{self.spur_gear_reference_delta_counts:+d} counts and use "
+                "Homing Method 37 to set that position to 0"
             )
         self.bus.connect()
         self._configure_drive2_csp_protection()
@@ -2024,6 +2184,9 @@ class RASCLFaulhaberBridge(Node):
         )
         self.read_csp_stall_snapshot_srv = self.create_service(
             Trigger, "~/read_csp_stall_snapshot", self.on_read_csp_stall_snapshot
+        )
+        self.read_spur_gear_counts_srv = self.create_service(
+            Trigger, "~/read_spur_gear_counts", self.on_read_spur_gear_counts
         )
         self.blink_digout1_srv = self.create_service(
             Trigger, "~/blink_digout1", self.on_blink_digout1
@@ -2124,6 +2287,11 @@ class RASCLFaulhaberBridge(Node):
             )
 
     def _home_drive(self, drive_index: int) -> int:
+        self.spur_gear_reference_complete = False
+        self.spur_gear_reference_source_counts = None
+        self.spur_gear_reference_target_counts = None
+        self.spur_gear_reference_pre_zero_counts = None
+        self.spur_gear_reference_zero_readback = None
         self.bus.mark_drive_homing_started(drive_index)
         drive = self.bus.drives[drive_index]
         position = drive.home_to_reference_switch(
@@ -2138,6 +2306,84 @@ class RASCLFaulhaberBridge(Node):
         self.bus.mark_drive_homed(drive_index)
         return position
 
+    def _reference_spur_gear_after_arm_homing(self) -> str:
+        """Move Drive 3 by the configured increment, then make that position zero."""
+
+        self.spur_gear_reference_complete = False
+        if not self.bus.homing_complete:
+            raise RuntimeError(
+                "Drive 3 reference requires all Drive 0-2 Homing operations to succeed first"
+            )
+        if self.ignore_spur_gear_in_csp:
+            self.spur_gear_reference_complete = True
+            return "drive3=ignored"
+        if not self.skip_spur_gear_homing:
+            # The four-axis sensor-Homing fallback already gives Drive 3 a zero.
+            self.spur_gear_reference_complete = True
+            zero = self.bus.drives[-1].read_actual_position_counts()
+            self.spur_gear_reference_zero_readback = zero
+            return f"drive3_sensor_home={zero}"
+
+        drive = self.bus.drives[-1]
+        drive.enable_operation(MODE_PROFILE_POSITION)
+        drive.configure_profile_motion(
+            self.spur_gear_reference_profile_velocity,
+            self.spur_gear_reference_profile_acceleration,
+            self.spur_gear_reference_profile_deceleration,
+        )
+        source, target, actual = drive.move_relative_counts_and_wait(
+            self.spur_gear_reference_delta_counts,
+            self.spur_gear_reference_timeout_s,
+            self.spur_gear_reference_tolerance_counts,
+        )
+        zero = drive.home_current_position(
+            self.spur_gear_reference_timeout_s,
+            min(self.spur_gear_reference_tolerance_counts, 10),
+        )
+        self.spur_gear_reference_source_counts = source
+        self.spur_gear_reference_target_counts = target
+        self.spur_gear_reference_pre_zero_counts = actual
+        self.spur_gear_reference_zero_readback = zero
+        self.spur_gear_reference_complete = True
+        message = (
+            "drive3_reference("
+            f"source={source},delta={self.spur_gear_reference_delta_counts},"
+            f"target={target},reached={actual},zero={zero},method=37)"
+        )
+        self.get_logger().warning("SPUR_REFERENCE " + message)
+        return message
+
+    def _require_spur_gear_reference_for_csp(self) -> None:
+        if (
+            self.control_mode == "homing_csp"
+            and not self.ignore_spur_gear_in_csp
+            and not self.spur_gear_reference_complete
+        ):
+            raise RuntimeError(
+                "CSP handoff rejected: Drive 3 reference is incomplete; run home_all "
+                "or complete Drive 0-2 home_one so Drive 3 can move "
+                f"{self.spur_gear_reference_delta_counts:+d} counts and set zero"
+            )
+
+    def _spur_gear_counts_message(self) -> str:
+        drive_index = len(self.bus.drives) - 1
+        if self.bus.csp_active:
+            actual, status, mode = self.bus.get_csp_states()[drive_index]
+            source = "PDO"
+        else:
+            drive = self.bus.drives[drive_index]
+            actual = drive.read_actual_position_counts()
+            status = drive.read_status()
+            mode = drive.read_mode_display()
+            source = "SDO"
+        return (
+            f"Drive {drive_index}: absolute_counts={actual}, "
+            f"statusword=0x{status:04X}, mode={mode}, source={source}, "
+            f"reference_complete={str(self.spur_gear_reference_complete).lower()}, "
+            f"reference_delta={self.spur_gear_reference_delta_counts}, "
+            f"pre_zero_raw={self.spur_gear_reference_pre_zero_counts}"
+        )
+
     def publish_home_done(self) -> None:
         msg = Bool()
         msg.data = True
@@ -2147,6 +2393,7 @@ class RASCLFaulhaberBridge(Node):
         try:
             with self.lock:
                 if self.bus.csp_active or self.control_mode == "csp":
+                    self._require_spur_gear_reference_for_csp()
                     states = self.bus.enter_csp()
                     statuses = [state[1] for state in states]
                 elif self.bus.deferred_csp_prepared:
@@ -2191,15 +2438,25 @@ class RASCLFaulhaberBridge(Node):
             if drive_index not in self.bus.required_homing_drive_ids:
                 response.success = True
                 response.message = (
-                    f"Drive {drive_index} does not require Homing in this session; "
-                    "it will be enabled for CSP"
+                    f"Drive {drive_index} does not use sensor Homing in this session; "
+                    "complete Drives 0-2 so its fixed relative reference and Method 37 "
+                    "zero can run automatically"
                 )
                 return response
             with self.lock:
                 self._ensure_non_csp_operation("home")
                 position = self._home_drive(drive_index)
+                spur_reference = (
+                    self._reference_spur_gear_after_arm_homing()
+                    if self.bus.homing_complete
+                    else ""
+                )
             response.success = True
-            suffix = "; CSP handoff armed" if self.bus.homing_complete else ""
+            suffix = (
+                f"; {spur_reference}; CSP handoff armed"
+                if self.bus.homing_complete
+                else ""
+            )
             response.message = (
                 f"Drive {drive_index} homing completed; actual_position={position}{suffix}"
             )
@@ -2216,6 +2473,7 @@ class RASCLFaulhaberBridge(Node):
                     index: self._home_drive(index)
                     for index in sorted(self.bus.required_homing_drive_ids)
                 }
+                spur_reference = self._reference_spur_gear_after_arm_homing()
             self.publish_home_done()
             response.success = True
             response.message = (
@@ -2223,6 +2481,7 @@ class RASCLFaulhaberBridge(Node):
                 + " ".join(
                     f"drive{index}={position}" for index, position in positions.items()
                 )
+                + f" {spur_reference}"
             )
         except Exception as exc:
             response.success = False
@@ -2297,6 +2556,22 @@ class RASCLFaulhaberBridge(Node):
         response.message = self.bus.last_stall_snapshot
         if self.bus.live_diagnostic_pending:
             response.message += "; staged LIVE_DIAG still pending; wait and retry"
+        return response
+
+    def on_read_spur_gear_counts(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        """Return the exact Drive 3 position in the current method-37 coordinate."""
+
+        try:
+            with self.lock:
+                response.message = self._spur_gear_counts_message()
+            response.success = self.spur_gear_reference_complete
+            if not response.success:
+                response.message += "; zero reference is not complete"
+        except Exception as exc:
+            response.success = False
+            response.message = f"Read Drive 3 counts failed: {exc}"
         return response
 
     def on_digout1(self, msg: Bool) -> None:
@@ -2408,6 +2683,7 @@ class RASCLFaulhaberBridge(Node):
                 if operation == "ENTER_CSP_ALL":
                     if len(parts) not in (1, len(self.bus.drives) + 1):
                         return f"ERR usage ENTER_CSP_ALL [<{len(self.bus.drives)} counts>]"
+                    self._require_spur_gear_reference_for_csp()
                     targets = [int(value) for value in parts[1:]] if len(parts) > 1 else None
                     return self._format_pdo_response(self.bus.enter_csp(targets))
 

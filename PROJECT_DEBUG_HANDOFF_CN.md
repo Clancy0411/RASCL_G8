@@ -7,8 +7,8 @@
 
 ```text
 branch: main
-upstream commit: fb6c97fe104f5f2983ccf151f3821aedac323f31
-commit message: 改到抓夹中心
+upstream commit before the Drive 3 reference change: 0ce2a87
+commit message: BUG 1638
 remote: https://github.com/Clancy0411/RASCL_G8.git
 ```
 
@@ -58,7 +58,7 @@ Cyclic Synchronous Position (CSP) + EtherCAT PDO
 已实现。现在的首要目标是：
 
 1. 在新机器上重新编译并启动实机；
-2. 验证 commit `fb6c97f` 的抓夹中心 TCP，并保留组 `15` 快捷动作及自定义相对 counts；
+2. 验证当前抓夹中心 TCP，并保留组 `15` 快捷动作及自定义相对 counts；
 3. 在 Home 和额外姿态中比较模型抓夹中心与外部真实测量；
 4. 如仍有系统误差，根据多姿态结果判断来源是固定 TCP offset、base frame、连杆几何还是 encoder
    零位问题。
@@ -215,13 +215,14 @@ lowerarm_joint  = [-pi,+pi]
 spur_gear_joint = [-2*pi,+2*pi] = [-6.283185307,+6.283185307]
 ```
 
-## 6. 自动 Homing——必须保持不变
+## 6. 自动 Homing 与 Drive 3 会话零位
 
 当前策略：
 
 ```text
 Drive 0–2 自动 Homing
-Drive 3 不 Homing
+Drive 0–2 全部到位后，Drive 3 从实时位置相对运动 -50000 counts
+Drive 3 到位后用 Homing Method 37 将当前位置设为 0 counts
 Drive 0–3 全部参与随后 CSP/PDO
 ```
 
@@ -232,14 +233,22 @@ skip_spur_gear_homing = true
 ignore_spur_gear_in_csp = false
 homing_methods = [28,28,24,24]
 reference_inputs = [2,2,2,1]
+spur_gear_reference_delta_counts = -50000
+spur_gear_reference_timeout_s = 15.0
+spur_gear_reference_tolerance_counts = 100
 drive 0x607C = [0,0,0,0]
 ```
+
+这里的 `skip_spur_gear_homing=true` 只表示 Drive 3 不进行传感器寻零；它仍必须执行固定
+相对运动和 Method 37 当前位置置零。参考运动必须在 `-50000 counts` 终点误差不超过
+`100 counts` 后才允许置零；置零回读必须接近 `0 counts`，否则 `home_all` 失败且 CSP
+handoff 被拒绝。
 
 自动 Home 后名义 joint state：
 
 ```text
 [shoulder,upperarm,lowerarm,spur]
-≈ [0,+pi/2,+pi/2,Drive 3当前上电位置]
+≈ [0,+pi/2,+pi/2,0]
 ```
 
 不可破坏的约束：
@@ -250,8 +259,8 @@ drive 0x607C = [0,0,0,0]
 4. Home 与 CSP 之间不能关闭并重建 EtherCAT master；
 5. CSP 运行时不能再次 Homing；
 6. 停止 ros2_control 会 Disable Voltage，停机前必须支撑机械臂；
-7. 不要重新加入 Drive 3 Homing；
-8. 不要用驱动器 `0x607C` 补偿 URDF/TCP 几何误差。
+7. Drive 3 不做传感器寻零，但不得绕过 `-50000 counts → Method 37 置零`；
+8. `0x607C=0` 只用于 Drive 3 的 Method 37 零位定义，不得用于补偿 URDF/TCP 几何误差。
 
 ## 7. CSP/PDO 当前配置
 
@@ -282,8 +291,8 @@ PDO 由 bridge 内部独立循环持续发送，不能只依赖 ROS read/write �
 
 ## 8. Drive 3 / gripper
 
-Drive 3 不 Homing，但正常进入 CSP。调试脚本组 `15` 接受快捷动作或任意非零的有符号
-相对 counts：
+Drive 3 完成会话零位后正常进入 CSP。组 `17` 随时只读当前的绝对 counts；组 `15`
+保留快捷动作或任意非零的有符号相对 counts：
 
 ```text
 close 或 c = 最多相对 +500000 counts，夹住物体后提前停止并保持
@@ -292,7 +301,8 @@ open  或 o = 固定相对 -200000 counts，要求完整到位
 -500000     = 从当前位置反向减少 500000 counts
 ```
 
-这些都不是绝对 encoder 目标。只有 `close` 是接触感知快捷动作：跟踪误差达到
+组 `15` 的输入仍然不是绝对目标；执行前后用组 `17` 读取以本次 Method 37 零位为基准
+的 `absolute_counts`，可据此实验确定开、合位置。只有 `close` 是接触感知快捷动作：跟踪误差达到
 默认 `2000 counts`，并且连续 `0.10 s` 内编码器进度不超过 `100 counts` 时，脚本才在
 drive following error 前保持实测位置，并记录 `SPUR_CONTACT` 和
 `SPUR_RESULT outcome=contact_or_endpoint`。增加近似静止条件是为了避免 minimum-jerk
@@ -308,6 +318,8 @@ drive following error 前保持实测位置，并记录 `SPUR_CONTACT` 和
 运动时间由 counts 自动计算；`close` 最长约 50 秒，`open` 约 20 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
+此前自动 `close` 曾因夹持力过大损坏 gripper；在重新确定绝对开合位置前，不要使用
+`close/c`，只使用幅度受控的相对 counts，并在每次动作后执行组 `17`。
 预检查和实际运动节点取得完整 `/joint_states` 的默认超时均为 5 秒；运动节点异常会以
 `SPUR_TRACE failed` 写入 ROS 日志，便于组 `12` 打包分析。
 
@@ -519,9 +531,9 @@ bash ./rascl_debug.sh <组号>
 1  编译 + 功能测试
 2  启动 fake ros2_control
 3  Fake 检查 + 规划 + 执行
-4  启动实机 Homing bridge，Drive 3 跳过 Home
-5  逐轴 Homing Drive 0、1、2
-6  home_all，执行 Drive 0–2
+4  启动实机 Homing bridge
+5  逐轴 Homing Drive 0、1、2；最后自动执行 Drive 3 参考运动和置零
+6  home_all：Drive 0–2 Homing，再执行 Drive 3 -50000 counts 和 Method 37 置零
 7  启动实机 CSP ros2_control，Drive 3 参与
 8  Controller/joint state 保持检查
 9  只规划实机 minimum-jerk
@@ -532,6 +544,7 @@ bash ./rascl_debug.sh <组号>
 14 设置下一目标 XYZ 与运动时间
 15 CSP 下输入 close/open，或输入任意非零相对 counts 控制 Drive 3
 16 读取最近 CSP_STALL_SNAPSHOT
+17 读取 Drive 3 当前绝对 counts（本次 Method 37 零位）
 ```
 
 脚本不会自动跨终端操作。组 `4` 和组 `7` 是前台持续进程。
@@ -567,7 +580,8 @@ bash ./rascl_debug.sh 6
 
 ```text
 success=True
-Homing completed for required drives; CSP handoff armed
+Homing completed for required drives; CSP handoff armed: ... drive3_reference(...delta=-50000,...zero=0,method=37)
+Drive 3: absolute_counts=0, ... reference_complete=true
 ```
 
 随后仍在 T2：
@@ -668,13 +682,13 @@ MOTION_RESULT
 ## 17. 后续修改要求
 
 1. 不破坏 Drive 0–2 已验证的自动 Homing；
-2. Drive 3 保持“不 Homing、参与 CSP”；
+2. Drive 3 保持“不做传感器寻零、完成 -50000 counts 与 Method 37 置零后参与 CSP”；
 3. Homing→CSP 必须复用同一 EtherCAT master；
 4. 保留 `0x2332:00=200`；
 5. 不把 `0x6060/0x6061` 重新加入周期 PDO；
 6. 不让 Drive 3 抓夹收放与 Cartesian trajectory 并发冲突；
 7. 不无依据改变四轴 direction；
-8. 不使用 `0x607C` 修正 TCP 几何；
+8. 除 Drive 3 Method 37 的零偏移外，不使用 `0x607C` 修正 TCP 几何；
 9. 不直接清除或改写 `0x607B/0x607D`；
 10. 驱动测试参数保持 session-only，不执行永久存储；
 11. 修改命令、参数或流程时同步更新唯一中文指南；
@@ -699,7 +713,8 @@ MOTION_RESULT
 当前最重要的状态：
 
 ```text
-当前上游基线是 commit fb6c97f，TCP 已改为固定抓夹中心。
+本轮 Drive 3 参考流程改动前的上游基线是 commit 0ce2a87，TCP 已改为固定抓夹中心。
 组 15 同时支持 close/open 快捷动作和任意非零相对 counts。
+组 17 返回以本次 Drive 3 Method 37 零位为基准的绝对 counts。
 Drive 2 停滞目前视为已经解决，除非复现，否则不再主动调整。
 ```

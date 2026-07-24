@@ -54,8 +54,10 @@ home_offset_counts = [0, -802816, -802816] counts
 
 Therefore raw zero after automatic Homing is represented as
 `[0,+pi/2,+pi/2] rad` for those three axes. Drive 3 (`spur_gear_joint`) is
-pre-installed and deliberately skips Homing: it retains its power-on measured
-position, joins CSP/PDO, and is commanded by relative encoder-count increments.
+pre-installed and deliberately skips the sensor reference search. After Drives
+0–2 Home, it moves `-50000` counts from its live position and uses Homing Method
+37 to define the reached position as `0` counts before joining CSP/PDO.
+Subsequent gripper commands remain relative encoder-count increments.
 These parameters do not change URDF joint origins, the IK geometry, or fake
 hardware's initial `q=[0,0,0,0]` pose. Drive 2 uses the paired
 `lowerarm_direction:=1` and `lowerarm_home_offset_counts:=-802816` mapping so
@@ -150,10 +152,10 @@ Commands are sent to:
 /rascl_position_controller/commands
 ```
 
-After automatic Home, first read `/joint_states`. Drive 3 is intentionally not
-homed in the normal workflow, so preserve its measured position in any manual
-four-joint command. Do not use a fixed `0.0` for `spur_gear_joint` unless that
-is its actual current position. A nominal arm-only example, with
+After automatic Home, first read `/joint_states`. Drive 3 should be near zero
+after its Method-37 reference, but preserve its measured position in every
+manual four-joint command. Do not assume a fixed `0.0` if it has since moved. A
+nominal arm-only example, with
 `<current_spur_rad>` replaced by feedback, is:
 
 ```bash
@@ -163,7 +165,7 @@ ros2 topic pub --once /rascl_position_controller/commands \
 ```
 
 Do not send `[0,0,0,0]` as the first real-hardware command; it requests the
-physically different URDF-zero pose and may also move the unhomed gripper.
+physically different arm URDF-zero pose.
 
 The values correspond to:
 
@@ -184,11 +186,18 @@ current spur joint state, then
 publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
 10000 counts/s, the duration is derived automatically from the requested
-increment. It does not require Drive 3 Homing. Repeating commands accumulates
-another relative move, subject to the unified Drive 3 URDF/ros2_control limit
+increment. It requires the session reference to have completed, but the command
+itself remains relative. Repeating commands accumulates another move, subject
+to the unified Drive 3 URDF/ros2_control limit
 of `[-2*pi,+2*pi]` rad. This project limit does not overwrite drive objects
 `0x607B` or `0x607D`. Do not send a direct Profile Position command while
 ros2_control owns the CSP connection.
+
+Group `17` reads the exact Drive 3 `absolute_counts` in the current Method-37
+coordinate without commanding motion. Use it before and after small group `15`
+increments to determine suitable absolute open and closed positions. Do not use
+the force-based `close/c` shortcut during this calibration; it previously
+damaged a gripper.
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

@@ -415,3 +415,15 @@ The remaining target-to-real-position discrepancy is handled as a project-level 
 ## 2026-07-23 Group 15 false-contact rejection
 
 Logs `ros_logs_20260723_141113.tar.gz` showed repeated `close` actions stopping after about `25k counts` while Drive 3 was still progressing normally. The old detector interpreted ordinary minimum-jerk command lag (`2019/2150 counts`) as contact because it checked only `error>=2000 counts` for `0.04 s`. Contact confirmation now additionally requires encoder progress to remain at or below `100 counts` for `0.10 s`, evaluates each fresh `/joint_states` sample only once, and accepts lag only in the commanded closing direction. The `2000-count` pre-following-error threshold, `+500000-count` maximum close travel, exact `open=-200000 counts`, torque configuration, and drive protections remain unchanged.
+
+## 2026-07-24 Drive 3 fixed reference and absolute-count readback
+
+After Drives 0–2 complete sensor Homing, Drive 3 now starts from live `0x6064`,
+moves `-50000 counts` in Profile Position, verifies the endpoint within
+`100 counts`, and runs FAULHABER Homing Method 37 to define the reached position
+as `0 counts`. The bridge refuses CSP handoff if either the relative move or the
+zero readback fails. Group `15` remains a relative-count CSP control. New debug
+group `17` reads Drive 3 `absolute_counts` from SDO before CSP or the bridge PDO
+cache during CSP, allowing measured open and closed positions to be recorded.
+Group `6` now stops immediately on a failed Home/reference service response
+instead of continuing because the ROS CLI process itself exited successfully.
