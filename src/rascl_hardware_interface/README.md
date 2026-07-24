@@ -182,6 +182,17 @@ Transient PRE-OP mailbox WKC errors are retried. Failure to read the optional
 write/readback remains mandatory, and the service retries limit reporting
 after Homing.
 
+Before selecting CSP, the bridge also reads, clears, and verifies the volatile
+FAULHABER lower/upper limit-input mappings at `0x2310:01/:02` on every
+participating drive. The arm sensors are dedicated Homing reference inputs, not
+bidirectional travel limits; stale mappings can otherwise assert statusword bit
+11 and stop a valid CSP move. This happens only after Homing. The reference
+input `0x2310:04`, polarity `0x2310:10`, and position limits `0x607B/0x607D`
+are preserved, and no parameter-store request is sent. The default
+`clear_limit_switch_mappings_for_csp:=true` can be set false only for rollback
+diagnosis. `read_digital_inputs` reports all relevant `0x2310` mappings,
+logical/physical input state, and decoded `0x2324:01` before CSP activation.
+
 At the CSP handoff, every participating drive is configured with the symmetric
 session-only directional limits `0x60E0 = 0x60E1 = 1000`, where `1000` is 100%
 of rated motor torque. The MC5004 EtherCAT firmware used on the robot rejects
@@ -202,7 +213,8 @@ but the default stops at rated torque and no parameter-store request is issued.
 
 When the PDO loop detects a drive fault or following error, it also captures a
 best-effort read-only `DRIVE_DIAG` SDO snapshot before requesting SAFE-OP. It
-includes `0x2324:01`, `0x1001`, `0x1003`, following error, actual velocity,
+includes `0x2324:01`, `0x1001`, `0x1003`, `0x2310:01/:02/:03/:04/:10`,
+`0x2311:01/:02`, following error, actual velocity,
 torque demand/actual value, actual current, torque/speed limits, the motor's
 rated/continuous/peak current (`0x2329:01/:02/:03`), and the position-loop
 gain `0x2348:01`. The

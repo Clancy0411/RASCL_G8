@@ -104,6 +104,9 @@ DIGITAL_INPUT_SETTINGS = 0x2310
 DIGITAL_IO_STATUS = 0x2311
 DIGITAL_INPUT_LOGICAL = 0x01
 DIGITAL_INPUT_PHYSICAL = 0x02
+LOWER_LIMIT_SWITCH_INPUTS = 0x01
+UPPER_LIMIT_SWITCH_INPUTS = 0x02
+LIMIT_SWITCH_OPTION_CODE = 0x03
 REFERENCE_SWITCH_INPUT = 0x04
 INPUT_POLARITY = 0x10
 DIGOUT_WRITE = 0x04
@@ -169,6 +172,23 @@ LIVE_DIAGNOSTIC_READS = (
     ("position_range_max", POSITION_RANGE_LIMIT, 2, True),
     ("software_limit_min", SOFTWARE_POSITION_LIMIT, 1, True),
     ("software_limit_max", SOFTWARE_POSITION_LIMIT, 2, True),
+    (
+        "lower_limit_input_mask",
+        DIGITAL_INPUT_SETTINGS,
+        LOWER_LIMIT_SWITCH_INPUTS,
+        False,
+    ),
+    (
+        "upper_limit_input_mask",
+        DIGITAL_INPUT_SETTINGS,
+        UPPER_LIMIT_SWITCH_INPUTS,
+        False,
+    ),
+    ("limit_switch_option", DIGITAL_INPUT_SETTINGS, LIMIT_SWITCH_OPTION_CODE, True),
+    ("reference_input", DIGITAL_INPUT_SETTINGS, REFERENCE_SWITCH_INPUT, False),
+    ("input_polarity", DIGITAL_INPUT_SETTINGS, INPUT_POLARITY, False),
+    ("digital_input_logical", DIGITAL_IO_STATUS, DIGITAL_INPUT_LOGICAL, False),
+    ("digital_input_physical", DIGITAL_IO_STATUS, DIGITAL_INPUT_PHYSICAL, False),
     ("following_window", FOLLOWING_ERROR_WINDOW, 0, False),
     ("following_timeout_ms", FOLLOWING_ERROR_TIMEOUT, 0, False),
     ("position_gain", POSITION_CONTROL_PARAMETER_SET, 1, False),
@@ -575,6 +595,78 @@ class FaulhaberDrive:
         polarity = self.sdo_read_int(DIGITAL_INPUT_SETTINGS, INPUT_POLARITY)
         return logical, physical, polarity
 
+    def read_digital_input_configuration(self) -> dict[str, int]:
+        """Read the input states and every mapping relevant to Homing/CSP limits."""
+
+        return {
+            "lower_limit_input_mask": self.sdo_read_int_retry(
+                DIGITAL_INPUT_SETTINGS, LOWER_LIMIT_SWITCH_INPUTS
+            ),
+            "upper_limit_input_mask": self.sdo_read_int_retry(
+                DIGITAL_INPUT_SETTINGS, UPPER_LIMIT_SWITCH_INPUTS
+            ),
+            "limit_switch_option": self.sdo_read_int_retry(
+                DIGITAL_INPUT_SETTINGS, LIMIT_SWITCH_OPTION_CODE, signed=True
+            ),
+            "reference_input": self.sdo_read_int_retry(
+                DIGITAL_INPUT_SETTINGS, REFERENCE_SWITCH_INPUT
+            ),
+            "input_polarity": self.sdo_read_int_retry(
+                DIGITAL_INPUT_SETTINGS, INPUT_POLARITY
+            ),
+            "logical_inputs": self.sdo_read_int_retry(
+                DIGITAL_IO_STATUS, DIGITAL_INPUT_LOGICAL
+            ),
+            "physical_inputs": self.sdo_read_int_retry(
+                DIGITAL_IO_STATUS, DIGITAL_INPUT_PHYSICAL
+            ),
+            "device_status": self.sdo_read_int_retry(DEVICE_STATUS, 1),
+        }
+
+    def clear_limit_switch_mappings_for_csp(
+        self,
+    ) -> Tuple[dict[str, int], dict[str, int]]:
+        """Remove stale lower/upper limit-input mappings and verify the live result.
+
+        Automatic Homing uses the dedicated reference input at ``0x2310:04``.
+        The robot does not use the same sensor inputs as persistent lower/upper
+        travel switches.  Old mappings at ``0x2310:01/:02`` can therefore stop a
+        valid CSP move while still allowing Homing to finish.  Only those two
+        volatile mappings are cleared; reference input, polarity, limit-stop
+        behavior, and the position limits at ``0x607B/0x607D`` are untouched.
+        No parameter-store command is issued.
+        """
+
+        before = self.read_digital_input_configuration()
+        for subindex in (LOWER_LIMIT_SWITCH_INPUTS, UPPER_LIMIT_SWITCH_INPUTS):
+            self.sdo_write_int_retry(
+                DIGITAL_INPUT_SETTINGS,
+                subindex,
+                0,
+                size=1,
+                signed=False,
+            )
+
+        # Give the drive's cyclic diagnosis one update before checking 0x2324.
+        time.sleep(max(self.sdo_delay_s, 0.02))
+        after = self.read_digital_input_configuration()
+        if (
+            after["lower_limit_input_mask"] != 0
+            or after["upper_limit_input_mask"] != 0
+        ):
+            raise RuntimeError(
+                f"Drive {self.drive_id} limit-input readback mismatch: "
+                f"lower=0x{after['lower_limit_input_mask']:02X}, "
+                f"upper=0x{after['upper_limit_input_mask']:02X}"
+            )
+        if after["device_status"] & ((1 << 6) | (1 << 7)):
+            raise RuntimeError(
+                f"Drive {self.drive_id} still reports an active physical limit after "
+                "0x2310:01/:02 were cleared; "
+                f"0x2324.01=0x{after['device_status']:08X}"
+            )
+        return before, after
+
     def read_position_protection(self) -> dict[str, int]:
         """Read Drive-side limits and following-error settings without changing them.
 
@@ -805,6 +897,42 @@ class FaulhaberDrive:
         rated_current = read("rated_current", MOTOR_APPLICATION_DATA, 1)
         continuous_current = read("continuous_current", MOTOR_APPLICATION_DATA, 2)
         peak_current = read("peak_current", MOTOR_APPLICATION_DATA, 3)
+        lower_limit_input_mask = read(
+            "lower_limit_input_mask",
+            DIGITAL_INPUT_SETTINGS,
+            LOWER_LIMIT_SWITCH_INPUTS,
+        )
+        upper_limit_input_mask = read(
+            "upper_limit_input_mask",
+            DIGITAL_INPUT_SETTINGS,
+            UPPER_LIMIT_SWITCH_INPUTS,
+        )
+        limit_switch_option = read(
+            "limit_switch_option",
+            DIGITAL_INPUT_SETTINGS,
+            LIMIT_SWITCH_OPTION_CODE,
+            signed=True,
+        )
+        reference_input = read(
+            "reference_input",
+            DIGITAL_INPUT_SETTINGS,
+            REFERENCE_SWITCH_INPUT,
+        )
+        input_polarity = read(
+            "input_polarity",
+            DIGITAL_INPUT_SETTINGS,
+            INPUT_POLARITY,
+        )
+        logical_inputs = read(
+            "logical_inputs",
+            DIGITAL_IO_STATUS,
+            DIGITAL_INPUT_LOGICAL,
+        )
+        physical_inputs = read(
+            "physical_inputs",
+            DIGITAL_IO_STATUS,
+            DIGITAL_INPUT_PHYSICAL,
+        )
 
         parts = [f"DRIVE_DIAG D{self.drive_id}"]
         if device_status is not None:
@@ -838,6 +966,16 @@ class FaulhaberDrive:
         parts.append(
             "motor_mA(0x2329.01/.02/.03 rated/continuous/peak)="
             f"{rated_current}/{continuous_current}/{peak_current}"
+        )
+        parts.append(
+            "input_config(0x2310.01/.02/.03/.04/.10 "
+            "lower/upper/option/reference/polarity)="
+            f"{lower_limit_input_mask}/{upper_limit_input_mask}/"
+            f"{limit_switch_option}/{reference_input}/{input_polarity}"
+        )
+        parts.append(
+            "input_state(0x2311.01/.02 logical/physical)="
+            f"{logical_inputs}/{physical_inputs}"
         )
         parts.append(f"0x2348.01(Kv)={position_gain}")
         if unavailable:
@@ -887,6 +1025,20 @@ class FaulhaberDrive:
             f"[{values.get('software_limit_min')},{values.get('software_limit_max')}]"
         )
         parts.append(
+            "input_config(0x2310.01/.02/.03/.04/.10 "
+            "lower/upper/option/reference/polarity)="
+            f"{values.get('lower_limit_input_mask')}/"
+            f"{values.get('upper_limit_input_mask')}/"
+            f"{values.get('limit_switch_option')}/"
+            f"{values.get('reference_input')}/"
+            f"{values.get('input_polarity')}"
+        )
+        parts.append(
+            "input_state(0x2311.01/.02 logical/physical)="
+            f"{values.get('digital_input_logical')}/"
+            f"{values.get('digital_input_physical')}"
+        )
+        parts.append(
             "following_monitor(0x6065/0x6066)="
             f"{values.get('following_window')}/{values.get('following_timeout_ms')}"
         )
@@ -932,6 +1084,7 @@ class FaulhaberBus:
         csp_stall_progress_counts: int = 100,
         csp_stall_timeout_ms: int = 500,
         diagnostic_logger: Optional[Callable[[str], None]] = None,
+        clear_limit_switch_mappings_for_csp: bool = True,
     ) -> None:
         self.interface = interface
         self.slave_indices = slave_indices
@@ -958,6 +1111,9 @@ class FaulhaberBus:
             raise ValueError("csp_stall_timeout_ms must be positive")
         self.diagnostic_logger = diagnostic_logger or (
             lambda message: print(f"[EtherCAT] {message}")
+        )
+        self.clear_limit_switch_mappings_for_csp = bool(
+            clear_limit_switch_mappings_for_csp
         )
         self.ignored_csp_drive_ids = {
             int(index) for index in (ignored_csp_drive_indices or [])
@@ -1419,6 +1575,64 @@ class FaulhaberBus:
         print("[EtherCAT] " + message)
         self.diagnostic_logger("CSP_TORQUE_CONFIGURATION " + message)
 
+    @staticmethod
+    def _format_digital_input_configuration(values: dict[str, int]) -> str:
+        device_flags = FaulhaberDrive._decode_flags(
+            values["device_status"], DEVICE_STATUS_FLAGS
+        )
+        return (
+            "lower/upper="
+            f"0x{values['lower_limit_input_mask']:02X}/"
+            f"0x{values['upper_limit_input_mask']:02X},"
+            f"option={values['limit_switch_option']},"
+            f"reference={values['reference_input']},"
+            f"polarity=0x{values['input_polarity']:02X},"
+            "logical/physical="
+            f"0x{values['logical_inputs']:02X}/0x{values['physical_inputs']:02X},"
+            f"device=0x{values['device_status']:08X}[{device_flags}]"
+        )
+
+    def _configure_csp_limit_switch_mappings_locked(self) -> None:
+        """Remove stale hardware-limit mappings before selecting CSP.
+
+        Drives 0-2 use a dedicated reference switch for Homing, while Drive 3
+        uses the fixed relative reference.  None of those reference signals is
+        a bidirectional travel limit.  Persisted mappings at 0x2310:01/:02 can
+        nevertheless assert statusword bit 11 and stop a valid CSP command.
+        """
+
+        changes: List[str] = []
+        for drive in self.drives:
+            if drive.drive_id not in self.required_csp_drive_ids:
+                continue
+            if self.clear_limit_switch_mappings_for_csp:
+                before, after = drive.clear_limit_switch_mappings_for_csp()
+                changes.append(
+                    f"D{drive.drive_id} "
+                    f"{self._format_digital_input_configuration(before)} -> "
+                    f"{self._format_digital_input_configuration(after)}"
+                )
+            else:
+                current = drive.read_digital_input_configuration()
+                changes.append(
+                    f"D{drive.drive_id} preserved "
+                    f"{self._format_digital_input_configuration(current)}"
+                )
+
+        action = (
+            "cleared and verified"
+            if self.clear_limit_switch_mappings_for_csp
+            else "preserved by parameter"
+        )
+        message = (
+            "CSP lower/upper limit-input mappings "
+            f"{action}; Homing reference, polarity and 0x607B/0x607D unchanged; "
+            "no parameter-store command: "
+            + "; ".join(changes)
+        )
+        print("[EtherCAT] " + message)
+        self.diagnostic_logger("CSP_LIMIT_SWITCH_CONFIGURATION " + message)
+
     def _capture_torque_snapshot(self) -> str:
         """Capture actual torque and limits for all drives after a CSP fault."""
 
@@ -1531,8 +1745,10 @@ class FaulhaberBus:
                 raise RuntimeError(f"Expected {len(self.drives)} CSP targets, got {len(initial_targets)}")
 
             # Keep the proven Homing search parameters untouched.  Torque is
-            # raised only at the CSP handoff, then every object is read back
+            # raised only at the CSP handoff.  Stale lower/upper limit-input
+            # mappings are removed after Homing and every write is read back
             # before PDO motion is allowed to start.
+            self._configure_csp_limit_switch_mappings_locked()
             self._configure_csp_torque_limits_locked()
 
             if preserve_homing_hold:
@@ -2035,6 +2251,7 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("pdo_timeout_us", 5_000)
         self.declare_parameter("enable_dc_sync", False)
         self.declare_parameter("csp_torque_limit_per_mille", 1000)
+        self.declare_parameter("clear_limit_switch_mappings_for_csp", True)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
         self.declare_parameter("spur_gear_reference_delta_counts", 50_000)
@@ -2080,6 +2297,9 @@ class RASCLFaulhaberBridge(Node):
         self.enable_dc_sync = bool(self.get_parameter("enable_dc_sync").value)
         self.csp_torque_limit_per_mille = int(
             self.get_parameter("csp_torque_limit_per_mille").value
+        )
+        self.clear_limit_switch_mappings_for_csp = bool(
+            self.get_parameter("clear_limit_switch_mappings_for_csp").value
         )
         self.ignore_spur_gear_in_csp = bool(
             self.get_parameter("ignore_spur_gear_in_csp").value
@@ -2175,6 +2395,9 @@ class RASCLFaulhaberBridge(Node):
             csp_stall_progress_counts=self.csp_stall_progress_counts,
             csp_stall_timeout_ms=self.csp_stall_timeout_ms,
             diagnostic_logger=self.get_logger().warning,
+            clear_limit_switch_mappings_for_csp=(
+                self.clear_limit_switch_mappings_for_csp
+            ),
         )
         self.get_logger().info(
             f"Connecting EtherCAT on {self.interface}; control_mode={self.control_mode}"
@@ -2185,6 +2408,17 @@ class RASCLFaulhaberBridge(Node):
             f"progress<{self.csp_stall_progress_counts} counts for "
             f"{self.csp_stall_timeout_ms} ms"
         )
+        if self.clear_limit_switch_mappings_for_csp:
+            self.get_logger().info(
+                "CSP handoff will clear and verify volatile lower/upper "
+                "limit-input mappings 0x2310:01/:02; Homing reference, input "
+                "polarity and 0x607B/0x607D remain unchanged"
+            )
+        else:
+            self.get_logger().warning(
+                "CSP handoff will preserve 0x2310:01/:02 by parameter; "
+                "a mapped active input may stop otherwise valid motion"
+            )
         if self.ignore_spur_gear_in_csp:
             self.get_logger().warning(
                 "Emergency three-axis fallback: spur_gear_joint (Drive 3) will not Home, "
@@ -2568,10 +2802,23 @@ class RASCLFaulhaberBridge(Node):
                 self._ensure_non_csp_operation("read digital inputs through SDO")
                 results = []
                 for drive in self.bus.drives:
-                    logical, physical, polarity = drive.read_digital_inputs()
+                    values = drive.read_digital_input_configuration()
+                    flags = FaulhaberDrive._decode_flags(
+                        values["device_status"], DEVICE_STATUS_FLAGS
+                    )
                     results.append(
-                        f"Drive {drive.drive_id}: physical=0x{physical:02X}/{physical:08b}, "
-                        f"logical=0x{logical:02X}/{logical:08b}, polarity=0x{polarity:02X}"
+                        f"Drive {drive.drive_id}: "
+                        f"physical=0x{values['physical_inputs']:02X}/"
+                        f"{values['physical_inputs']:08b}, "
+                        f"logical=0x{values['logical_inputs']:02X}/"
+                        f"{values['logical_inputs']:08b}, "
+                        f"polarity=0x{values['input_polarity']:02X}; "
+                        "0x2310 lower/upper/option/reference="
+                        f"0x{values['lower_limit_input_mask']:02X}/"
+                        f"0x{values['upper_limit_input_mask']:02X}/"
+                        f"{values['limit_switch_option']}/"
+                        f"{values['reference_input']}; "
+                        f"0x2324.01=0x{values['device_status']:08X} [{flags}]"
                     )
             response.success = True
             response.message = " | ".join(results)

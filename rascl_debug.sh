@@ -20,6 +20,7 @@ CSP_TORQUE_LIMIT_PER_MILLE="${RASCL_CSP_TORQUE_LIMIT_PER_MILLE:-1000}"
 CSP_STALL_ERROR_COUNTS="${RASCL_CSP_STALL_ERROR_COUNTS:-25000}"
 CSP_STALL_PROGRESS_COUNTS="${RASCL_CSP_STALL_PROGRESS_COUNTS:-100}"
 CSP_STALL_TIMEOUT_MS="${RASCL_CSP_STALL_TIMEOUT_MS:-500}"
+CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP="${RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP:-true}"
 SPUR_GEAR_DIRECTION="${RASCL_SPUR_GEAR_DIRECTION:--1}"
 SPUR_GEAR_HOME_OFFSET_COUNTS="${RASCL_SPUR_GEAR_HOME_OFFSET_COUNTS:-0}"
 SPUR_GEAR_COUNTS_PER_REVOLUTION="${RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION:-1323008}"
@@ -312,18 +313,23 @@ group_homing_bridge() {
     die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_DECELERATION 必须是正整数"
   is_positive_number "$SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S" ||
     die "RASCL_SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S 必须是正数"
+  [[ "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "true" ||
+    "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "false" ]] ||
+    die "RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP 只能是 true 或 false"
   ensure_state_dir
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 0-2 自动 Homing；三轴到位后 Drive 3 相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，并以 Method 37 把到达位置设为 0 counts。"
   echo "Drive 3 参考运动：速度 $SPUR_GEAR_REFERENCE_PROFILE_VELOCITY counts/s，加/减速度 $SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION/$SPUR_GEAR_REFERENCE_PROFILE_DECELERATION，following-error 持续 $SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S s 才中断。"
-  echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；内部限位只读取、不改写。"
+  echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；0x607B/0x607D 软件位置限位只读取、不改写。"
+  echo "CSP 交接会清零并回读验证 Drive 0-3 的 0x2310:01/:02 正/负限位输入映射；Homing 参考输入、极性与软件位置限位保持不变。"
   echo "CSP 停滞诊断：误差 >= $CSP_STALL_ERROR_COUNTS counts 且 $CSP_STALL_TIMEOUT_MS ms 内进展 < $CSP_STALL_PROGRESS_COUNTS counts 时自动抓取驱动快照。"
   echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
   echo "Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1 电流参数不改。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
     csp_torque_limit_per_mille:="$CSP_TORQUE_LIMIT_PER_MILLE" \
+    clear_limit_switch_mappings_for_csp:="$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" \
     drive2_following_error_window_counts:="$DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS" \
     drive2_following_error_timeout_ms:="$DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS" \
     csp_stall_error_counts:="$CSP_STALL_ERROR_COUNTS" \
@@ -508,6 +514,14 @@ group_spur_gear_counts() {
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
     die "Drive 3 counts 已读取，但本次零位参考尚未成功；禁止进入 CSP"
+}
+
+group_input_limit_diagnostics() {
+  load_ros
+  echo "读取 Drive 0-3 输入状态及 0x2310 映射（仅限 CSP 启动前）："
+  read_inputs
+  echo "读取 Drive 2 的 0x607B/0x607D 与 following-error 参数："
+  read_drive2_diagnostics
 }
 
 group_process_check() {
@@ -877,7 +891,7 @@ print_menu() {
     "  1  编译 + 功能测试                                  [T1]" \
     "  2  启动 fake ros2_control（前台持续运行）            [T1]" \
     "  3  Fake 检查 + 规划 + 执行                           [T2]" \
-    "  4  启动实机 Homing bridge（Drive 3 跳过 Home）        [T1]" \
+    "  4  启动实机 Homing bridge                             [T1]" \
     "  5  逐轴 Homing Drive 0、1、2                          [T2]" \
     "  6  home_all（执行 Drive 0-2）                         [T2]" \
     "  7  启动实机 CSP ros2_control（Drive 3 也参与）        [T2]" \
@@ -891,6 +905,7 @@ print_menu() {
     " 15  抓夹 close/open 或 Drive 3 自定义相对 counts      [T3，会运动]" \
     " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
     " 17  查看 Drive 3 当前绝对 counts（Method 37 零位）     [T2/T3，只读]" \
+    " 18  查看输入映射和 Drive 2 保护参数                    [T2，CSP 前只读]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
@@ -916,6 +931,7 @@ run_group() {
     15) group_gripper_action ;;
     16) group_stall_snapshot ;;
     17) group_spur_gear_counts ;;
+    18) group_input_limit_diagnostics ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

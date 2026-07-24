@@ -40,6 +40,15 @@ def generate_launch_description():
             "Symmetric CSP directional torque limit for Drives 0-3; 1000 is rated."
         ),
     )
+    clear_limit_switch_mappings_arg = DeclareLaunchArgument(
+        "clear_limit_switch_mappings_for_csp",
+        default_value="true",
+        description=(
+            "At CSP handoff, clear and verify volatile 0x2310:01/:02 "
+            "lower/upper input mappings while preserving Homing reference, "
+            "polarity, and position limits."
+        ),
+    )
     drive2_following_error_window_arg = DeclareLaunchArgument(
         "drive2_following_error_window_counts",
         default_value="25000",
@@ -148,6 +157,10 @@ def generate_launch_description():
                 "csp_torque_limit_per_mille": ParameterValue(
                     LaunchConfiguration("csp_torque_limit_per_mille"), value_type=int
                 ),
+                "clear_limit_switch_mappings_for_csp": ParameterValue(
+                    LaunchConfiguration("clear_limit_switch_mappings_for_csp"),
+                    value_type=bool,
+                ),
                 "drive2_following_error_window_counts": ParameterValue(
                     LaunchConfiguration("drive2_following_error_window_counts"), value_type=int
                 ),
@@ -215,6 +228,7 @@ def generate_launch_description():
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
             csp_torque_limit_arg,
+            clear_limit_switch_mappings_arg,
             drive2_following_error_window_arg,
             drive2_following_error_timeout_arg,
             csp_stall_error_arg,

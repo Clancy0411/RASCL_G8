@@ -48,7 +48,7 @@ T3：8 → 13 → 14 → 9 → 10
      `+50000 counts`，再用 FAULHABER Homing Method 37 把到达位置设为 `0 counts`。
    - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
      Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
-     `0x607B/0x607D`；不会改写内部行程限位。若 PRE-OP 第一次限位读取出现临时
+     `0x607B/0x607D`；不会改写这两项软件位置限位。若 PRE-OP 第一次读取出现临时
      `WkcError`，bridge 会短重试；仍失败时只警告并继续，组 `6` 会再次读取。
    - CSP 转矩配置不会影响这一阶段的 Homing。组 `7` 交接 CSP 时，Drive 0–3
      可写的正/负方向限制 `0x60E0/0x60E1` 才会设为 `1000`（100% 额定转矩）并
@@ -60,6 +60,8 @@ T3：8 → 13 → 14 → 9 → 10
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
    - 脚本不再要求输入二次确认，选择组 `6` 后立即开始 Home。
+   - 开始时会打印每个 Drive 的输入状态及 `0x2310 lower/upper/option/reference`，
+     用于记录 CSP 修复前的限位输入映射。
    - 先运动 Drive 0–2；全部成功后 Drive 3 执行 `+50000 counts` 参考运动并置零。
    - 必须返回 `success=True`、`CSP handoff armed`，且消息中包含
      `drive3_reference(...delta=50000,...zero=0,method=37)`。
@@ -70,6 +72,11 @@ T3：8 → 13 → 14 → 9 → 10
    - 未看到这两项时禁止进入组 7。
 3. **仍在 T2 选择组 7：启动 CSP ros2_control。**
    - 组 7 必须复用仍在 T1 运行的 bridge，不能另开 bridge。
+   - T1 必须出现 `CSP_LIMIT_SWITCH_CONFIGURATION`。D0–D3 的
+     `lower/upper` 最终都必须是 `0x00/0x00`，且 `device` 不再含
+     `positive_limit_switch` 或 `negative_limit_switch`。bridge 只清除
+     `0x2310:01/:02` 的易失映射；不会改变 Homing 的 `reference`、输入 `polarity`
+     或 `0x607B/0x607D`。回读不符时组 `7` 会拒绝进入 CSP。
    - T1 必须先出现 `CSP directional torque limits verified for this session only`。
      D0–D3 的每项输出格式为 `max/pos/neg 原值 -> 新值`；新值中的 `pos/neg`
      必须是 `1000/1000`。首次修正时 Drive 2 应显示近似
@@ -236,6 +243,20 @@ Drive 2（`lowerarm_joint`）发生的 `statusword=0x3027` 是 CSP following err
 若限位较小，先比较它与故障日志的 `CSP_SNAPSHOT D2(target=...)`，不要直接清除限位。
 新阈值下仍发生 following error，说明实际偏差已超过这条有限保护，应打包日志而不是继续
 增加阈值。
+
+若 `0x2324.01` 同时报告 `positive_limit_switch` 与
+`negative_limit_switch`，而 PDO 目标仍在 `0x607D` 范围内，优先检查输入映射：
+
+```bash
+# T1 组 4 运行后、T2 组 7 之前；只读
+bash ./rascl_debug.sh 18
+```
+
+输出中的 `0x2310 lower/upper` 是物理输入到下/上限位的映射。当前机械臂的三轴传感器
+仅用于 `reference` Homing，不是双向行程限位。因此组 `7` 交接 CSP 时会将
+`0x2310:01/:02` 清零并回读；这一步发生在 Homing 完成之后，不改变自动寻零过程，也
+不写入永久存储。若需只为回退验证保留旧映射，可在组 `4` 前临时设置
+`RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP=false`，正常运行必须使用默认 `true`。
 
 坐标约定：
 
@@ -470,6 +491,7 @@ ros2 daemon start
 ros2 launch rascl_description homing.launch.py \
   interface:=enx3c18a0256deb \
   csp_torque_limit_per_mille:=1000 \
+  clear_limit_switch_mappings_for_csp:=true \
   drive2_following_error_window_counts:=25000 \
   drive2_following_error_timeout_ms:=250 \
   csp_stall_error_counts:=25000 \
@@ -500,8 +522,7 @@ TCP bridge listening on 127.0.0.1:15001
 `T2` 检查输入：
 
 ```bash
-ros2 service call /rascl_faulhaber_bridge/read_digital_inputs \
-  std_srvs/srv/Trigger "{}"
+bash ./rascl_debug.sh 18
 ```
 
 首次或机械结构变化后逐轴执行 Drive 0–2；每轴成功后再继续：
@@ -723,7 +744,8 @@ ss -ltnp | grep 15001
   `CSP_SNAPSHOT`：每个 Drive 的 PDO `target`、`actual`、`error=target-actual`、
   `status` 和 `mode`，均为原始 counts。故障 Drive 还会紧接着记录 `DRIVE_DIAG`：
   `0x2324.01`（软件/硬件限位、转矩/电压/速度限制、温度等状态）、`0x1001`、
-  `0x1003`、位置/速度、`0x6074/0x6077` 转矩需求/实际值、`0x6078` 实际电流、
+  `0x1003`、`0x2310:01/:02/:03/:04/:10` 输入映射、
+  `0x2311:01/:02` 逻辑/物理输入、位置/速度、`0x6074/0x6077` 转矩需求/实际值、`0x6078` 实际电流、
   `0x60F4` 跟随偏差、转矩/速度限值、`0x2329.01/.02/.03` 额定/持续/峰值电流及
   `0x2348.01` 位置环 Kv。快照为只读 SDO，任何单项读取失败都会标为
   `unavailable`，不会覆盖原始 PDO 故障。随后还会记录 `TORQUE_SNAPSHOT`，一次

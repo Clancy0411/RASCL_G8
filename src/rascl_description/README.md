@@ -206,6 +206,11 @@ joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains
 Operation Enabled but stops progressing, the bridge records a staged
 `CSP_STALL_SNAPSHOT`; group `10` prints it automatically on failure and group
 `16` returns the most recent snapshot without opening another EtherCAT client.
+At the Homing-to-CSP handoff, the bridge also clears and verifies volatile
+lower/upper limit-input mappings `0x2310:01/:02` while preserving the Homing
+reference, input polarity, and `0x607B/0x607D`. The launch argument
+`clear_limit_switch_mappings_for_csp` defaults to `true`; use group `18` before
+CSP for a read-only mapping/protection report.
 
 ## Notes
 

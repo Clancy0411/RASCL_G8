@@ -89,6 +89,27 @@ class FakeSlave:
         self.values[(bridge.FOLLOWING_ERROR_TIMEOUT, 0)] = int(48).to_bytes(2, "little")
         self.values[(bridge.ERROR_REGISTER, 0)] = int(0).to_bytes(1, "little")
         self.values[(bridge.PREDEFINED_ERROR_FIELD, 0)] = int(0).to_bytes(1, "little")
+        self.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.LOWER_LIMIT_SWITCH_INPUTS)
+        ] = int(0).to_bytes(1, "little")
+        self.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.UPPER_LIMIT_SWITCH_INPUTS)
+        ] = int(0).to_bytes(1, "little")
+        self.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.LIMIT_SWITCH_OPTION_CODE)
+        ] = int(2).to_bytes(1, "little", signed=True)
+        self.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.REFERENCE_SWITCH_INPUT)
+        ] = int(2).to_bytes(1, "little")
+        self.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.INPUT_POLARITY)
+        ] = int(0).to_bytes(1, "little")
+        self.values[
+            (bridge.DIGITAL_IO_STATUS, bridge.DIGITAL_INPUT_LOGICAL)
+        ] = int(0).to_bytes(1, "little")
+        self.values[
+            (bridge.DIGITAL_IO_STATUS, bridge.DIGITAL_INPUT_PHYSICAL)
+        ] = int(0).to_bytes(1, "little")
         self.values[(bridge.DEVICE_STATUS, 1)] = int(0).to_bytes(4, "little")
         self.values[(bridge.POSITION_DEMAND_VALUE, 0)] = int(0).to_bytes(
             4, "little", signed=True
@@ -136,6 +157,30 @@ class FakeSlave:
             self.values[(bridge.MAX_TORQUE, 0)] = effective_maximum.to_bytes(
                 2, "little"
             )
+        if index == bridge.DIGITAL_INPUT_SETTINGS and subindex in (
+            bridge.LOWER_LIMIT_SWITCH_INPUTS,
+            bridge.UPPER_LIMIT_SWITCH_INPUTS,
+        ):
+            lower = int.from_bytes(
+                self.values[
+                    (bridge.DIGITAL_INPUT_SETTINGS, bridge.LOWER_LIMIT_SWITCH_INPUTS)
+                ],
+                "little",
+            )
+            upper = int.from_bytes(
+                self.values[
+                    (bridge.DIGITAL_INPUT_SETTINGS, bridge.UPPER_LIMIT_SWITCH_INPUTS)
+                ],
+                "little",
+            )
+            if lower == 0 and upper == 0:
+                device_status = int.from_bytes(
+                    self.values[(bridge.DEVICE_STATUS, 1)], "little"
+                )
+                device_status &= ~((1 << 6) | (1 << 7))
+                self.values[(bridge.DEVICE_STATUS, 1)] = device_status.to_bytes(
+                    4, "little"
+                )
 
 
 class FakeMaster:
@@ -520,6 +565,93 @@ class BridgePDOTest(unittest.TestCase):
             bridge.SOFTWARE_POSITION_LIMIT,
             {index for index, _subindex, _payload in slave.writes},
         )
+
+    def test_csp_limit_mapping_fix_preserves_homing_and_position_limits(self):
+        slave = FakeSlave()
+        slave.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.LOWER_LIMIT_SWITCH_INPUTS)
+        ] = int(0x02).to_bytes(1, "little")
+        slave.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.UPPER_LIMIT_SWITCH_INPUTS)
+        ] = int(0x04).to_bytes(1, "little")
+        slave.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.INPUT_POLARITY)
+        ] = int(0x07).to_bytes(1, "little")
+        slave.values[(bridge.DEVICE_STATUS, 1)] = int(
+            (1 << 6) | (1 << 7)
+        ).to_bytes(4, "little")
+        drive = bridge.FaulhaberDrive(
+            slave, drive_id=2, sdo_delay_s=0.0, verbose=False
+        )
+        protected_before = {
+            key: bytes(value)
+            for key, value in slave.values.items()
+            if key[0] in (
+                bridge.POSITION_RANGE_LIMIT,
+                bridge.SOFTWARE_POSITION_LIMIT,
+            )
+        }
+
+        before, after = drive.clear_limit_switch_mappings_for_csp()
+
+        self.assertEqual(before["lower_limit_input_mask"], 0x02)
+        self.assertEqual(before["upper_limit_input_mask"], 0x04)
+        self.assertEqual(after["lower_limit_input_mask"], 0)
+        self.assertEqual(after["upper_limit_input_mask"], 0)
+        self.assertEqual(after["reference_input"], 2)
+        self.assertEqual(after["input_polarity"], 0x07)
+        self.assertEqual(after["limit_switch_option"], 2)
+        self.assertEqual(after["device_status"] & ((1 << 6) | (1 << 7)), 0)
+        self.assertEqual(
+            protected_before,
+            {
+                key: value
+                for key, value in slave.values.items()
+                if key[0] in (
+                    bridge.POSITION_RANGE_LIMIT,
+                    bridge.SOFTWARE_POSITION_LIMIT,
+                )
+            },
+        )
+        self.assertEqual(
+            {
+                (index, subindex, payload)
+                for index, subindex, payload in slave.writes
+            },
+            {
+                (
+                    bridge.DIGITAL_INPUT_SETTINGS,
+                    bridge.LOWER_LIMIT_SWITCH_INPUTS,
+                    b"\x00",
+                ),
+                (
+                    bridge.DIGITAL_INPUT_SETTINGS,
+                    bridge.UPPER_LIMIT_SWITCH_INPUTS,
+                    b"\x00",
+                ),
+            },
+        )
+
+    def test_csp_limit_mapping_fix_can_be_disabled_for_rollback(self):
+        slave = FakeSlave()
+        slave.values[
+            (bridge.DIGITAL_INPUT_SETTINGS, bridge.LOWER_LIMIT_SWITCH_INPUTS)
+        ] = int(0x02).to_bytes(1, "little")
+        bus = make_bus(clear_limit_switch_mappings_for_csp=False)
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, drive_id=0, sdo_delay_s=0.0, verbose=False)
+        ]
+        bus.required_csp_drive_ids = {0}
+
+        bus._configure_csp_limit_switch_mappings_locked()
+
+        self.assertEqual(
+            slave.values[
+                (bridge.DIGITAL_INPUT_SETTINGS, bridge.LOWER_LIMIT_SWITCH_INPUTS)
+            ],
+            b"\x02",
+        )
+        self.assertEqual(slave.writes, [])
 
     def test_csp_torque_limit_is_written_and_read_back(self):
         slave = FakeSlave()
@@ -983,7 +1115,8 @@ class BridgePDOTest(unittest.TestCase):
         self.assertTrue(all(state[2] == bridge.MODE_CYCLIC_SYNC_POSITION for state in states))
 
         bus.set_csp_targets([11, 22, 33, 44])
-        time.sleep(0.01)
+        # Leave enough margin for a scheduling quantum on Windows CI.
+        time.sleep(0.05)
         self.assertEqual([state[0] for state in bus.get_csp_states()], [11, 22, 33, 44])
         self.assertEqual(bus.last_working_counter, bus.master.expected_wkc)
 
@@ -1073,6 +1206,10 @@ class BridgePDOTest(unittest.TestCase):
         self.assertIn("CSP_STALL_DETECTED drives=D1", messages[0])
         self.assertIn("CSP_STALL_SNAPSHOT causes=D1=TORQUE_LIMIT_REPORTED", messages[-1])
         self.assertIn("0x2324.01=0x00004000[torque_limited]", messages[-1])
+        self.assertIn(
+            "input_config(0x2310.01/.02/.03/.04/.10", messages[-1]
+        )
+        self.assertIn("input_state(0x2311.01/.02 logical/physical)", messages[-1])
         self.assertIn(
             "voltage_10mV(0x2325.01-.07", messages[-1]
         )

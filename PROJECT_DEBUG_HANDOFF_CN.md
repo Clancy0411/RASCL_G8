@@ -63,8 +63,10 @@ Cyclic Synchronous Position (CSP) + EtherCAT PDO
 4. 如仍有系统误差，根据多姿态结果判断来源是固定 TCP offset、base frame、连杆几何还是 encoder
    零位问题。
 
-Drive 2 停滞问题目前视为已经解决，后续先忽略，不要主动继续调整它的转矩、限位、
-following-error 或位置环参数。只有同类故障再次真实复现时，才启用现有诊断流程。
+2026-07-24 同类 Drive 2 故障再次复现：`statusword=0x3827`，且
+`0x2324.01` 同时报 `following_error`、`positive_limit_switch` 和
+`negative_limit_switch`。当前修复聚焦 `0x2310:01/:02` 的旧限位输入映射；不要继续
+盲目增大转矩、following-error 或位置环参数。
 
 ## 3. 权威文档与代码位置
 
@@ -380,8 +382,26 @@ Drive 3 0x2329:03:  81 →  540 mA
 
 这些修改仅用于当前上电会话，不保存到永久存储。Drive 0、1 的电机电流参数不改。
 
-当前用户认为 Drive 2 停滞问题已经解决，所以不要继续主动调参。若再次复现，使用现有
-`CSP_STALL_SNAPSHOT` 和打包日志分析，不要先增大阈值。
+2026-07-24 的新日志中，Drive 2 在 PDO 目标仍位于 `0x607D` 范围内时停止：
+
+```text
+statusword=0x3827
+0x2324.01=0x070010FB
+flags=following_error,positive_limit_switch,negative_limit_switch
+target=106497 actual=85204 error=21293 velocity=0
+```
+
+转矩、电流和电压均未饱和。代码现于 Homing 完成、进入 CSP 前读取并清零
+Drive 0–3 的 `0x2310:01/:02` 下/上限位输入映射，再回读确认；`0x2310:04`
+Homing reference、`0x2310:10` polarity 与 `0x607B/0x607D` 保持不变，不执行
+`0x1010` 永久存储。T1 应记录 `CSP_LIMIT_SWITCH_CONFIGURATION`；组 `18` 可在 CSP
+前只读修复前映射。
+
+Git 追溯显示，Homing 代码只设置 `0x2310:04` 的行为来自较早的 commit `d56d695`；
+从已验证基线 `214477ef` 到本次修改前 HEAD 的差异中，也没有任何
+`0x2310`/`REFERENCE_SWITCH_INPUT` 改动。最近队友的 `4708444` 只改了 Drive 3
+参考运动参数与失败处理。因此这是旧的潜在配置缺口；新坐标/路径可能触发它，但不是
+最近队友改动直接引入。
 
 ## 10. TCP 标定历史与当前抓夹中心
 
@@ -552,6 +572,7 @@ bash ./rascl_debug.sh <组号>
 15 CSP 下输入 close/open，或输入任意非零相对 counts 控制 Drive 3
 16 读取最近 CSP_STALL_SNAPSHOT
 17 读取 Drive 3 当前绝对 counts（本次 Method 37 零位）
+18 CSP 前只读 Drive 0–3 输入映射及 Drive 2 保护参数
 ```
 
 脚本不会自动跨终端操作。组 `4` 和组 `7` 是前台持续进程。
@@ -662,7 +683,7 @@ MOTION_RESULT reached=true
 
 ## 16. 故障与日志
 
-Drive 2 问题当前先忽略。只有故障再次复现时才执行：
+Drive 2 出现 following error、`internal_limit_active` 或中途停滞时执行：
 
 ```bash
 bash ./rascl_debug.sh 16
@@ -683,6 +704,7 @@ DRIVE_DIAG
 TORQUE_SNAPSHOT
 CSP_STALL_DETECTED
 CSP_STALL_SNAPSHOT
+CSP_LIMIT_SWITCH_CONFIGURATION
 MOTION_RESULT
 ```
 
@@ -701,7 +723,7 @@ MOTION_RESULT
 11. 修改命令、参数或流程时同步更新唯一中文指南；
 12. 代码默认值应反映最终确认配置，不依赖隐藏的临时脚本覆盖；
 13. 先收集 joint state、raw/PDO 数据和外部实测，再修改运动学；
-14. 当前先验证 TCP，不主动继续调试 Drive 2；
+14. Drive 2 先验证 `0x2310:01/:02` 修复，不盲目继续调大保护参数；
 15. 保留用户现有 Git 修改，不进行无授权的提交、推送或破坏性回滚。
 
 ## 18. 新窗口的第一项工作
@@ -723,5 +745,6 @@ MOTION_RESULT
 本轮 Drive 3 方向反转前的上游基线是 commit 2d5c6d5，TCP 已改为固定抓夹中心。
 组 15 同时支持 close/open 快捷动作和任意非零相对 counts。
 组 17 返回以本次 Drive 3 Method 37 零位为基准的绝对 counts。
-Drive 2 停滞目前视为已经解决，除非复现，否则不再主动调整。
+Drive 2 的 2026-07-24 故障已复现；当前应验证 CSP 交接时
+CSP_LIMIT_SWITCH_CONFIGURATION 的 lower/upper=0x00/0x00 回读。
 ```
