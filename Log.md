@@ -437,3 +437,18 @@ with it: `close/c=-500000 counts` maximum travel and
 `open/o=+200000 counts` exact travel. Direct signed integer group `15` input
 keeps raw encoder semantics, so a positive custom value still increases the
 group `17` `absolute_counts` readback.
+
+## 2026-07-24 Group 15 fixed absolute gripper positions
+
+Real-hardware calibration after Drive 3 Method 37 established
+`close=-122000 counts` and `open=+122000 counts`. Group `15` now accepts only
+`close/c` or `open/o`, converts the live `spur_gear_joint` position back to the
+current Method-37 count coordinate, and generates a 50 Hz minimum-jerk CSP
+trajectory to the selected absolute target. Repeating an action no longer
+accumulates another relative increment. The old `-500000/+200000` relative
+shortcuts, custom signed-count input, and contact-termination detector were
+removed. These calibrated endpoints remain position targets rather than force
+or object-contact sensing. After the one-second settling interval, group `15`
+requires the measured absolute position to be within `500 counts` of the fixed
+target before reporting success. An unreachable target is replaced with the
+measured Drive 3 position before the command returns failure.

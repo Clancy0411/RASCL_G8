@@ -110,52 +110,44 @@ T3：8 → 13 → 14 → 9 → 10
      不要继续发送目标。组 `16` 可再次查看同一快照。
    - 每次执行后规划授权自动清除；下一个坐标必须重新执行 `14 → 9 → 10`。
 
-### Drive 3 / gripper 的收放与自定义 counts
+### Drive 3 / gripper 的固定绝对开合位置
 
-完成 Drive 0–2 Home 和组 `7` 后，在 T3 运行组 `15`。可以输入 ASCII 快捷动作，也可以
-直接输入任意非零的有符号整数 counts：
+完成 Drive 0–2 Home、Drive 3 Method 37 置零和组 `7` 后，在 T3 运行组 `15`。只接受
+ASCII 开合动作：
 
 ```text
-close 或 c = 最多从当前位置相对 -500000 counts；夹住物体后提前停止并保持
-open  或 o = 从当前位置固定相对 +200000 counts；要求完整到位
-+2000       = 从当前位置正向增加 2000 counts
--500000     = 从当前位置反向减少 500000 counts
+close 或 c = 运动到绝对 -122000 counts
+open  或 o = 运动到绝对 +122000 counts
 ```
 
-Drive 3 的绝对 counts 以本次 Method 37 零位为基准；组 `15` 的数值输入仍是相对当前位置
-的增量。它的 URDF、ros2_control、运动学和脚本预检限位统一为 `[-2*pi,+2*pi]`；越界
-目标仍会被拒绝。只有 `close` 是接触
-感知快捷动作：若命令与反馈的误差达到默认 `2000 counts`，并且连续 `0.10 s` 内
-编码器进度不超过 `100 counts`，脚本才会在驱动器置位 following error 前把目标收回到
-实测位置，记录 `SPUR_CONTACT`，然后将这次夹持接触视为成功。近似静止条件可防止
-minimum-jerk 正常跟踪滞后被误判为接触。它的 `-500000 counts` 是最大闭合
-行程，不保证走满。`open` 固定精确运动 `+200000 counts`，不启用接触提前终止；直接
-输入的有符号 counts 同样是精确相对运动。精确目标不可达时仍会失败。
+Drive 3 的绝对 counts 以本次 Method 37 零位为基准。组 `15` 会从实时 joint state 换算
+当前 counts，再规划到固定目标，因此重复执行同一动作不会累计行程。任意整数相对 counts
+输入和旧的接触提前终止逻辑均已移除。URDF、ros2_control、运动学和脚本预检限位仍统一为
+`[-2*pi,+2*pi]`，越界目标仍会被拒绝。稳定后实际位置必须在目标默认 `±500 counts`
+范围内，否则脚本先保持实测位置，再让组 `15` 返回失败。
 
 脚本以 50 Hz minimum-jerk CSP 轨迹平滑发送，前三轴使用刚读到的 `/joint_states`
 保持不动。默认平均速度为
-`10000 counts/s`，运动时间根据 counts 自动计算；`close` 最长约 50 秒、`open`
-约 20 秒，
-`500000 counts` 约 50 秒，不再单独询问运动时间。
+`10000 counts/s`，运动时间根据当前位置到固定目标的差值自动计算。从零位到任一目标约
+12.2 秒，从 `+122000` 到 `-122000`（或反向）约 24.4 秒，不再单独询问运动时间。
 组 `15` 的预检查和实际运动节点都会等待最多 5 秒取得完整 `/joint_states`，避免新建
 DDS 节点时 1 秒发现窗口过短；仍未收到反馈才禁止运动。可通过
 `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S` 有意覆盖该超时。每次组 `15` 会等待运动和
 1 秒稳定期结束后才返回。
 
-任意一次相对运动后，在 T3 执行组 `17`：
+任意一次开合运动后，可在 T3 执行组 `17`：
 
 ```bash
 bash ./rascl_debug.sh 17
 ```
 
-输出中的 `absolute_counts` 是相对本次 Drive 3 零位的驱动器实际位置，可直接记录为候选
-打开/闭合位置。组 `17` 只读且可在 CSP 中使用。当前 `close` 曾造成 gripper 机械损坏；
-在新的绝对打开/闭合位置和 Drive 3 转矩上限完成标定前，只使用小步自定义 counts 测试，
-不要再次使用 `close/c`。
+输出中的 `absolute_counts` 应分别接近 `-122000` 或 `+122000`。组 `17` 只读且可在 CSP
+中使用。固定位置控制不是力控制或物体检测；只可用于已经标定的夹持条件，出现机械阻挡、
+异常声音或位置无法跟随时立即停止。
 
-每次组 `15` 会在 ROS 日志中写入 `SPUR_TRACE`：相对 counts、源/目标估算 raw counts、
-每秒实际位置和剩余 counts、完成时误差及最终 `SPUR_RESULT`。快捷动作检测到接触时
-还会写入 `SPUR_CONTACT`。组 `12` 打包的日志包含这些记录；若再次故障，同时会有
+每次组 `15` 会在 ROS 日志中写入 `SPUR_TRACE mode=absolute`：源/固定目标 counts、
+每秒实际位置和剩余 counts、完成时误差及最终 `SPUR_RESULT`。组 `12` 打包的日志包含
+这些记录；若再次故障，同时会有
 bridge 的 `CSP_SNAPSHOT D3(target=...,actual=...,error=...,status=...)`。
 
 组 `15` 只能在组 `7` 的 controller 都为 `active`、且 `wp3_tsk1` 没有执行时使用。
@@ -314,7 +306,7 @@ bash ./rascl_debug.sh
 | 11 / 12 | 任意 | 进程检查 / 打包完整 ROS 日志 |
 | 13 | T3 | CSP 启动后查看实时模型 TCP |
 | 14 | T3 | 设置目标 TCP 和运动时间，不运动 |
-| 15 | T3 | 输入 `close`/`open`，或输入任意非零相对 counts 控制 Drive 3 |
+| 15 | T3 | 输入 `close`/`open`，到达绝对 `-122000/+122000 counts` |
 | 16 | T3 | 查看最近一次 CSP 停滞自动诊断快照 |
 | 17 | T2/T3 | 只读 Drive 3 当前绝对 counts（本次 Method 37 零位） |
 
@@ -780,8 +772,8 @@ source install/local_setup.bash
 4. Drive 0–2 连续交接；Drive 3 完成固定参考与 Method 37 置零后进入 CSP。
 5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动；Drive 3 无 PDO 故障。
 6. 20 ms PDO 循环无 WKC/following error，运动结束有 `MOTION_RESULT reached=true`。
-7. Drive 3 的组 `15` 小步自定义相对 counts 可在 CSP 中执行，组 `17` 能读回绝对
-   counts，且随后 Task 1 保持该角度；在重新标定前不验收 `close/c`。
+7. Drive 3 的组 `15` 可到达绝对 `-122000/+122000 counts`，组 `17` 能读回对应绝对
+   counts，且随后 Task 1 保持该角度。
 8. Home 附近 12 秒 minimum-jerk 小轨迹成功。
 
 ## 12. 参数速查

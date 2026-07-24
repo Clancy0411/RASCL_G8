@@ -250,31 +250,21 @@ ros2 service call /rascl_faulhaber_bridge/read_spur_gear_counts \
   std_srvs/srv/Trigger "{}"
 ```
 
-`rascl_debug.sh` group `17` wraps that read-only service. Group `15` retains
-relative Drive 3 commands: it accepts one
-ASCII gripper action: `close` (or `c`) requests up to `-500000` counts, while
-`open` (or `o`) requests an exact `+200000`-count relative move. Only `close`
-monitors command/feedback lag. Object contact requires the default lag to reach
-`2000 counts` while encoder progress remains at or below `100 counts` for
-`0.10 s`. Requiring the encoder to be nearly stationary prevents ordinary
-minimum-jerk tracking lag from becoming a false contact. The command is then
-replaced with the measured Drive 3 position before the drive's following-error
-window is reached, and `SPUR_CONTACT`/`SPUR_RESULT` are logged. `open` and a signed non-zero
-integer request exact relative Drive 3 increments and do not use contact
-termination. Each command starts
-from the current joint state, uses the configured direction and counts per
-revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
-active position controller while holding the three arm joints at their current
-positions. At the default 10000 counts/s, group `15` derives the duration from
-the requested increment and records `SPUR_TRACE` feedback
-in the ROS log. Direct signed integer input remains a raw encoder-count
-increment: positive input increases the group `17` `absolute_counts` value even
-though the encoder-to-URDF direction is now `-1`. The Drive 3 project-side position limit is
+`rascl_debug.sh` group `17` wraps that read-only service. Group `15` accepts
+only `close/c` and `open/o`. In the current Method-37 coordinate, `close` moves
+to the fixed absolute position `-122000` counts and `open` moves to `+122000`
+counts. The script converts the live joint state back to current counts and
+publishes a 50 Hz minimum-jerk CSP trajectory to the fixed target while holding
+the three arm joints. Repeating the same action does not accumulate another
+increment, and direct signed-count input is disabled. At the default 10000
+counts/s, moving from zero to either target takes about 12.2 s and moving between
+the two targets takes about 24.4 s. `SPUR_TRACE mode=absolute` records the live
+and target counts. The Drive 3 project-side position limit is
 `[-2*pi,+2*pi]` rad in the physical URDF, ros2_control parameters, kinematics,
 and script precheck. This does not overwrite drive-side `0x607B/0x607D`.
-Because the force-based `close` action previously damaged a gripper, use small
-signed relative increments plus group `17` while determining calibrated open
-and closed absolute counts; do not use `close/c` during that calibration.
+These fixed positions do not provide force or contact detection and must only be
+used with the calibrated gripper/object condition. After settling, group `15`
+requires the measured absolute position to be within `500` counts of the target.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search for Drives 0--2. Drive 3 writes its zero Homing
