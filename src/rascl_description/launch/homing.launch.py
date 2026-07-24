@@ -87,7 +87,7 @@ def generate_launch_description():
     )
     spur_reference_timeout_arg = DeclareLaunchArgument(
         "spur_gear_reference_timeout_s",
-        default_value="15.0",
+        default_value="30.0",
         description="Timeout for the Drive 3 reference move and current-position zeroing.",
     )
     spur_reference_tolerance_arg = DeclareLaunchArgument(
@@ -97,18 +97,26 @@ def generate_launch_description():
     )
     spur_reference_velocity_arg = DeclareLaunchArgument(
         "spur_gear_reference_profile_velocity",
-        default_value="10000",
+        default_value="3000",
         description="Profile Position velocity for the Drive 3 reference move [counts/s].",
     )
     spur_reference_acceleration_arg = DeclareLaunchArgument(
         "spur_gear_reference_profile_acceleration",
-        default_value="10000",
+        default_value="1000",
         description="Profile Position acceleration for the Drive 3 reference move.",
     )
     spur_reference_deceleration_arg = DeclareLaunchArgument(
         "spur_gear_reference_profile_deceleration",
-        default_value="10000",
+        default_value="1000",
         description="Profile Position deceleration for the Drive 3 reference move.",
+    )
+    spur_reference_following_error_confirm_arg = DeclareLaunchArgument(
+        "spur_gear_reference_following_error_confirm_s",
+        default_value="0.30",
+        description=(
+            "Time a Drive 3 following-error indication must remain active before the "
+            "reference move is rejected."
+        ),
     )
 
     bridge_node = Node(
@@ -179,6 +187,10 @@ def generate_launch_description():
                 "spur_gear_reference_profile_deceleration": ParameterValue(
                     LaunchConfiguration("spur_gear_reference_profile_deceleration"), value_type=int
                 ),
+                "spur_gear_reference_following_error_confirm_s": ParameterValue(
+                    LaunchConfiguration("spur_gear_reference_following_error_confirm_s"),
+                    value_type=float,
+                ),
                 "homing_methods": [28, 28, 24, 24],
                 "reference_inputs": [2, 2, 2, 1],
                 "homing_offsets": [0, 0, 0, 0],
@@ -216,6 +228,7 @@ def generate_launch_description():
             spur_reference_velocity_arg,
             spur_reference_acceleration_arg,
             spur_reference_deceleration_arg,
+            spur_reference_following_error_confirm_arg,
             bridge_node,
         ]
     )

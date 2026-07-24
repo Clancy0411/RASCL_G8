@@ -234,15 +234,22 @@ ignore_spur_gear_in_csp = false
 homing_methods = [28,28,24,24]
 reference_inputs = [2,2,2,1]
 spur_gear_reference_delta_counts = +50000
-spur_gear_reference_timeout_s = 15.0
+spur_gear_reference_timeout_s = 30.0
 spur_gear_reference_tolerance_counts = 100
+spur_gear_reference_profile_velocity = 3000 counts/s
+spur_gear_reference_profile_acceleration = 1000
+spur_gear_reference_profile_deceleration = 1000
+spur_gear_reference_following_error_confirm_s = 0.30
 drive 0x607C = [0,0,0,0]
 ```
 
 这里的 `skip_spur_gear_homing=true` 只表示 Drive 3 不进行传感器寻零；它仍必须执行固定
 相对运动和 Method 37 当前位置置零。参考运动必须在 `+50000 counts` 终点误差不超过
 `100 counts` 后才允许置零；置零回读必须接近 `0 counts`，否则 `home_all` 失败且 CSP
-handoff 被拒绝。
+handoff 被拒绝。参考速度已由 `10000` 降到 `3000 counts/s`，加减速度由 `10000`
+降到 `1000`，用于减小 Profile Position 的瞬时跟随滞后。单次 following-error 不再立即
+打断流程；只有状态连续保持 `0.30 s` 才判定为持续错误。持续错误或超时会先 Disable
+Drive 3，再返回失败；不得通过跳过该失败来强制执行 Method 37。
 
 自动 Home 后名义 joint state：
 

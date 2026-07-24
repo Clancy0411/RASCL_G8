@@ -476,10 +476,18 @@ ros2 launch rascl_description homing.launch.py \
   csp_stall_progress_counts:=100 \
   csp_stall_timeout_ms:=500 \
   spur_gear_reference_delta_counts:=50000 \
-  spur_gear_reference_timeout_s:=15.0 \
+  spur_gear_reference_timeout_s:=30.0 \
   spur_gear_reference_tolerance_counts:=100 \
+  spur_gear_reference_profile_velocity:=3000 \
+  spur_gear_reference_profile_acceleration:=1000 \
+  spur_gear_reference_profile_deceleration:=1000 \
+  spur_gear_reference_following_error_confirm_s:=0.30 \
   skip_spur_gear_homing:=true
 ```
+
+Drive 3 的 `+50000 counts` 参考运动约需 20 秒。短于 `0.30 s` 的 following-error
+仅记录并继续等待恢复；持续错误仍会停止 Drive 3 并使 `home_all` 失败。不要通过增大
+确认时间或跳过失败来绕过机械卡滞。
 
 应看到：
 

@@ -238,6 +238,66 @@ class BridgePDOTest(unittest.TestCase):
         self.assertEqual((source, target, actual), (120_000, 170_000, 169_950))
         move_absolute.assert_called_once_with(170_000)
 
+    def test_drive3_reference_allows_a_transient_following_error(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=3, sdo_delay_s=0.0, verbose=False
+        )
+        following_status = (
+            bridge.STATUS_OPERATION_ENABLED_STATE
+            | bridge.STATUS_FOLLOWING_OR_HOMING_ERROR
+        )
+        reached_status = (
+            bridge.STATUS_OPERATION_ENABLED_STATE
+            | bridge.STATUS_TARGET_REACHED
+        )
+        with (
+            mock.patch.object(
+                drive,
+                "read_actual_position_counts",
+                side_effect=[120_000, 140_000, 170_000],
+            ),
+            mock.patch.object(
+                drive,
+                "read_status",
+                side_effect=[following_status, following_status, reached_status],
+            ),
+            mock.patch.object(drive, "move_absolute_counts") as move_absolute,
+        ):
+            source, target, actual = drive.move_relative_counts_and_wait(
+                50_000,
+                timeout_s=1.0,
+                tolerance_counts=100,
+                following_error_confirm_s=0.30,
+            )
+
+        self.assertEqual((source, target, actual), (120_000, 170_000, 170_000))
+        move_absolute.assert_called_once_with(170_000)
+
+    def test_drive3_reference_rejects_a_persistent_following_error(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=3, sdo_delay_s=0.0, verbose=False
+        )
+        following_status = (
+            bridge.STATUS_OPERATION_ENABLED_STATE
+            | bridge.STATUS_FOLLOWING_OR_HOMING_ERROR
+        )
+        with (
+            mock.patch.object(
+                drive,
+                "read_actual_position_counts",
+                side_effect=[120_000, 130_000, 130_100],
+            ),
+            mock.patch.object(drive, "read_status", return_value=following_status),
+            mock.patch.object(drive, "move_absolute_counts"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "following error persisted"):
+                drive.move_relative_counts_and_wait(
+                    50_000,
+                    timeout_s=1.0,
+                    tolerance_counts=100,
+                    following_error_confirm_s=0.01,
+                )
+
     def test_homing_method_37_sets_current_drive_position_to_zero(self):
         slave = FakeSlave()
         drive = bridge.FaulhaberDrive(
@@ -300,11 +360,12 @@ class BridgePDOTest(unittest.TestCase):
         node.ignore_spur_gear_in_csp = False
         node.skip_spur_gear_homing = True
         node.spur_gear_reference_delta_counts = 50_000
-        node.spur_gear_reference_timeout_s = 15.0
+        node.spur_gear_reference_timeout_s = 30.0
         node.spur_gear_reference_tolerance_counts = 100
-        node.spur_gear_reference_profile_velocity = 10_000
-        node.spur_gear_reference_profile_acceleration = 10_000
-        node.spur_gear_reference_profile_deceleration = 10_000
+        node.spur_gear_reference_profile_velocity = 3_000
+        node.spur_gear_reference_profile_acceleration = 1_000
+        node.spur_gear_reference_profile_deceleration = 1_000
+        node.spur_gear_reference_following_error_confirm_s = 0.30
         node.spur_gear_reference_complete = False
         node.spur_gear_reference_source_counts = None
         node.spur_gear_reference_target_counts = None
@@ -316,15 +377,45 @@ class BridgePDOTest(unittest.TestCase):
         message = node._reference_spur_gear_after_arm_homing()
 
         drive.enable_operation.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
-        drive.configure_profile_motion.assert_called_once_with(10_000, 10_000, 10_000)
+        drive.configure_profile_motion.assert_called_once_with(3_000, 1_000, 1_000)
         drive.move_relative_counts_and_wait.assert_called_once_with(
-            50_000, 15.0, 100
+            50_000, 30.0, 100, 0.30
         )
-        drive.home_current_position.assert_called_once_with(15.0, 10)
+        drive.home_current_position.assert_called_once_with(30.0, 10)
         self.assertTrue(node.spur_gear_reference_complete)
         self.assertEqual(node.spur_gear_reference_pre_zero_counts, 169_975)
         self.assertEqual(node.spur_gear_reference_zero_readback, 0)
         self.assertIn("delta=50000", message)
+
+    def test_node_drive3_reference_failure_disables_drive(self):
+        drive = mock.Mock()
+        drive.move_relative_counts_and_wait.side_effect = RuntimeError(
+            "following error persisted"
+        )
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            homing_complete=True,
+            drives=[mock.Mock(), mock.Mock(), mock.Mock(), drive],
+        )
+        node.ignore_spur_gear_in_csp = False
+        node.skip_spur_gear_homing = True
+        node.spur_gear_reference_delta_counts = 50_000
+        node.spur_gear_reference_timeout_s = 30.0
+        node.spur_gear_reference_tolerance_counts = 100
+        node.spur_gear_reference_profile_velocity = 3_000
+        node.spur_gear_reference_profile_acceleration = 1_000
+        node.spur_gear_reference_profile_deceleration = 1_000
+        node.spur_gear_reference_following_error_confirm_s = 0.30
+        node.spur_gear_reference_complete = False
+        logger = mock.Mock()
+        node.get_logger = lambda: logger
+
+        with self.assertRaisesRegex(RuntimeError, "following error persisted"):
+            node._reference_spur_gear_after_arm_homing()
+
+        drive.disable_operation.assert_called_once_with()
+        drive.home_current_position.assert_not_called()
+        self.assertFalse(node.spur_gear_reference_complete)
 
     def test_homing_csp_rejects_handoff_until_drive3_reference_is_complete(self):
         node = object.__new__(bridge.RASCLFaulhaberBridge)

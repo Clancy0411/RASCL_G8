@@ -345,6 +345,7 @@ class FaulhaberDrive:
         delta_counts: int,
         timeout_s: float,
         tolerance_counts: int = 100,
+        following_error_confirm_s: float = 0.0,
     ) -> Tuple[int, int, int]:
         """Execute and verify one Profile Position move relative to live feedback."""
 
@@ -354,6 +355,8 @@ class FaulhaberDrive:
             raise ValueError("Motion timeout must be positive")
         if tolerance_counts < 0:
             raise ValueError("Position tolerance must be non-negative")
+        if following_error_confirm_s < 0.0:
+            raise ValueError("Following-error confirmation time must be non-negative")
 
         source_counts = self.read_actual_position_counts()
         target_counts = source_counts + int(delta_counts)
@@ -361,7 +364,9 @@ class FaulhaberDrive:
         deadline = time.monotonic() + timeout_s
         actual_counts = source_counts
         status = self.read_status()
+        following_error_since: Optional[float] = None
         while time.monotonic() < deadline:
+            now = time.monotonic()
             status = self.read_status()
             actual_counts = self.read_actual_position_counts()
             if status & STATUS_FAULT:
@@ -370,11 +375,34 @@ class FaulhaberDrive:
                     f"statusword=0x{status:04X}"
                 )
             if status & STATUS_FOLLOWING_OR_HOMING_ERROR:
-                raise RuntimeError(
-                    f"Drive {self.drive_id}: following error during relative motion; "
-                    f"statusword=0x{status:04X}"
-                )
-            if (
+                if following_error_since is None:
+                    following_error_since = now
+                    if self.verbose and following_error_confirm_s > 0.0:
+                        print(
+                            f"[Drive {self.drive_id}] transient following error; "
+                            f"waiting up to {following_error_confirm_s:.2f} s for recovery "
+                            f"(target={target_counts}, actual={actual_counts})"
+                        )
+                if (
+                    following_error_confirm_s <= 0.0
+                    or now - following_error_since >= following_error_confirm_s
+                ):
+                    raise RuntimeError(
+                        f"Drive {self.drive_id}: following error persisted for "
+                        f"{now - following_error_since:.3f} s during relative motion; "
+                        f"source={source_counts} target={target_counts} "
+                        f"actual={actual_counts} error={target_counts - actual_counts} "
+                        f"statusword=0x{status:04X}"
+                    )
+            else:
+                if following_error_since is not None and self.verbose:
+                    print(
+                        f"[Drive {self.drive_id}] transient following error cleared; "
+                        f"target={target_counts}, actual={actual_counts}"
+                    )
+                following_error_since = None
+
+            if following_error_since is None and (
                 status & STATUS_TARGET_REACHED
                 and abs(actual_counts - target_counts) <= tolerance_counts
             ):
@@ -2010,11 +2038,12 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
         self.declare_parameter("spur_gear_reference_delta_counts", 50_000)
-        self.declare_parameter("spur_gear_reference_timeout_s", 15.0)
+        self.declare_parameter("spur_gear_reference_timeout_s", 30.0)
         self.declare_parameter("spur_gear_reference_tolerance_counts", 100)
-        self.declare_parameter("spur_gear_reference_profile_velocity", 10_000)
-        self.declare_parameter("spur_gear_reference_profile_acceleration", 10_000)
-        self.declare_parameter("spur_gear_reference_profile_deceleration", 10_000)
+        self.declare_parameter("spur_gear_reference_profile_velocity", 3_000)
+        self.declare_parameter("spur_gear_reference_profile_acceleration", 1_000)
+        self.declare_parameter("spur_gear_reference_profile_deceleration", 1_000)
+        self.declare_parameter("spur_gear_reference_following_error_confirm_s", 0.30)
         # Drive 2's factory 32-count / 48-ms monitor is far below the normal
         # compliant motion lag of this 196:1 arm axis. Keep a finite, axis-
         # local monitor for CSP instead of disabling following-error detection.
@@ -2076,6 +2105,9 @@ class RASCLFaulhaberBridge(Node):
         self.spur_gear_reference_profile_deceleration = int(
             self.get_parameter("spur_gear_reference_profile_deceleration").value
         )
+        self.spur_gear_reference_following_error_confirm_s = float(
+            self.get_parameter("spur_gear_reference_following_error_confirm_s").value
+        )
         if self.spur_gear_reference_delta_counts == 0:
             raise ValueError("spur_gear_reference_delta_counts must be non-zero")
         if self.spur_gear_reference_timeout_s <= 0.0:
@@ -2088,6 +2120,10 @@ class RASCLFaulhaberBridge(Node):
             self.spur_gear_reference_profile_deceleration,
         ) <= 0:
             raise ValueError("Drive 3 reference profile parameters must be positive")
+        if self.spur_gear_reference_following_error_confirm_s <= 0.0:
+            raise ValueError(
+                "spur_gear_reference_following_error_confirm_s must be positive"
+            )
         self.drive2_following_error_window_counts = int(
             self.get_parameter("drive2_following_error_window_counts").value
         )
@@ -2331,15 +2367,28 @@ class RASCLFaulhaberBridge(Node):
             self.spur_gear_reference_profile_acceleration,
             self.spur_gear_reference_profile_deceleration,
         )
-        source, target, actual = drive.move_relative_counts_and_wait(
-            self.spur_gear_reference_delta_counts,
-            self.spur_gear_reference_timeout_s,
-            self.spur_gear_reference_tolerance_counts,
-        )
-        zero = drive.home_current_position(
-            self.spur_gear_reference_timeout_s,
-            min(self.spur_gear_reference_tolerance_counts, 10),
-        )
+        try:
+            source, target, actual = drive.move_relative_counts_and_wait(
+                self.spur_gear_reference_delta_counts,
+                self.spur_gear_reference_timeout_s,
+                self.spur_gear_reference_tolerance_counts,
+                self.spur_gear_reference_following_error_confirm_s,
+            )
+            zero = drive.home_current_position(
+                self.spur_gear_reference_timeout_s,
+                min(self.spur_gear_reference_tolerance_counts, 10),
+            )
+        except Exception:
+            # A failed Profile Position or Method 37 command may otherwise keep
+            # Drive 3 enabled after the service returns. Stop it before rejecting
+            # the Home sequence.
+            try:
+                drive.disable_operation()
+            except Exception as stop_exc:
+                self.get_logger().error(
+                    f"Drive 3 reference failed and Disable Voltage also failed: {stop_exc}"
+                )
+            raise
         self.spur_gear_reference_source_counts = source
         self.spur_gear_reference_target_counts = target
         self.spur_gear_reference_pre_zero_counts = actual

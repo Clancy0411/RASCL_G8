@@ -135,6 +135,12 @@ within `100` counts and the zero readback succeeds. Keep
 `ignore_spur_gear_in_csp:=false`; its `true` setting is only an emergency
 three-axis fallback when Drive 3 has a hardware fault.
 
+The Drive 3 reference profile defaults to `3000` counts/s with `1000`
+counts/s² acceleration/deceleration and a `30 s` timeout. A following-error
+indication must persist for `0.30 s` before the reference is rejected; a brief
+indication that clears is logged and does not skip Method 37. A persistent
+error disables Drive 3 before `home_all` returns failure.
+
 Validate Drives 0–2 with `home_one`, or call `home_all` once. Keep the Homing
 launch running until the complete CSP session has ended. For a gravity-loaded
 arm, stopping it between Homing and CSP removes drive voltage.

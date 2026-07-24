@@ -11,6 +11,7 @@ LAUNCH_FILES = (
     PACKAGE_ROOT / "launch" / "ros2_control.launch.py",
 )
 ROS2_CONTROL_LAUNCH = PACKAGE_ROOT / "launch" / "ros2_control.launch.py"
+HOMING_LAUNCH = PACKAGE_ROOT / "launch" / "homing.launch.py"
 ROBOT_URDF = PACKAGE_ROOT / "urdf" / "rascl.urdf"
 
 
@@ -79,3 +80,34 @@ def test_spur_gear_direction_defaults_are_consistently_reversed():
     )
     assert launch_default == "-1"
     assert urdf_default == "-1"
+
+
+def test_drive3_reference_profile_defaults_limit_transient_lag():
+    tree = ast.parse(
+        HOMING_LAUNCH.read_text(encoding="utf-8"),
+        filename=str(HOMING_LAUNCH),
+    )
+    defaults = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "DeclareLaunchArgument":
+            continue
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        default = next(
+            (
+                keyword.value.value
+                for keyword in node.keywords
+                if keyword.arg == "default_value"
+                and isinstance(keyword.value, ast.Constant)
+            ),
+            None,
+        )
+        defaults[node.args[0].value] = default
+
+    assert defaults["spur_gear_reference_timeout_s"] == "30.0"
+    assert defaults["spur_gear_reference_profile_velocity"] == "3000"
+    assert defaults["spur_gear_reference_profile_acceleration"] == "1000"
+    assert defaults["spur_gear_reference_profile_deceleration"] == "1000"
+    assert defaults["spur_gear_reference_following_error_confirm_s"] == "0.30"
