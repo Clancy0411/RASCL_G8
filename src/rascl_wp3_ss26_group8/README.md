@@ -47,7 +47,7 @@ base_link TCP = [0.29318978, -0.03580108, 0.07181469] m
 ```
 
 The reference-switch pose is physically different. With nominal
-`direction=[+1,+1,+1,+1]` and `home_offset_counts=[0,-802816,-802816,0]`, it is represented as
+`direction=[+1,+1,+1,-1]` and `home_offset_counts=[0,-802816,-802816,0]`, it is represented as
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text

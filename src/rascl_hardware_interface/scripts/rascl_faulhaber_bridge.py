@@ -2009,7 +2009,7 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("csp_torque_limit_per_mille", 1000)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
-        self.declare_parameter("spur_gear_reference_delta_counts", -50_000)
+        self.declare_parameter("spur_gear_reference_delta_counts", 50_000)
         self.declare_parameter("spur_gear_reference_timeout_s", 15.0)
         self.declare_parameter("spur_gear_reference_tolerance_counts", 100)
         self.declare_parameter("spur_gear_reference_profile_velocity", 10_000)

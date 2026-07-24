@@ -128,7 +128,7 @@ ros2 launch rascl_description homing.launch.py interface:=robot_interface
 The launch defaults to three-axis Homing plus four-axis CSP:
 `skip_spur_gear_homing:=true` means `home_all` homes only Drives 0–2. The
 pre-installed Drive 3 (`spur_gear_joint`) does not run a sensor reference
-search. After Drives 0–2 have homed, it instead moves exactly `-50000` counts
+search. After Drives 0–2 have homed, it instead moves exactly `+50000` counts
 from live feedback, then uses FAULHABER Homing Method 37 to make that reached
 position `0` counts. CSP handoff is rejected unless the move reaches its target
 within `100` counts and the zero readback succeeds. Keep
@@ -246,8 +246,8 @@ ros2 service call /rascl_faulhaber_bridge/read_spur_gear_counts \
 
 `rascl_debug.sh` group `17` wraps that read-only service. Group `15` retains
 relative Drive 3 commands: it accepts one
-ASCII gripper action: `close` (or `c`) requests up to `+500000` counts, while
-`open` (or `o`) requests an exact `-200000`-count relative move. Only `close`
+ASCII gripper action: `close` (or `c`) requests up to `-500000` counts, while
+`open` (or `o`) requests an exact `+200000`-count relative move. Only `close`
 monitors command/feedback lag. Object contact requires the default lag to reach
 `2000 counts` while encoder progress remains at or below `100 counts` for
 `0.10 s`. Requiring the encoder to be nearly stationary prevents ordinary
@@ -261,7 +261,9 @@ revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
 positions. At the default 10000 counts/s, group `15` derives the duration from
 the requested increment and records `SPUR_TRACE` feedback
-in the ROS log. The Drive 3 project-side position limit is
+in the ROS log. Direct signed integer input remains a raw encoder-count
+increment: positive input increases the group `17` `absolute_counts` value even
+though the encoder-to-URDF direction is now `-1`. The Drive 3 project-side position limit is
 `[-2*pi,+2*pi]` rad in the physical URDF, ros2_control parameters, kinematics,
 and script precheck. This does not overwrite drive-side `0x607B/0x607D`.
 Because the force-based `close` action previously damaged a gripper, use small

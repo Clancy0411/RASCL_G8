@@ -82,7 +82,7 @@ def generate_launch_description():
     )
     spur_reference_delta_arg = DeclareLaunchArgument(
         "spur_gear_reference_delta_counts",
-        default_value="-50000",
+        default_value="50000",
         description="Drive 3 relative move after Drives 0-2 Home and before Method 37 zeroing.",
     )
     spur_reference_timeout_arg = DeclareLaunchArgument(
@@ -93,7 +93,7 @@ def generate_launch_description():
     spur_reference_tolerance_arg = DeclareLaunchArgument(
         "spur_gear_reference_tolerance_counts",
         default_value="100",
-        description="Allowed endpoint error for the Drive 3 -50000-count reference move.",
+        description="Allowed endpoint error for the Drive 3 reference move.",
     )
     spur_reference_velocity_arg = DeclareLaunchArgument(
         "spur_gear_reference_profile_velocity",

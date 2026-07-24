@@ -219,7 +219,7 @@ class BridgePDOTest(unittest.TestCase):
             mock.patch.object(
                 drive,
                 "read_actual_position_counts",
-                side_effect=[120_000, 70_050],
+                side_effect=[120_000, 169_950],
             ),
             mock.patch.object(
                 drive,
@@ -232,11 +232,11 @@ class BridgePDOTest(unittest.TestCase):
             mock.patch.object(drive, "move_absolute_counts") as move_absolute,
         ):
             source, target, actual = drive.move_relative_counts_and_wait(
-                -50_000, timeout_s=1.0, tolerance_counts=100
+                50_000, timeout_s=1.0, tolerance_counts=100
             )
 
-        self.assertEqual((source, target, actual), (120_000, 70_000, 70_050))
-        move_absolute.assert_called_once_with(70_000)
+        self.assertEqual((source, target, actual), (120_000, 170_000, 169_950))
+        move_absolute.assert_called_once_with(170_000)
 
     def test_homing_method_37_sets_current_drive_position_to_zero(self):
         slave = FakeSlave()
@@ -288,8 +288,8 @@ class BridgePDOTest(unittest.TestCase):
         drive = mock.Mock()
         drive.move_relative_counts_and_wait.return_value = (
             120_000,
-            70_000,
-            70_025,
+            170_000,
+            169_975,
         )
         drive.home_current_position.return_value = 0
         node = object.__new__(bridge.RASCLFaulhaberBridge)
@@ -299,7 +299,7 @@ class BridgePDOTest(unittest.TestCase):
         )
         node.ignore_spur_gear_in_csp = False
         node.skip_spur_gear_homing = True
-        node.spur_gear_reference_delta_counts = -50_000
+        node.spur_gear_reference_delta_counts = 50_000
         node.spur_gear_reference_timeout_s = 15.0
         node.spur_gear_reference_tolerance_counts = 100
         node.spur_gear_reference_profile_velocity = 10_000
@@ -318,20 +318,20 @@ class BridgePDOTest(unittest.TestCase):
         drive.enable_operation.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
         drive.configure_profile_motion.assert_called_once_with(10_000, 10_000, 10_000)
         drive.move_relative_counts_and_wait.assert_called_once_with(
-            -50_000, 15.0, 100
+            50_000, 15.0, 100
         )
         drive.home_current_position.assert_called_once_with(15.0, 10)
         self.assertTrue(node.spur_gear_reference_complete)
-        self.assertEqual(node.spur_gear_reference_pre_zero_counts, 70_025)
+        self.assertEqual(node.spur_gear_reference_pre_zero_counts, 169_975)
         self.assertEqual(node.spur_gear_reference_zero_readback, 0)
-        self.assertIn("delta=-50000", message)
+        self.assertIn("delta=50000", message)
 
     def test_homing_csp_rejects_handoff_until_drive3_reference_is_complete(self):
         node = object.__new__(bridge.RASCLFaulhaberBridge)
         node.control_mode = "homing_csp"
         node.ignore_spur_gear_in_csp = False
         node.spur_gear_reference_complete = False
-        node.spur_gear_reference_delta_counts = -50_000
+        node.spur_gear_reference_delta_counts = 50_000
 
         with self.assertRaisesRegex(RuntimeError, "Drive 3 reference is incomplete"):
             node._require_spur_gear_reference_for_csp()

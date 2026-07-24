@@ -15,7 +15,7 @@
     lowerarm_joint=+pi/2 without changing the URDF/IK geometry.
   -->
   <xacro:arg name="lowerarm_direction" default="1"/>
-  <xacro:arg name="gripper_direction" default="1"/>
+  <xacro:arg name="gripper_direction" default="-1"/>
   <!--
     Software calibration between the reference-switch position and the URDF
     joint-zero convention.  The proven automatic homing procedure keeps the

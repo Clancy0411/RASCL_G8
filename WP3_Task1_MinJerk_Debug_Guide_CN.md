@@ -33,7 +33,7 @@ bash ./rascl_debug.sh
 T1：4
     ↓ bridge 保持运行，不能 Ctrl-C
 T2：6
-    ↓ D0–D2 Home 后 D3 自动 -50000 counts 并置零；必须显示 success=True
+    ↓ D0–D2 Home 后 D3 自动 +50000 counts 并置零；必须显示 success=True
 T2：7
     ↓ ros2_control 保持运行，不能 Ctrl-C
 T3：8 → 13 → 14 → 9 → 10
@@ -45,7 +45,7 @@ T3：8 → 13 → 14 → 9 → 10
    - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
    - Drive 0–2 使用传感器自动 Homing。三轴到位后，Drive 3 从实时位置相对运动
-     `-50000 counts`，再用 FAULHABER Homing Method 37 把到达位置设为 `0 counts`。
+     `+50000 counts`，再用 FAULHABER Homing Method 37 把到达位置设为 `0 counts`。
    - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
      Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
      `0x607B/0x607D`；不会改写内部行程限位。若 PRE-OP 第一次限位读取出现临时
@@ -60,9 +60,9 @@ T3：8 → 13 → 14 → 9 → 10
    - 此后直到停机或故障重启，禁止关闭 T1，禁止启动第二个 bridge。
 2. **T2 组 6：执行 `home_all`。**
    - 脚本不再要求输入二次确认，选择组 `6` 后立即开始 Home。
-   - 先运动 Drive 0–2；全部成功后 Drive 3 执行 `-50000 counts` 参考运动并置零。
+   - 先运动 Drive 0–2；全部成功后 Drive 3 执行 `+50000 counts` 参考运动并置零。
    - 必须返回 `success=True`、`CSP handoff armed`，且消息中包含
-     `drive3_reference(...delta=-50000,...zero=0,method=37)`。
+     `drive3_reference(...delta=50000,...zero=0,method=37)`。
    - 随后脚本自动调用 counts 查询；必须显示
      `absolute_counts` 接近 `0`、`reference_complete=true`。
    - 随后脚本自动打印 `Drive 2 protection`。若 `0x607B` 或 `0x607D` 不是完整 S32
@@ -116,8 +116,8 @@ T3：8 → 13 → 14 → 9 → 10
 直接输入任意非零的有符号整数 counts：
 
 ```text
-close 或 c = 最多从当前位置相对 +500000 counts；夹住物体后提前停止并保持
-open  或 o = 从当前位置固定相对 -200000 counts；要求完整到位
+close 或 c = 最多从当前位置相对 -500000 counts；夹住物体后提前停止并保持
+open  或 o = 从当前位置固定相对 +200000 counts；要求完整到位
 +2000       = 从当前位置正向增加 2000 counts
 -500000     = 从当前位置反向减少 500000 counts
 ```
@@ -128,8 +128,8 @@ Drive 3 的绝对 counts 以本次 Method 37 零位为基准；组 `15` 的数�
 感知快捷动作：若命令与反馈的误差达到默认 `2000 counts`，并且连续 `0.10 s` 内
 编码器进度不超过 `100 counts`，脚本才会在驱动器置位 following error 前把目标收回到
 实测位置，记录 `SPUR_CONTACT`，然后将这次夹持接触视为成功。近似静止条件可防止
-minimum-jerk 正常跟踪滞后被误判为接触。它的 `+500000 counts` 是最大闭合
-行程，不保证走满。`open` 固定精确运动 `-200000 counts`，不启用接触提前终止；直接
+minimum-jerk 正常跟踪滞后被误判为接触。它的 `-500000 counts` 是最大闭合
+行程，不保证走满。`open` 固定精确运动 `+200000 counts`，不启用接触提前终止；直接
 输入的有符号 counts 同样是精确相对运动。精确目标不可达时仍会失败。
 
 脚本以 50 Hz minimum-jerk CSP 轨迹平滑发送，前三轴使用刚读到的 `/joint_states`
@@ -211,7 +211,7 @@ inactive、组 `7` 退出或 T1/T2 报错时，旧 EtherCAT 会话不得直接�
 5. 停机前先支撑机械臂；正常停机会 Disable Voltage。
 
 当前默认是“三轴传感器 Homing + Drive 3 定长参考 + 四轴 CSP”模式：Drive 0–2
-使用外部开关 Homing；Drive 3 不搜索传感器，而是在三轴完成后运动 `-50000 counts`，
+使用外部开关 Homing；Drive 3 不搜索传感器，而是在三轴完成后运动 `+50000 counts`，
 再以 Method 37 把当前位置设为零，随后参与 PDO 状态检查和轨迹保持。
 `ignore_spur_gear_in_csp:=true` 仅保留为 Drive 3 硬件故障时的紧急三轴回退；正常运行
 必须保持其默认值 `false`。
@@ -242,8 +242,8 @@ Drive 2（`lowerarm_joint`）发生的 `statusword=0x3027` 是 CSP following err
 ```text
 URDF q=[0,0,0,0] TCP                    = [0.29318978,-0.03580108,0.07181469] m
 自动 Home（D0–D2）q~=[0,+pi/2,+pi/2] TCP = [0.20318978,-0.03580108,0.32181469] m
-Drive 3                                  = D0–D2 Home 后相对 -50000 counts，再以 Method 37 置零
-direction（D0–D3）                       = [+1,+1,+1,+1]
+Drive 3                                  = D0–D2 Home 后相对 +50000 counts，再以 Method 37 置零
+direction（D0–D3）                       = [+1,+1,+1,-1]
 home_offset_counts（D0–D2）名义值         = [0,-802816,-802816]
 ```
 
@@ -475,7 +475,7 @@ ros2 launch rascl_description homing.launch.py \
   csp_stall_error_counts:=25000 \
   csp_stall_progress_counts:=100 \
   csp_stall_timeout_ms:=500 \
-  spur_gear_reference_delta_counts:=-50000 \
+  spur_gear_reference_delta_counts:=50000 \
   spur_gear_reference_timeout_s:=15.0 \
   spur_gear_reference_tolerance_counts:=100 \
   skip_spur_gear_homing:=true
@@ -510,7 +510,7 @@ ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 
 ```
 
-Drive 2 成功后，bridge 会自动让 Drive 3 相对运动 `-50000 counts` 并执行 Method 37
+Drive 2 成功后，bridge 会自动让 Drive 3 相对运动 `+50000 counts` 并执行 Method 37
 置零；应看到 `drive3_reference(...zero=0,method=37)` 和 `CSP handoff armed`。
 不要单独对 Drive 3 执行 `home_one`。
 
@@ -585,7 +585,7 @@ ros2 launch rascl_description ros2_control.launch.py \
   use_fake_hardware:=false \
   start_bridge:=false \
   lowerarm_direction:=1 \
-  spur_gear_direction:=1 \
+  spur_gear_direction:=-1 \
   gripper_counts_per_revolution:=1323008 \
   shoulder_home_offset_counts:=0 \
   upperarm_home_offset_counts:=-802816 \
@@ -601,7 +601,7 @@ assigning factory Position PDOs Rx=0x1601, Tx=0x1A01
 Deferred process image mapped
 Master reached OP state
 Homing-to-CSP handoff completed without Shutdown/Disable controlwords
-SPUR_REFERENCE drive3_reference(...delta=-50000,...zero=0,method=37)
+SPUR_REFERENCE drive3_reference(...delta=50000,...zero=0,method=37)
 ```
 
 `T2` 应看到：
@@ -767,7 +767,7 @@ source install/local_setup.bash
 
 1. 软件测试和 fake hardware 全部通过。
 2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；Drive 3 随后完成
-   `-50000 counts + Method 37` 置零，组 `17` 回读接近 `0`。
+   `+50000 counts + Method 37` 置零，组 `17` 回读接近 `0`。
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
 4. Drive 0–2 连续交接；Drive 3 完成固定参考与 Method 37 置零后进入 CSP。
 5. 前三轴 `/joint_states`、实机和 RViz 一致，保持 10 秒无跳动；Drive 3 无 PDO 故障。
@@ -781,11 +781,11 @@ source install/local_setup.bash
 | 项目 | 值 |
 |---|---|
 | Drive / Joint | `0 shoulder`, `1 upperarm`, `2 lowerarm`, `3 spur_gear` |
-| Drive 3 策略 | 跳过传感器搜索；D0–D2 完成后相对 `-50000 counts`，Method 37 置零 |
+| Drive 3 策略 | 跳过传感器搜索；D0–D2 完成后相对 `+50000 counts`，Method 37 置零 |
 | Homing method | D0–D2 `[28,28,24]`；Drive 3 当前点置零 `37` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]`；D3 Method 37 以零偏置定义当前位置 |
-| ROS direction（名义） | `[+1,+1,+1,+1]` |
+| ROS direction（名义） | `[+1,+1,+1,-1]` |
 | ROS offset（名义） | `[0,-802816,-802816,0]` |
 | CSP mode | 8 |
 | PDO cycle | `20 ms / 50 Hz` |

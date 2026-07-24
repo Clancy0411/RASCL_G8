@@ -111,8 +111,8 @@ def generate_launch_description():
     )
     spur_gear_direction_arg = DeclareLaunchArgument(
         "spur_gear_direction",
-        default_value="1",
-        description="Drive 3 encoder-to-URDF sign; +1 is the validated gripper direction.",
+        default_value="-1",
+        description="Drive 3 encoder-to-URDF sign; -1 is the current gripper direction.",
     )
     start_bridge_arg = DeclareLaunchArgument(
         "start_bridge",

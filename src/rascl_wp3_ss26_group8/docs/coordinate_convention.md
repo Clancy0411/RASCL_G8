@@ -51,7 +51,7 @@ fixed TCP `[0.13478978, 0.02881369, 0.03193108] m`.  The later additional
 prioritizes that measured pose; Home and additional poses must be rechecked.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
-interface applies nominal `direction=[+1,+1,+1,+1]` and
+interface applies nominal `direction=[+1,+1,+1,-1]` and
 `home_offset_counts=[0,-802816,-802816,0]`; Drive 2's sign and offset are a
 paired mapping so positive lowerarm commands match physical motion. Final values must be replaced by raw
 counts measured in the physical URDF-zero pose after a successful Home, with

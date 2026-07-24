@@ -55,7 +55,7 @@ home_offset_counts = [0, -802816, -802816] counts
 Therefore raw zero after automatic Homing is represented as
 `[0,+pi/2,+pi/2] rad` for those three axes. Drive 3 (`spur_gear_joint`) is
 pre-installed and deliberately skips the sensor reference search. After Drives
-0–2 Home, it moves `-50000` counts from its live position and uses Homing Method
+0–2 Home, it moves `+50000` counts from its live position and uses Homing Method
 37 to define the reached position as `0` counts before joining CSP/PDO.
 Subsequent gripper commands remain relative encoder-count increments.
 These parameters do not change URDF joint origins, the IK geometry, or fake
@@ -174,9 +174,9 @@ The values correspond to:
 ```
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
-command. Entering ASCII `close` (or `c`) requests at most `+500000` counts and
+command. Entering ASCII `close` (or `c`) requests at most `-500000` counts and
 stops early at object contact. Entering `open` (or `o`) requests an exact
-`-200000`-count relative move. Only `close` uses tracking lag together with a
+`+200000`-count relative move. Only `close` uses tracking lag together with a
 near-stationary encoder condition (`<=100 counts` progress for `0.10 s`) to hold
 the measured Drive 3 position before expected contact becomes a following
 error. This prevents ordinary minimum-jerk tracking lag from becoming a false
@@ -186,7 +186,9 @@ current spur joint state, then
 publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
 10000 counts/s, the duration is derived automatically from the requested
-increment. It requires the session reference to have completed, but the command
+increment. Direct integer input keeps raw encoder semantics: a positive value
+increases Drive 3 `absolute_counts`; the ROS encoder-to-joint direction is
+`-1`. It requires the session reference to have completed, but the command
 itself remains relative. Repeating commands accumulates another move, subject
 to the unified Drive 3 URDF/ros2_control limit
 of `[-2*pi,+2*pi]` rad. This project limit does not overwrite drive objects

@@ -427,3 +427,13 @@ group `17` reads Drive 3 `absolute_counts` from SDO before CSP or the bridge PDO
 cache during CSP, allowing measured open and closed positions to be recorded.
 Group `6` now stops immediately on a failed Home/reference service response
 instead of continuing because the ROS CLI process itself exited successfully.
+
+## 2026-07-24 Drive 3 direction reversed again
+
+The Drive 3 encoder-to-URDF mapping is now `direction=-1`. The fixed Homing
+reference move is reversed from `-50000` to `+50000` raw counts before Method
+37 defines the reached position as zero. The group `15` shortcuts are reversed
+with it: `close/c=-500000 counts` maximum travel and
+`open/o=+200000 counts` exact travel. Direct signed integer group `15` input
+keeps raw encoder semantics, so a positive custom value still increases the
+group `17` `absolute_counts` readback.
