@@ -1080,6 +1080,8 @@ class FaulhaberBus:
         csp_torque_limit_per_mille: int = 1000,
         ignored_csp_drive_indices: Optional[Sequence[int]] = None,
         required_homing_drive_indices: Optional[Sequence[int]] = None,
+        drive2_following_error_window_counts: int = 25_000,
+        drive2_following_error_timeout_ms: int = 250,
         csp_stall_error_counts: int = 25_000,
         csp_stall_progress_counts: int = 100,
         csp_stall_timeout_ms: int = 500,
@@ -1103,6 +1105,21 @@ class FaulhaberBus:
         self.csp_stall_error_counts = int(csp_stall_error_counts)
         self.csp_stall_progress_counts = int(csp_stall_progress_counts)
         self.csp_stall_timeout_ms = int(csp_stall_timeout_ms)
+        self.drive2_following_error_window_counts = int(
+            drive2_following_error_window_counts
+        )
+        self.drive2_following_error_timeout_ms = int(
+            drive2_following_error_timeout_ms
+        )
+        if not 1 <= self.drive2_following_error_window_counts <= 0xFFFFFFFF:
+            raise ValueError(
+                "drive2_following_error_window_counts must be an unsigned "
+                "32-bit positive count"
+            )
+        if not 1 <= self.drive2_following_error_timeout_ms <= 0xFFFF:
+            raise ValueError(
+                "drive2_following_error_timeout_ms must be 1..65535"
+            )
         if self.csp_stall_error_counts <= 0:
             raise ValueError("csp_stall_error_counts must be positive")
         if self.csp_stall_progress_counts <= 0:
@@ -1633,6 +1650,34 @@ class FaulhaberBus:
         print("[EtherCAT] " + message)
         self.diagnostic_logger("CSP_LIMIT_SWITCH_CONFIGURATION " + message)
 
+    def _configure_csp_following_error_monitor_locked(self) -> None:
+        """Reapply Drive 2's finite monitor after all Homing mode transitions."""
+
+        drive_id = 2
+        if drive_id not in self.required_csp_drive_ids:
+            return
+        if len(self.drives) <= drive_id:
+            raise RuntimeError("CSP configuration requires Drive 2")
+
+        drive = self.drives[drive_id]
+        before_window = drive.sdo_read_int_retry(FOLLOWING_ERROR_WINDOW, 0)
+        before_timeout = drive.sdo_read_int_retry(FOLLOWING_ERROR_TIMEOUT, 0)
+        drive.configure_following_error_monitor(
+            self.drive2_following_error_window_counts,
+            self.drive2_following_error_timeout_ms,
+        )
+        after_window = drive.sdo_read_int_retry(FOLLOWING_ERROR_WINDOW, 0)
+        after_timeout = drive.sdo_read_int_retry(FOLLOWING_ERROR_TIMEOUT, 0)
+        message = (
+            "Drive 2 CSP following-error monitor reapplied after Homing and "
+            "verified for this session only: "
+            f"0x6065 {before_window} -> {after_window} counts; "
+            f"0x6066 {before_timeout} -> {after_timeout} ms; "
+            "no parameter-store command"
+        )
+        print("[EtherCAT] " + message)
+        self.diagnostic_logger("CSP_FOLLOWING_ERROR_CONFIGURATION " + message)
+
     def _capture_torque_snapshot(self) -> str:
         """Capture actual torque and limits for all drives after a CSP fault."""
 
@@ -1749,6 +1794,7 @@ class FaulhaberBus:
             # mappings are removed after Homing and every write is read back
             # before PDO motion is allowed to start.
             self._configure_csp_limit_switch_mappings_locked()
+            self._configure_csp_following_error_monitor_locked()
             self._configure_csp_torque_limits_locked()
 
             if preserve_homing_hold:
@@ -2394,6 +2440,12 @@ class RASCLFaulhaberBridge(Node):
             csp_stall_error_counts=self.csp_stall_error_counts,
             csp_stall_progress_counts=self.csp_stall_progress_counts,
             csp_stall_timeout_ms=self.csp_stall_timeout_ms,
+            drive2_following_error_window_counts=(
+                self.drive2_following_error_window_counts
+            ),
+            drive2_following_error_timeout_ms=(
+                self.drive2_following_error_timeout_ms
+            ),
             diagnostic_logger=self.get_logger().warning,
             clear_limit_switch_mappings_for_csp=(
                 self.clear_limit_switch_mappings_for_csp

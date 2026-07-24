@@ -966,6 +966,18 @@ class BridgePDOTest(unittest.TestCase):
         enable_spur.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
         self.assertTrue(bus.csp_active)
         self.assertEqual([state[0] for state in states], [10, 20, 30, 40])
+        self.assertEqual(
+            int.from_bytes(
+                slaves[2].values[(bridge.FOLLOWING_ERROR_WINDOW, 0)], "little"
+            ),
+            25_000,
+        )
+        self.assertEqual(
+            int.from_bytes(
+                slaves[2].values[(bridge.FOLLOWING_ERROR_TIMEOUT, 0)], "little"
+            ),
+            250,
+        )
         for slave in slaves:
             self.assertEqual(
                 int.from_bytes(slave.values[(bridge.MAX_TORQUE, 0)], "little"),

@@ -397,6 +397,11 @@ Homing reference、`0x2310:10` polarity 与 `0x607B/0x607D` 保持不变，不�
 `0x1010` 永久存储。T1 应记录 `CSP_LIMIT_SWITCH_CONFIGURATION`；组 `18` 可在 CSP
 前只读修复前映射。
 
+实机组 `18` 已确认 Drive 0–2 均有 `lower=0x01, upper=0x04`，且 Drive 1 当时已上报
+`positive_limit_switch`。同一次读取还发现 Drive 2 在 Homing 后为
+`0x6065/0x6066=16384/48`，而不是目标 `25000/250`。因此当前代码在 CSP 交接点另行
+记录 `CSP_FOLLOWING_ERROR_CONFIGURATION`，重新写入并回读目标值；未通过时禁止 CSP。
+
 Git 追溯显示，Homing 代码只设置 `0x2310:04` 的行为来自较早的 commit `d56d695`；
 从已验证基线 `214477ef` 到本次修改前 HEAD 的差异中，也没有任何
 `0x2310`/`REFERENCE_SWITCH_INPUT` 改动。最近队友的 `4708444` 只改了 Drive 3
@@ -705,6 +710,7 @@ TORQUE_SNAPSHOT
 CSP_STALL_DETECTED
 CSP_STALL_SNAPSHOT
 CSP_LIMIT_SWITCH_CONFIGURATION
+CSP_FOLLOWING_ERROR_CONFIGURATION
 MOTION_RESULT
 ```
 

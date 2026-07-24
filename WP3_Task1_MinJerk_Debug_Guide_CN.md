@@ -77,6 +77,9 @@ T3：8 → 13 → 14 → 9 → 10
      `positive_limit_switch` 或 `negative_limit_switch`。bridge 只清除
      `0x2310:01/:02` 的易失映射；不会改变 Homing 的 `reference`、输入 `polarity`
      或 `0x607B/0x607D`。回读不符时组 `7` 会拒绝进入 CSP。
+   - T1 必须出现 `CSP_FOLLOWING_ERROR_CONFIGURATION`，且最终显示
+     `0x6065 ... -> 25000 counts`、`0x6066 ... -> 250 ms`。部分驱动会在 Homing
+     模式切换后恢复旧值，因此 bridge 在 CSP 交接点重新写入并验证；失败时拒绝进入 CSP。
    - T1 必须先出现 `CSP directional torque limits verified for this session only`。
      D0–D3 的每项输出格式为 `max/pos/neg 原值 -> 新值`；新值中的 `pos/neg`
      必须是 `1000/1000`。首次修正时 Drive 2 应显示近似
@@ -257,6 +260,10 @@ bash ./rascl_debug.sh 18
 `0x2310:01/:02` 清零并回读；这一步发生在 Homing 完成之后，不改变自动寻零过程，也
 不写入永久存储。若需只为回退验证保留旧映射，可在组 `4` 前临时设置
 `RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP=false`，正常运行必须使用默认 `true`。
+
+组 `18` 的 `0x6065/0x6066` 也是 CSP 前只读快照。若在 Homing 后看到驱动器旧值
+（例如 `16384/48`），不要发送目标；组 `7` 必须通过
+`CSP_FOLLOWING_ERROR_CONFIGURATION` 将最终 CSP 值重新验证为 `25000/250`。
 
 坐标约定：
 

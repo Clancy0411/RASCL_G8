@@ -522,6 +522,8 @@ group_input_limit_diagnostics() {
   read_inputs
   echo "读取 Drive 2 的 0x607B/0x607D 与 following-error 参数："
   read_drive2_diagnostics
+  echo "注意：组 18 是 CSP 前只读快照；Homing 后 0x6065/0x6066 可能被驱动恢复。"
+  echo "组 7 交接时必须出现 CSP_FOLLOWING_ERROR_CONFIGURATION，并最终回读 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts / $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms。"
 }
 
 group_process_check() {

@@ -180,7 +180,9 @@ service is available before CSP/PDO activation to report the values.
 Transient PRE-OP mailbox WKC errors are retried. Failure to read the optional
 `0x607B`/`0x607D` report no longer aborts bridge startup; the following-error
 write/readback remains mandatory, and the service retries limit reporting
-after Homing.
+after Homing. Some drives restore their previous `0x6065/0x6066` values during
+Homing mode transitions, so the bridge reapplies and verifies `25000/250` at
+the final CSP handoff and records `CSP_FOLLOWING_ERROR_CONFIGURATION`.
 
 Before selecting CSP, the bridge also reads, clears, and verifies the volatile
 FAULHABER lower/upper limit-input mappings at `0x2310:01/:02` on every

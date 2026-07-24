@@ -211,6 +211,8 @@ lower/upper limit-input mappings `0x2310:01/:02` while preserving the Homing
 reference, input polarity, and `0x607B/0x607D`. The launch argument
 `clear_limit_switch_mappings_for_csp` defaults to `true`; use group `18` before
 CSP for a read-only mapping/protection report.
+The same handoff reapplies and verifies Drive 2's final CSP following-error
+monitor after Homing, logged as `CSP_FOLLOWING_ERROR_CONFIGURATION`.
 
 ## Notes
 
