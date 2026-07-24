@@ -5,7 +5,8 @@ This package contains the first WP3 application code for Group 8.
 The current milestone focuses on Task 1 preparation:
 
 - one Cartesian target is given in the `base_link` coordinate frame,
-- the tool center point (TCP) is the calibrated fixed `tcp_link`,
+- the tool center point (TCP) is the fixed `tcp_link` at the
+  `spur_gear_joint` center,
 - the node solves inverse kinematics for the three arm joints,
 - it generates a joint-space minimum-jerk trajectory,
 - it publishes the trajectory to `/rascl_position_controller/commands`,
@@ -19,10 +20,10 @@ FAULHABER CSP mode and cyclic EtherCAT Position PDOs on real hardware.
 ## Coordinate convention
 
 All target coordinates are expressed in the URDF `base_link` frame, in meters.
-The TCP is the fixed `tcp_link` attached to `lowerarm`; it does not move when
-`spur_gear_joint` opens or closes the gripper.  It is 20 mm outward from the
-calibrated gear-surface reference along `lowerarm` +X.  A later additional
-20 mm shift was reverted after real-hardware testing.
+The TCP is the fixed `tcp_link` attached to `lowerarm`; it is co-located with
+the historical `spur_gear_joint` origin at
+`[0.13916, 0, 0.0179] m` in `lowerarm`. It does not move when
+`spur_gear_joint` opens or closes the gripper.
 
 The project also applies a global physical-X calibration. External measurements
 use the order Y/X/Z, so physical +X corresponds to numeric `base_link` +Y. The
@@ -43,7 +44,7 @@ The joint-coordinate convention from `3588dc98` is preserved:
 calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.29318978, -0.03580108, 0.07181469] m
+base_link TCP = [0.29756, -0.02177, 0.043001] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -51,18 +52,13 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.20318978, -0.03580108, 0.32181469] m
+base_link auto-home TCP = [0.20756, -0.02177, 0.293001] m
 ```
 
-The current TCP uses a second single-pose calibration.  At the joint pose that
-the former model reported as `[0.16, -0.16, 0.05] m`, the external Y/X/Z
-measurement was `[0.14, -0.16, 0.05] m`; in the project's physical-axis
-convention this is the numeric `base_link` XYZ correction `[-0.020, 0, 0] m`.
-The resulting calibrated gear-surface origin in `lowerarm` is
-`[0.11478978, 0.02881369, 0.03193108] m`.  The commanded TCP now adds
-20 mm along the local jaw direction and is therefore
-`[0.13478978, 0.02881369, 0.03193108] m`.  The surface calibration intentionally
-prioritizes that measured pose and must be rechecked at Home and other arm poses.
+The earlier single-pose gear-surface and grasp-center offsets are not applied
+to the current TCP. Calibration measurements now refer directly to the fixed
+`spur_gear_joint` center. The separate global base-frame calibration above
+remains unchanged.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

@@ -5,9 +5,9 @@ Frame: `base_link` from `rascl_description/urdf/rascl.urdf`.
 Unit: meter.
 
 TCP for the first milestone: fixed `tcp_link`, attached to `lowerarm` and
-independent of `spur_gear_joint` motion.  It is 20 mm outward from the
-calibrated gear-surface point along `lowerarm` +X.  A later additional 20 mm
-shift was reverted after real-hardware testing.
+co-located with the historical `spur_gear_joint` origin at
+`[0.13916, 0, 0.0179] m` in `lowerarm`. It remains independent of
+`spur_gear_joint` motion.
 
 Global physical-X calibration: external measurements use Y/X/Z, so physical
 +X maps to numeric `base_link` +Y. The current project shifts the modeled arm
@@ -28,7 +28,7 @@ the URDF zero pose. With the nominal software count calibration, it must read:
 In this automatic-Home pose, the kinematic model gives:
 
 ```text
-TCP in base_link = [0.20318978, -0.03580108, 0.32181469] m
+TCP in base_link = [0.20756, -0.02177, 0.293001] m
 ```
 
 The original physical URDF-zero joint-angle convention remains; the listed TCP
@@ -36,19 +36,13 @@ uses the new calibrated `tcp_link`:
 
 ```text
 q = [0, 0, 0, 0] rad
-TCP in base_link = [0.29318978, -0.03580108, 0.07181469] m
+TCP in base_link = [0.29756, -0.02177, 0.043001] m
 ```
 
-The current 2026-07-22 TCP definition applies a second single-pose calibration.
-At the joint pose that the former model reported as `[0.16, -0.16, 0.05] m`,
-the external Y/X/Z measurement was `[0.14, -0.16, 0.05] m`.  Under the
-project's physical-axis convention, the correction is `[-0.020, 0, 0] m` in
-numeric `base_link` XYZ.  Transforming that correction into `lowerarm` gives
-the calibrated gear-surface point `[0.11478978, 0.02881369, 0.03193108] m`.
-The grasp-center requirement adds 20 mm along `lowerarm` +X, producing the
-fixed TCP `[0.13478978, 0.02881369, 0.03193108] m`.  The later additional
-20 mm shift was reverted.  The surface calibration
-prioritizes that measured pose; Home and additional poses must be rechecked.
+The earlier single-pose gear-surface and grasp-center offsets are no longer
+applied. Current calibration measurements refer directly to the fixed
+`spur_gear_joint` center. The separate global base-frame translation above
+remains active and must be evaluated independently.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
 interface applies nominal `direction=[+1,+1,+1,-1]` and
