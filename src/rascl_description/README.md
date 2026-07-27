@@ -67,6 +67,12 @@ hardware's initial `q=[0,0,0,0]` pose. Drive 2 uses the paired
 that positive lowerarm commands agree with its physical motion. Override the
 direction/offset pair only together when recalibrating Drive 2.
 
+For counts-level Home calibration, debug groups `19/20/21` can move Drives
+0/1/2 after `home_all` and before CSP. They are temporary relative Profile
+Position adjustments and do not redefine zero. The returned
+`correction_from_homed_zero` is incorporated permanently with
+`new_home_offset_counts = current_home_offset_counts + correction`.
+
 ### `config/controllers.yaml`
 
 Defines the controllers used by the system:

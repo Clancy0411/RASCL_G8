@@ -633,9 +633,15 @@ bash ./rascl_debug.sh <组号>
 16 读取最近 CSP_STALL_SNAPSHOT
 17 读取 Drive 3 当前绝对 counts（本次 Method 37 零位）
 18 CSP 前只读 Drive 0–3 输入映射及 Drive 2 保护参数
+19 Homing 后、CSP 前相对微调 Drive 0（输入 counts）
+20 Homing 后、CSP 前相对微调 Drive 1（输入 counts）
+21 Homing 后、CSP 前相对微调 Drive 2（输入 counts）
 ```
 
 脚本不会自动跨终端操作。组 `4` 和组 `7` 是前台持续进程。
+组 `19/20/21` 仅用于标定传感器区间中点到真实 Home 的差值：可反复输入正/负
+相对 counts，返回的 `correction_from_homed_zero` 是实时累计值；不会重设零点或
+写入永久参数。必须在组 `6` 成功后、组 `7` 之前使用。
 
 ## 14. 新机器第一次运行
 
@@ -673,6 +679,18 @@ drive0_interval(...) drive1_interval(...) drive2_interval(...)
 drive3_reference(...delta=50000,...zero=0,method=37)
 Drive 3: absolute_counts=0, ... reference_complete=true
 ```
+
+需要测试 Home 微调时，仍在 T2 按需重复执行：
+
+```bash
+bash ./rascl_debug.sh 19   # Drive 0
+bash ./rascl_debug.sh 20   # Drive 1
+bash ./rascl_debug.sh 21   # Drive 2
+```
+
+记录每轴最终 `correction_from_homed_zero`。永久标定公式为
+`new_home_offset_counts = current_home_offset_counts + correction_from_homed_zero`；
+改代码并重新编译前，不要把临时微调误认为已经保存。
 
 随后仍在 T2：
 

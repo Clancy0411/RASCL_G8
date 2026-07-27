@@ -162,6 +162,21 @@ post-zero encoder settling from rejecting the next axis. The default Drive
 traversal/return phase; a missing edge,
 fault, following error, or midpoint error rejects Homing and CSP handoff.
 
+After `home_all` and before CSP preparation, the
+`adjust_home_counts` Trigger service can move one of Drives 0–2 by a signed
+relative encoder increment. Set `test_drive_index` to `0`, `1`, or `2`, set
+`test_relative_counts` to a non-zero integer, then call the service. It uses
+live feedback, a `1000 counts/s` Profile Position move, a `120 s` timeout, and
+reports `source`, `target`, `actual`, and `correction_from_homed_zero`.
+Repeated calls are cumulative because the reported correction is the live
+absolute count relative to the Method-37 Home zero. The service neither runs
+Homing nor redefines zero, and it is rejected until all arm axes and the Drive
+3 reference have completed or after CSP preparation has begun. Debug groups
+`19`, `20`, and `21` wrap this service for Drives 0, 1, and 2 respectively.
+With the normal mapping-cleanup option enabled, it first clears only that
+drive's volatile lower/upper input mappings at `0x2310:01/:02`; the Homing
+reference, polarity, and `0x607B/0x607D` remain unchanged.
+
 ## Running with Real Hardware (CSP/PDO)
 
 After `home_all`, keep that bridge running and start ros2_control without a

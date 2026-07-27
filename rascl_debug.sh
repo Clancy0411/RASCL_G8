@@ -440,6 +440,31 @@ group_home_all() {
   read_drive2_diagnostics
 }
 
+group_adjust_home_counts() {
+  local drive="$1"
+  local delta response
+  load_ros
+  read -r -p "Drive $drive 相对微调 counts（正/负整数，不能为 0）：" delta
+  delta="${delta//$'\r'/}"
+  [[ "$delta" =~ ^[+-]?[0-9]+$ ]] ||
+    die "counts 必须是有符号整数，例如 500、-1200"
+  (( delta != 0 )) || die "counts 不能为 0"
+  ros2 param set /rascl_faulhaber_bridge test_drive_index "$drive" >/dev/null ||
+    die "无法设置 Drive $drive；确认 T1 组 4 仍在运行"
+  ros2 param set /rascl_faulhaber_bridge test_relative_counts "$delta" >/dev/null ||
+    die "无法设置相对 counts；确认代码已重新编译并重启 T1 组 4"
+  response="$(
+    ros2 service call \
+      /rascl_faulhaber_bridge/adjust_home_counts \
+      std_srvs/srv/Trigger "{}"
+  )" || die "Drive $drive Home 微调服务调用失败"
+  printf '%s\n' "$response"
+  grep -q "success=True" <<<"$response" ||
+    die "Drive $drive Home 微调失败；不要进入 CSP"
+  echo "可重复执行本组；correction_from_homed_zero 是当前相对本次 Homing 零点的实际累计 counts。"
+  echo "确认三轴物理 Home 后记录各轴该值，再执行组 7；本操作不会重设零点。"
+}
+
 group_csp_launch() {
   load_ros
   ensure_state_dir
@@ -1051,10 +1076,13 @@ print_menu() {
     " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
     " 17  查看 Drive 3 当前绝对 counts（Method 37 零位）     [T2/T3，只读]" \
     " 18  查看输入映射和 Drive 2 保护参数                    [T2，CSP 前只读]" \
+    " 19  Homing 后微调 Drive 0（相对 counts）               [T2，会运动]" \
+    " 20  Homing 后微调 Drive 1（相对 counts）               [T2，会运动]" \
+    " 21  Homing 后微调 Drive 2（相对 counts）               [T2，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→7；T3=8→13→14→9→10。Drive 3：T3=15 运动，17 读 counts。"
+    "CSP 顺序：T1=4；T2=6→（可选 19/20/21）→7；T3=8→13→14→9→10。Drive 3：T3=15 运动，17 读 counts。"
 }
 
 run_group() {
@@ -1077,6 +1105,9 @@ run_group() {
     16) group_stall_snapshot ;;
     17) group_spur_gear_counts ;;
     18) group_input_limit_diagnostics ;;
+    19) group_adjust_home_counts 0 ;;
+    20) group_adjust_home_counts 1 ;;
+    21) group_adjust_home_counts 2 ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

@@ -2869,7 +2869,12 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("homing_interval_timeout_s", 120.0)
         self.declare_parameter("homing_interval_poll_s", 0.01)
         self.declare_parameter("homing_midpoint_tolerance_counts", 500)
+        self.declare_parameter("home_adjust_profile_velocity", 1000)
+        self.declare_parameter("home_adjust_timeout_s", 120.0)
+        self.declare_parameter("home_adjust_tolerance_counts", 100)
+        self.declare_parameter("home_adjust_following_error_confirm_s", 0.30)
         self.declare_parameter("test_drive_index", 0)
+        self.declare_parameter("test_relative_counts", 0)
 
         self.interface = str(self.get_parameter("interface").value)
         self.slave_indices = [int(v) for v in self.get_parameter("slave_indices").value]
@@ -2998,6 +3003,18 @@ class RASCLFaulhaberBridge(Node):
         self.homing_midpoint_tolerance_counts = int(
             self.get_parameter("homing_midpoint_tolerance_counts").value
         )
+        self.home_adjust_profile_velocity = int(
+            self.get_parameter("home_adjust_profile_velocity").value
+        )
+        self.home_adjust_timeout_s = float(
+            self.get_parameter("home_adjust_timeout_s").value
+        )
+        self.home_adjust_tolerance_counts = int(
+            self.get_parameter("home_adjust_tolerance_counts").value
+        )
+        self.home_adjust_following_error_confirm_s = float(
+            self.get_parameter("home_adjust_following_error_confirm_s").value
+        )
         self._validate_homing_parameters()
 
         self.lock = threading.RLock()
@@ -3097,6 +3114,9 @@ class RASCLFaulhaberBridge(Node):
         self.disable_all_srv = self.create_service(Trigger, "~/disable_all", self.on_disable_all)
         self.home_one_srv = self.create_service(Trigger, "~/home_one", self.on_home_one)
         self.home_all_srv = self.create_service(Trigger, "~/home_all", self.on_home_all)
+        self.adjust_home_counts_srv = self.create_service(
+            Trigger, "~/adjust_home_counts", self.on_adjust_home_counts
+        )
         self.goto_home_all_srv = self.create_service(
             Trigger, "~/goto_home_all", self.on_goto_home_all
         )
@@ -3165,6 +3185,16 @@ class RASCLFaulhaberBridge(Node):
             raise ValueError("homing_interval_poll_s must be positive")
         if self.homing_midpoint_tolerance_counts < 0:
             raise ValueError("homing_midpoint_tolerance_counts must be non-negative")
+        if self.home_adjust_profile_velocity <= 0:
+            raise ValueError("home_adjust_profile_velocity must be positive")
+        if self.home_adjust_timeout_s <= 0.0:
+            raise ValueError("home_adjust_timeout_s must be positive")
+        if self.home_adjust_tolerance_counts < 0:
+            raise ValueError("home_adjust_tolerance_counts must be non-negative")
+        if self.home_adjust_following_error_confirm_s < 0.0:
+            raise ValueError(
+                "home_adjust_following_error_confirm_s must be non-negative"
+            )
 
     def _drive2_position_protection_message(self) -> str:
         if len(self.bus.drives) <= 2:
@@ -3486,6 +3516,75 @@ class RASCLFaulhaberBridge(Node):
         except Exception as exc:
             response.success = False
             response.message = f"Home failed: {exc}"
+        return response
+
+    def _adjust_homed_drive_counts(self, drive_index: int, delta_counts: int) -> str:
+        """Move one homed arm drive by a relative Profile Position increment."""
+
+        if drive_index not in (0, 1, 2):
+            raise ValueError(
+                f"Home fine adjustment only supports Drive 0-2, got Drive {drive_index}"
+            )
+        if drive_index >= len(self.bus.drives):
+            raise ValueError(f"Drive {drive_index} is not configured")
+        if delta_counts == 0:
+            raise ValueError("Home fine-adjustment delta must be non-zero")
+        if not self.bus.homing_complete:
+            raise RuntimeError(
+                "Home fine adjustment requires successful Homing of all Drive 0-2 first"
+            )
+        if not self.spur_gear_reference_complete:
+            raise RuntimeError(
+                "Home fine adjustment requires the Drive 3 reference sequence to finish"
+            )
+
+        drive = self.bus.drives[drive_index]
+        limit_mapping_state = "preserved"
+        if self.clear_limit_switch_mappings_for_csp:
+            # The reference sensor is not a persistent travel limit.  Clear
+            # only 0x2310:01/:02 before Profile Position so an asserted stale
+            # mapping cannot block one fine-adjustment direction.  The Homing
+            # reference at 0x2310:04 and all position-limit objects stay intact.
+            drive.clear_limit_switch_mappings_for_csp()
+            limit_mapping_state = "cleared"
+        drive.enable_operation(MODE_PROFILE_POSITION)
+        drive.configure_profile_motion(
+            self.home_adjust_profile_velocity,
+            self.homing_accelerations[drive_index],
+            self.homing_accelerations[drive_index],
+        )
+        source, target, actual = drive.move_relative_counts_and_wait(
+            delta_counts,
+            self.home_adjust_timeout_s,
+            self.home_adjust_tolerance_counts,
+            self.home_adjust_following_error_confirm_s,
+        )
+        error = actual - target
+        message = (
+            f"Drive {drive_index} Home fine adjustment completed: "
+            f"source={source}, delta={delta_counts:+d}, target={target}, "
+            f"actual={actual}, target_error={error:+d}, "
+            f"correction_from_homed_zero={actual} counts, "
+            f"limit_input_mappings={limit_mapping_state}"
+        )
+        self.get_logger().warning("HOME_FINE_ADJUST " + message)
+        return message
+
+    def on_adjust_home_counts(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        try:
+            drive_index = int(self.get_parameter("test_drive_index").value)
+            delta_counts = int(self.get_parameter("test_relative_counts").value)
+            with self.lock:
+                self._ensure_non_csp_operation("fine-adjust Home")
+                response.message = self._adjust_homed_drive_counts(
+                    drive_index, delta_counts
+                )
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.message = f"Home fine adjustment failed: {exc}"
         return response
 
     def on_goto_home_all(

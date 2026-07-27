@@ -545,3 +545,25 @@ Drive 3 position error, status, torque demand/actual value, actual current and
 the existing limit/input diagnostics. Torque switching and snapshot collection
 perform at most one mailbox operation per 50 Hz PDO cycle; Homing, the Drive 3
 Method-37 reference profile and arm Cartesian trajectories are unchanged.
+
+## 2026-07-27 Drive 0–2 counts-level Home fine adjustment
+
+Debug groups `19`, `20`, and `21` now provide signed relative Profile Position
+moves for Drives 0, 1, and 2 after successful `home_all` and before CSP
+preparation. Each call starts from live encoder feedback, moves at
+`1000 counts/s`, waits for verified arrival, and returns source, delta, target,
+actual, target error, and `correction_from_homed_zero`. Repeated calls are
+allowed; the last field is already the current cumulative displacement from
+the Method-37 Home zero.
+
+The service rejects Drive 3, zero increments, incomplete Homing/Drive 3
+reference, and any call after PDO preparation or CSP activation. It does not
+rerun Homing, write Method 37, change Drive 3, or persist calibration.
+Before moving it clears only the selected drive's volatile
+`0x2310:01/:02` mappings so a stale limit flag in the reference region cannot
+block one Profile Position direction; `0x2310:04`, polarity and
+`0x607B/0x607D` are preserved.
+Permanent calibration uses
+`new_home_offset_counts = current_home_offset_counts +
+correction_from_homed_zero` followed by a rebuild and complete new Homing/CSP
+session.

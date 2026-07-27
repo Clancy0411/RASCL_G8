@@ -700,6 +700,49 @@ class BridgePDOTest(unittest.TestCase):
         self.assertEqual(node.spur_gear_reference_zero_readback, 0)
         self.assertIn("delta=50000", message)
 
+    def test_node_home_fine_adjust_uses_live_relative_counts_without_rezero(self):
+        drive = mock.Mock()
+        drive.move_relative_counts_and_wait.return_value = (0, -1_200, -1_185)
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            homing_complete=True,
+            drives=[mock.Mock(), drive, mock.Mock(), mock.Mock()],
+        )
+        node.spur_gear_reference_complete = True
+        node.clear_limit_switch_mappings_for_csp = True
+        node.home_adjust_profile_velocity = 1_000
+        node.homing_accelerations = [1_000, 1_200, 1_000, 1_000]
+        node.home_adjust_timeout_s = 120.0
+        node.home_adjust_tolerance_counts = 100
+        node.home_adjust_following_error_confirm_s = 0.30
+        logger = mock.Mock()
+        node.get_logger = lambda: logger
+
+        message = node._adjust_homed_drive_counts(1, -1_200)
+
+        drive.clear_limit_switch_mappings_for_csp.assert_called_once_with()
+        drive.enable_operation.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
+        drive.configure_profile_motion.assert_called_once_with(1_000, 1_200, 1_200)
+        drive.move_relative_counts_and_wait.assert_called_once_with(
+            -1_200, 120.0, 100, 0.30
+        )
+        drive.home_current_position.assert_not_called()
+        self.assertIn("delta=-1200", message)
+        self.assertIn("correction_from_homed_zero=-1185 counts", message)
+        self.assertIn("limit_input_mappings=cleared", message)
+        self.assertIn("HOME_FINE_ADJUST", logger.warning.call_args.args[0])
+
+    def test_node_home_fine_adjust_rejects_motion_before_all_arm_homing(self):
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            homing_complete=False,
+            drives=[mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock()],
+        )
+        node.spur_gear_reference_complete = True
+
+        with self.assertRaisesRegex(RuntimeError, "requires successful Homing"):
+            node._adjust_homed_drive_counts(2, 500)
+
     def test_node_drive3_reference_failure_disables_drive(self):
         drive = mock.Mock()
         drive.move_relative_counts_and_wait.side_effect = RuntimeError(
