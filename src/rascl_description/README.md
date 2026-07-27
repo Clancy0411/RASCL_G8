@@ -188,7 +188,7 @@ increments and do not use contact termination. Every command starts from the
 current spur joint state, then
 publishes a 50 Hz minimum-jerk
 four-joint CSP trajectory that preserves the measured arm pose. At the default
-10000 counts/s, the duration is derived automatically from the requested
+20000 counts/s, the duration is derived automatically from the requested
 increment. Direct integer input keeps raw encoder semantics: a positive value
 increases Drive 3 `absolute_counts`; the ROS encoder-to-joint direction is
 `-1`. It requires the session reference to have completed, but the command

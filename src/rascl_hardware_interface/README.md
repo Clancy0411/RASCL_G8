@@ -296,7 +296,7 @@ termination. Each command starts
 from the current joint state, uses the configured direction and counts per
 revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
-positions. At the default 10000 counts/s, group `15` derives the duration from
+positions. At the default 20000 counts/s, group `15` derives the duration from
 the requested increment and records `SPUR_TRACE` feedback
 in the ROS log. Direct signed integer input remains a raw encoder-count
 increment: positive input increases the group `17` `absolute_counts` value even

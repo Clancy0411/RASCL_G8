@@ -152,9 +152,8 @@ minimum-jerk 正常跟踪滞后被误判为接触。它的 `-500000 counts` 是�
 
 脚本以 50 Hz minimum-jerk CSP 轨迹平滑发送，前三轴使用刚读到的 `/joint_states`
 保持不动。默认平均速度为
-`10000 counts/s`，运动时间根据 counts 自动计算；`close` 最长约 50 秒、`open`
-约 20 秒，
-`500000 counts` 约 50 秒，不再单独询问运动时间。
+`20000 counts/s`，运动时间根据 counts 自动计算；`close` 最长约 25 秒、`open`
+约 10 秒，`500000 counts` 约 25 秒，不再单独询问运动时间。
 组 `15` 的预检查和实际运动节点都会等待最多 5 秒取得完整 `/joint_states`，避免新建
 DDS 节点时 1 秒发现窗口过短；仍未收到反馈才禁止运动。可通过
 `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S` 有意覆盖该超时。每次组 `15` 会等待运动和

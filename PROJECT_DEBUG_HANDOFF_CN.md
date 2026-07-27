@@ -332,10 +332,10 @@ drive following error 前保持实测位置，并记录 `SPUR_CONTACT` 和
 限位已统一为 `[-2*pi,+2*pi]`；这不会修改驱动器对象 `0x607B/0x607D`。默认速度为：
 
 ```text
-10000 counts/s
+20000 counts/s
 ```
 
-运动时间由 counts 自动计算；`close` 最长约 50 秒，`open` 约 20 秒。组 `15` 使用 50 Hz
+运动时间由 counts 自动计算；`close` 最长约 25 秒，`open` 约 10 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
 此前自动 `close` 曾因夹持力过大损坏 gripper；在重新确定绝对开合位置前，不要使用

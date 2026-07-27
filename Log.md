@@ -516,3 +516,13 @@ Drive 3 and encoder mappings are unchanged. Removing the base XY translation
 changes the nominal TCP to `[0.32840,-0.00177,0.043001] m` at `q=[0,0,0]` and
 `[0.23840,-0.00177,0.293001] m` at
 `q=[0,+pi/2,+pi/2]`.
+
+## 2026-07-27 double Drive 3 CSP motion speed
+
+Debug group `15` now defaults to `20000 counts/s` instead of
+`10000 counts/s` for `close`, `open`, and direct signed relative-count
+commands. The automatically calculated duration is therefore halved:
+`500000 counts` takes about `25 s` and `200000 counts` about `10 s`.
+The 50 Hz minimum-jerk CSP path, relative-count semantics, travel limits,
+contact detector, arm-joint hold and Drive 3 Homing reference profile
+(`3000 counts/s`) are unchanged.
