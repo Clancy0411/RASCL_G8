@@ -223,7 +223,7 @@ spur_gear_joint = [-2*pi,+2*pi] = [-6.283185307,+6.283185307]
 
 ```text
 Drive 0–2 原生方法找到第一边沿后，继续穿过参考输入有效区间
-记录第二边沿，反向回到 (entry+exit)/2，并以 Method 37 将中点设为 0 counts
+记录第二边沿，以低速正弦曲线反向回到 (entry+exit)/2，并以 Method 37 将中点设为 0 counts
 Drive 0–2 全部到位后，Drive 3 从实时位置相对运动 +50000 counts
 Drive 3 到位后用 Homing Method 37 将当前位置设为 0 counts
 Drive 0–3 全部参与随后 CSP/PDO
@@ -236,10 +236,14 @@ skip_spur_gear_homing = true
 ignore_spur_gear_in_csp = false
 homing_methods = [28,28,24,24]
 reference_inputs = [2,2,2,1]
-homing_interval_max_travel_counts = 100000
+homing_interval_max_travel_drive0_counts = 100000
+homing_interval_max_travel_drive1_counts = 300000
+homing_interval_max_travel_drive2_counts = 300000
 homing_interval_timeout_s = 120.0
 homing_interval_poll_s = 0.01
 homing_midpoint_tolerance_counts = 100
+第二边沿穿越和回中点速度 = homing_zero_speeds = [200,200,200]
+第二边沿穿越和回中点曲线 = 0x6086:00 = 1（正弦加速度，会话内临时设置）
 spur_gear_reference_delta_counts = +50000
 spur_gear_reference_timeout_s = 30.0
 spur_gear_reference_tolerance_counts = 100

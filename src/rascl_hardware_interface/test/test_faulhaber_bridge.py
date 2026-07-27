@@ -390,8 +390,9 @@ class BridgePDOTest(unittest.TestCase):
         )
 
     def test_interval_homing_crosses_both_edges_and_zeros_positive_midpoint(self):
+        slave = FakeSlave()
         drive = bridge.FaulhaberDrive(
-            FakeSlave(), drive_id=2, sdo_delay_s=0.0, verbose=False
+            slave, drive_id=2, sdo_delay_s=0.0, verbose=False
         )
         operation_enabled = bridge.STATUS_OPERATION_ENABLED_STATE
         with (
@@ -412,7 +413,7 @@ class BridgePDOTest(unittest.TestCase):
             ),
             mock.patch.object(drive, "read_status", return_value=operation_enabled),
             mock.patch.object(
-                drive, "sdo_read_int", side_effect=[3_000, 1_000, 1_000]
+                drive, "sdo_read_int", side_effect=[3_000, 1_000, 1_000, 0]
             ),
             mock.patch.object(drive, "configure_profile_motion") as configure_profile,
             mock.patch.object(drive, "move_absolute_counts") as start_traverse,
@@ -441,11 +442,17 @@ class BridgePDOTest(unittest.TestCase):
             )
 
         first_edge_home.assert_called_once()
-        configure_profile.assert_called_once_with(1_000, 1_000, 1_000)
+        configure_profile.assert_called_once_with(200, 1_000, 1_000)
         start_traverse.assert_called_once_with(100_000)
         halt_traverse.assert_called_once_with(1.0)
         move_midpoint.assert_called_once_with(120, 2.0)
         zero_midpoint.assert_called_once_with(1.0, 10)
+        profile_type_writes = [
+            int.from_bytes(payload, "little", signed=True)
+            for index, subindex, payload in slave.writes
+            if (index, subindex) == (bridge.MOTION_PROFILE_TYPE, 0)
+        ]
+        self.assertEqual(profile_type_writes, [1, 0])
         self.assertEqual(
             result,
             bridge.HomingIntervalResult(
@@ -533,7 +540,7 @@ class BridgePDOTest(unittest.TestCase):
                 return_value=bridge.STATUS_OPERATION_ENABLED_STATE,
             ),
             mock.patch.object(
-                drive, "sdo_read_int", side_effect=[3_000, 1_000, 1_000]
+                drive, "sdo_read_int", side_effect=[3_000, 1_000, 1_000, 0]
             ),
             mock.patch.object(drive, "configure_profile_motion"),
             mock.patch.object(drive, "move_absolute_counts") as start_traverse,
@@ -580,7 +587,7 @@ class BridgePDOTest(unittest.TestCase):
         node.homing_search_speeds = [1_000]
         node.homing_zero_speeds = [200]
         node.homing_accelerations = [1_000]
-        node.homing_interval_max_travel_counts = 100_000
+        node.homing_interval_max_travel_counts = [100_000]
         node.homing_interval_timeout_s = 120.0
         node.homing_interval_poll_s = 0.01
         node.homing_midpoint_tolerance_counts = 100

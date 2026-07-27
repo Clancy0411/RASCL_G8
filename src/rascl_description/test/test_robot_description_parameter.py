@@ -111,5 +111,7 @@ def test_homing_motion_defaults_limit_transient_lag_and_interval_travel():
     assert defaults["spur_gear_reference_profile_acceleration"] == "1000"
     assert defaults["spur_gear_reference_profile_deceleration"] == "1000"
     assert defaults["spur_gear_reference_following_error_confirm_s"] == "0.30"
-    assert defaults["homing_interval_max_travel_counts"] == "100000"
+    assert defaults["homing_interval_max_travel_drive0_counts"] == "100000"
+    assert defaults["homing_interval_max_travel_drive1_counts"] == "300000"
+    assert defaults["homing_interval_max_travel_drive2_counts"] == "300000"
     assert defaults["homing_interval_timeout_s"] == "120.0"

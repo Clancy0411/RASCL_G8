@@ -149,12 +149,14 @@ For each of Drives 0–2, the configured native method first finds the proven
 reference-input entry edge (`28, 28, 24`). With the required `0x607C=0`, that
 latched edge is exactly `entry=0`; the later decelerated stop readback is not
 used as the edge coordinate. The bridge then traverses the active
-input interval in the same encoder direction at the configured Homing search
-speed, records the exit edge, halts without removing motor torque, returns to
-`(entry + exit) / 2`, and uses Method 37 to make that midpoint zero. The service
+input interval in the same encoder direction at the lower Homing zero speed
+(`200`) with a sinusoidal Profile Position curve, records the exit edge, halts
+without removing motor torque, returns to `(entry + exit) / 2` with the same
+smooth profile, and uses Method 37 to make that midpoint zero. The service
 response reports both edges, interval width, commanded/reached midpoint, and
-zero readback. The default second-edge guard is `100000` counts with a `120 s`
-timeout for each finite traversal/return phase; a missing edge,
+zero readback. The default Drive 0/1/2 second-edge guards are
+`100000/300000/300000` counts with a `120 s` timeout for each finite
+traversal/return phase; a missing edge,
 fault, following error, or midpoint error rejects Homing and CSP handoff.
 
 ## Running with Real Hardware (CSP/PDO)

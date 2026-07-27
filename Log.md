@@ -456,3 +456,22 @@ from being marked Homed and blocks CSP handoff. `home_one/home_all` and debug
 groups `5/6` now report and verify `entry`, `exit`, `width`, `midpoint`,
 `reached`, and `zero` for every required arm drive. Drive directions, URDF/count
 offsets, Drive 3 reference logic, CSP/PDO, and Cartesian planning are unchanged.
+
+## 2026-07-27 midpoint Homing real-hardware correction
+
+The first real interval-centre run completed Drive 0 with
+`entry=0, exit=-59657, midpoint=-29829, reached=-29827, zero=0`. Drive 1 then
+remained inside its active reference interval after the old `100000-count`
+guard, so `home_all` stopped before Drive 2 was attempted. FAULHABER Method 28
+still searches and traverses in the negative encoder direction; that direction
+was not reversed.
+
+The finite second-edge traversal and midpoint return now use the lower
+`homing_zero_speeds=200` instead of the `1000` native switch-seek speed. They
+temporarily select the FAULHABER sinusoidal Profile Position curve
+(`0x6086:00=1`) and restore the previous profile afterward. The Drive 0/1/2
+second-edge travel guards are now independent defaults of
+`100000/300000/300000 counts`; the timeout remains `120 s`. A guard failure now
+also reports `last_actual`, `reference_active`, `active_interval_seen`, and
+`internal_limit_seen`. Native first-edge methods, directions, inputs, offsets,
+Drive 3, CSP/PDO, URDF, and Cartesian planning are unchanged.

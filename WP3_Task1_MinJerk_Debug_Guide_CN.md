@@ -44,10 +44,11 @@ T3：8 → 13 → 14 → 9 → 10
 1. **T1 组 4：启动唯一 EtherCAT/Homing bridge。**
    - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
-   - Drive 0–2 使用传感器区间中点 Homing：原生方法先找到第一边沿，随后以
-     `1000` 的搜索速度沿同方向穿出有效区间，记录第二边沿，Halt 后反向到
-     `(entry+exit)/2`，最后用 Method 37 把中点设为 `0 counts`。D0/D1 穿越负方向，
-     D2 穿越正方向；不改变关节 direction 或 URDF offset。
+   - Drive 0–2 使用传感器区间中点 Homing：原生方法以 `1000` 找到第一边沿，
+     随后改用 `200` 的低速和正弦加速度曲线沿同方向穿出有效区间，记录第二边沿，
+     Halt 后以相同低速反向到 `(entry+exit)/2`，最后用 Method 37 把中点设为
+     `0 counts`。D0/D1 穿越负方向，D2 穿越正方向；不改变关节 direction 或
+     URDF offset。
    - 三轴到位后，Drive 3 从实时位置相对运动
      `+50000 counts`，再用 FAULHABER Homing Method 37 把到达位置设为 `0 counts`。
    - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
@@ -504,7 +505,9 @@ ros2 daemon start
 ```bash
 ros2 launch rascl_description homing.launch.py \
   interface:=enx3c18a0256deb \
-  homing_interval_max_travel_counts:=100000 \
+  homing_interval_max_travel_drive0_counts:=100000 \
+  homing_interval_max_travel_drive1_counts:=300000 \
+  homing_interval_max_travel_drive2_counts:=300000 \
   homing_interval_timeout_s:=120.0 \
   csp_torque_limit_per_mille:=1000 \
   clear_limit_switch_mappings_for_csp:=true \
@@ -559,15 +562,18 @@ ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 每轴动作顺序固定为：
 
 ```text
-第一边沿 → 同方向低速穿过有效区间 → 第二边沿 → Halt
-→ 反向到 (entry+exit)/2 → Method 37 将中点设为 0 counts
+以 1000 原生寻找第一边沿 → 以 200 正弦曲线同方向穿过有效区间
+→ 第二边沿 → Halt → 以 200 反向到 (entry+exit)/2
+→ Method 37 将中点设为 0 counts
 ```
 
 服务返回中的 `entry/exit` 是同一驱动坐标系下的两边沿 counts；`width` 是区间宽度，
 `midpoint` 是计算目标，`reached` 必须与它相差不超过 `100 counts`，`zero` 必须为
 `0` 附近。当前 `0x607C=0`，所以原生 Homing 锁存的第一边沿严格定义为
 `entry=0`；边沿后的减速停稳读数不参与中点计算。
-第二边沿最多允许从第一边沿继续搜索 `100000 counts`。第一边沿的原生搜索仍受
+第二边沿从第一边沿继续搜索的默认上限为 D0/D1/D2
+`100000/300000/300000 counts`。D0 已实测区间宽度约 `59657 counts`；D1 的
+`100000-count` 上限不足，因此只放宽 D1/D2 的守卫。第一边沿的原生搜索仍受
 `motion_timeout_s=8 s` 限制；有限距离的穿越和回中点分别使用 `120 s` 超时。未找到
 第二边沿、出现 fault/following error，或中点未到达时，
 该轴不会标记为 Homed，也不能交接 CSP。
@@ -853,7 +859,7 @@ source install/local_setup.bash
 | Homing method | D0–D2 第一边沿 `[28,28,24]`；区间中点再用 `37` 置零；Drive 3 当前点置零 `37` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]`；D3 Method 37 以零偏置定义当前位置 |
-| D0–D2 区间穿越 | 搜索速度 `[1000,1000,1000]`；最大 `100000 counts`；每阶段 `120 s`；中点容差 `100 counts` |
+| D0–D2 区间穿越 | 第一边沿速度 `1000`；第二边沿与回中点速度 `200`、正弦曲线；最大 `[100000,300000,300000] counts`；每阶段 `120 s`；中点容差 `100 counts` |
 | ROS direction（名义） | `[+1,+1,+1,-1]` |
 | ROS offset（名义） | `[0,-802816,-802816,0]` |
 | CSP mode | 8 |

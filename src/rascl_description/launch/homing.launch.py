@@ -26,11 +26,27 @@ def generate_launch_description():
         default_value="8.0",
         description="Timeout applied to each Homing search/move phase per drive.",
     )
-    homing_interval_max_travel_arg = DeclareLaunchArgument(
-        "homing_interval_max_travel_counts",
+    homing_interval_max_travel_drive0_arg = DeclareLaunchArgument(
+        "homing_interval_max_travel_drive0_counts",
         default_value="100000",
         description=(
-            "Maximum low-speed travel allowed from the first Homing edge while "
+            "Drive 0 maximum low-speed travel from the first Homing edge while "
+            "searching for the opposite edge."
+        ),
+    )
+    homing_interval_max_travel_drive1_arg = DeclareLaunchArgument(
+        "homing_interval_max_travel_drive1_counts",
+        default_value="300000",
+        description=(
+            "Drive 1 maximum low-speed travel from the first Homing edge while "
+            "searching for the opposite edge."
+        ),
+    )
+    homing_interval_max_travel_drive2_arg = DeclareLaunchArgument(
+        "homing_interval_max_travel_drive2_counts",
+        default_value="300000",
+        description=(
+            "Drive 2 maximum low-speed travel from the first Homing edge while "
             "searching for the opposite edge."
         ),
     )
@@ -227,10 +243,19 @@ def generate_launch_description():
                 "homing_search_speeds": [1000, 1000, 1000, 1000],
                 "homing_zero_speeds": [200, 200, 200, 200],
                 "homing_accelerations": [1000, 1000, 1000, 1000],
-                "homing_interval_max_travel_counts": ParameterValue(
-                    LaunchConfiguration("homing_interval_max_travel_counts"),
+                "homing_interval_max_travel_drive0_counts": ParameterValue(
+                    LaunchConfiguration("homing_interval_max_travel_drive0_counts"),
                     value_type=int,
                 ),
+                "homing_interval_max_travel_drive1_counts": ParameterValue(
+                    LaunchConfiguration("homing_interval_max_travel_drive1_counts"),
+                    value_type=int,
+                ),
+                "homing_interval_max_travel_drive2_counts": ParameterValue(
+                    LaunchConfiguration("homing_interval_max_travel_drive2_counts"),
+                    value_type=int,
+                ),
+                "homing_interval_max_travel_drive3_counts": 100_000,
                 "homing_interval_timeout_s": ParameterValue(
                     LaunchConfiguration("homing_interval_timeout_s"),
                     value_type=float,
@@ -250,7 +275,9 @@ def generate_launch_description():
             host_arg,
             port_arg,
             motion_timeout_arg,
-            homing_interval_max_travel_arg,
+            homing_interval_max_travel_drive0_arg,
+            homing_interval_max_travel_drive1_arg,
+            homing_interval_max_travel_drive2_arg,
             homing_interval_timeout_arg,
             test_drive_index_arg,
             pdo_cycle_ns_arg,

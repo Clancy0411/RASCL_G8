@@ -41,6 +41,7 @@ HOMING_METHOD = 0x6098
 PROFILE_VELOCITY = 0x6081
 PROFILE_ACCELERATION = 0x6083
 PROFILE_DECELERATION = 0x6084
+MOTION_PROFILE_TYPE = 0x6086
 HOMING_SPEED = 0x6099
 HOMING_SEARCH_SPEED = 0x01
 HOMING_ZERO_SPEED = 0x02
@@ -656,8 +657,10 @@ class FaulhaberDrive:
 
         The drive's native Homing method first finds the proven entry edge. The
         bridge then traverses the active reference interval in the same encoder
-        direction at ``search_speed``. The first inactive sample is the second
-        edge. Method 37 establishes the returned midpoint as zero.
+        direction at the lower ``zero_speed``. The first inactive sample is the
+        second edge. A sinusoidal Profile Position curve is used for this
+        traversal and the midpoint return. Method 37 establishes the returned
+        midpoint as zero.
         """
 
         if max_travel_counts <= 0:
@@ -708,6 +711,7 @@ class FaulhaberDrive:
             self.sdo_read_int(PROFILE_VELOCITY, 0, signed=False),
             self.sdo_read_int(PROFILE_ACCELERATION, 0, signed=False),
             self.sdo_read_int(PROFILE_DECELERATION, 0, signed=False),
+            self.sdo_read_int(MOTION_PROFILE_TYPE, 0, signed=True),
         )
         motion_active = False
         second_edge_counts: Optional[int] = None
@@ -719,7 +723,14 @@ class FaulhaberDrive:
             # electrical transition. Do not accept an inactive state as the
             # second edge until the active interval has actually been observed.
             active_interval_seen = self.read_reference_input_active(reference_input)
-            self.configure_profile_motion(search_speed, acceleration, acceleration)
+            # The native switch-seek speed is intentionally not reused here:
+            # the opposite edge and midpoint need the slower Homing speed.
+            # A sinusoidal acceleration profile reduces excitation of the
+            # geared arm while stopping at the edge and reversing to midpoint.
+            self.sdo_write_int(
+                MOTION_PROFILE_TYPE, 0, 1, size=2, signed=True
+            )
+            self.configure_profile_motion(zero_speed, acceleration, acceleration)
             self.move_absolute_counts(search_target_counts)
             motion_active = True
             deadline = time.monotonic() + interval_timeout_s
@@ -758,6 +769,9 @@ class FaulhaberDrive:
                     raise RuntimeError(
                         f"Drive {self.drive_id}: reference input did not become inactive "
                         f"within {max_travel_counts} counts after the first edge; "
+                        f"last_actual={actual_counts}, "
+                        f"reference_active={str(reference_active).lower()}, "
+                        f"active_interval_seen={str(active_interval_seen).lower()}, "
                         f"internal_limit_seen={str(internal_limit_seen).lower()}"
                     )
                 time.sleep(poll_s)
@@ -825,6 +839,9 @@ class FaulhaberDrive:
                 )
                 self.sdo_write_int(
                     PROFILE_DECELERATION, 0, original_profile[2], size=4, signed=False
+                )
+                self.sdo_write_int(
+                    MOTION_PROFILE_TYPE, 0, original_profile[3], size=2, signed=True
                 )
             except Exception as restore_exc:
                 print(
@@ -2591,7 +2608,10 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("homing_search_speeds", [1000, 1000, 1000, 1000])
         self.declare_parameter("homing_zero_speeds", [200, 200, 200, 200])
         self.declare_parameter("homing_accelerations", [1000, 1000, 1000, 1000])
-        self.declare_parameter("homing_interval_max_travel_counts", 100_000)
+        self.declare_parameter("homing_interval_max_travel_drive0_counts", 100_000)
+        self.declare_parameter("homing_interval_max_travel_drive1_counts", 300_000)
+        self.declare_parameter("homing_interval_max_travel_drive2_counts", 300_000)
+        self.declare_parameter("homing_interval_max_travel_drive3_counts", 100_000)
         self.declare_parameter("homing_interval_timeout_s", 120.0)
         self.declare_parameter("homing_interval_poll_s", 0.01)
         self.declare_parameter("homing_midpoint_tolerance_counts", 100)
@@ -2684,9 +2704,14 @@ class RASCLFaulhaberBridge(Node):
         self.homing_search_speeds = self._int_parameter_list("homing_search_speeds")
         self.homing_zero_speeds = self._int_parameter_list("homing_zero_speeds")
         self.homing_accelerations = self._int_parameter_list("homing_accelerations")
-        self.homing_interval_max_travel_counts = int(
-            self.get_parameter("homing_interval_max_travel_counts").value
-        )
+        self.homing_interval_max_travel_counts = [
+            int(
+                self.get_parameter(
+                    f"homing_interval_max_travel_drive{drive_index}_counts"
+                ).value
+            )
+            for drive_index in range(4)
+        ]
         self.homing_interval_timeout_s = float(
             self.get_parameter("homing_interval_timeout_s").value
         )
@@ -2759,8 +2784,10 @@ class RASCLFaulhaberBridge(Node):
         self.get_logger().info(
             "Drive 0-2 Homing uses the centre of the reference-input interval: "
             "find the first edge with the configured native method, traverse the "
-            "active interval at Homing search speed, return to (entry+exit)/2, "
-            "then set that midpoint to zero with Method 37"
+            "active interval and return to (entry+exit)/2 at the lower Homing "
+            "zero speed with a sinusoidal profile, then set that midpoint to "
+            "zero with Method 37; second-edge travel guards D0/D1/D2="
+            f"{self.homing_interval_max_travel_counts[:3]} counts"
         )
         if self.ignore_spur_gear_in_csp:
             self.get_logger().warning(
@@ -2823,12 +2850,17 @@ class RASCLFaulhaberBridge(Node):
             "homing_search_speeds": self.homing_search_speeds,
             "homing_zero_speeds": self.homing_zero_speeds,
             "homing_accelerations": self.homing_accelerations,
+            "homing_interval_max_travel_counts": (
+                self.homing_interval_max_travel_counts
+            ),
         }
         for name, values in parameters.items():
             if len(values) != expected:
                 raise ValueError(f"{name} needs {expected} entries, got {len(values)}")
-        if self.homing_interval_max_travel_counts <= 0:
-            raise ValueError("homing_interval_max_travel_counts must be positive")
+        if any(value <= 0 for value in self.homing_interval_max_travel_counts):
+            raise ValueError(
+                "homing_interval_max_travel_counts entries must be positive"
+            )
         if self.homing_interval_timeout_s <= 0.0:
             raise ValueError("homing_interval_timeout_s must be positive")
         if self.homing_interval_poll_s <= 0.0:
@@ -2925,7 +2957,7 @@ class RASCLFaulhaberBridge(Node):
             acceleration=self.homing_accelerations[drive_index],
             timeout_s=self.motion_timeout_s,
             interval_timeout_s=self.homing_interval_timeout_s,
-            max_travel_counts=self.homing_interval_max_travel_counts,
+            max_travel_counts=self.homing_interval_max_travel_counts[drive_index],
             poll_s=self.homing_interval_poll_s,
             midpoint_tolerance_counts=self.homing_midpoint_tolerance_counts,
         )
