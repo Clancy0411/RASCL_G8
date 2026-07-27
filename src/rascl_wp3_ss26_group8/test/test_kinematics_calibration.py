@@ -1,4 +1,4 @@
-"""Regression checks for the spur-gear-center TCP definition."""
+"""Regression checks for the measured ideal TCP definition."""
 
 import math
 from pathlib import Path
@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 
 from rascl_wp3_ss26_group8.kinematics import (
     BASE_TO_SHOULDER_ORIGIN,
+    SPUR_GEAR_ORIGIN_IN_LOWERARM,
     SPUR_GEAR_LIMIT,
     TCP_ORIGIN_IN_LOWERARM,
     forward_tcp,
@@ -42,7 +43,7 @@ def _find_urdf():
     raise AssertionError("Could not locate rascl_description/urdf/rascl.urdf")
 
 
-def test_urdf_and_python_use_the_same_tcp_origin():
+def test_urdf_and_python_use_separate_tcp_and_spur_origins():
     root = ET.parse(_find_urdf()).getroot()
     tcp_joint = next(
         joint
@@ -63,8 +64,16 @@ def test_urdf_and_python_use_the_same_tcp_origin():
     )
     _assert_vector_close(urdf_origin, TCP_ORIGIN_IN_LOWERARM)
     _assert_vector_close(
-        urdf_origin,
+        SPUR_GEAR_ORIGIN_IN_LOWERARM,
         tuple(float(value) for value in spur_origin.get("xyz").split()),
+    )
+    _assert_vector_close(
+        (
+            urdf_origin[0] - SPUR_GEAR_ORIGIN_IN_LOWERARM[0],
+            urdf_origin[1] - SPUR_GEAR_ORIGIN_IN_LOWERARM[1],
+            urdf_origin[2] - SPUR_GEAR_ORIGIN_IN_LOWERARM[2],
+        ),
+        (0.03084, 0.0, 0.0),
     )
     _assert_vector_close(
         tuple(float(value) for value in tcp_origin.get("rpy").split()),
@@ -120,19 +129,19 @@ def test_spur_gear_limits_match_urdf_and_ros2_control():
 def test_reference_tcp_positions_match_calibrated_geometry():
     _assert_vector_close(
         forward_tcp((0.0, 0.0, 0.0)),
-        (0.33756, 0.01823, 0.043001),
+        (0.36840, 0.01823, 0.043001),
     )
     _assert_vector_close(
         forward_tcp((0.0, math.pi / 2.0, math.pi / 2.0)),
-        (0.24756, 0.01823, 0.293001),
+        (0.27840, 0.01823, 0.293001),
     )
 
 
-def test_spur_gear_center_tcp_at_measured_joint_pose():
+def test_measured_ideal_tcp_at_measured_joint_pose():
     measured_joint_pose = (0.777575714851, 0.646147976068, 2.120655279445)
     _assert_vector_close(
         forward_tcp(measured_joint_pose),
-        (0.1710751938715591, -0.1115242161906357, 0.022972507874931877),
+        (0.17318807787920434, -0.11360430025228199, -0.007724634849867798),
     )
 
 

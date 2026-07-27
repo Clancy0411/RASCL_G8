@@ -32,16 +32,20 @@ SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 # and Y. The Z origin and all rotating/local geometry remain unchanged.
 BASE_TO_SHOULDER_ORIGIN = (0.040, 0.020, 0.057441)
 
-# Fixed Cartesian TCP at the spur_gear_joint center in the lowerarm frame.
-# Keeping a separate fixed link prevents gripper rotation from moving the
-# planning frame while matching the historical spur-gear-center reference.
-TCP_ORIGIN_IN_LOWERARM = (0.13916, 0.0, 0.0179)
+# The physical spur-gear axis remains at its CAD origin.  It is intentionally
+# separate from the measured ideal TCP so changing the planning reference does
+# not move the gripper mechanism or Drive 3 joint.
+SPUR_GEAR_ORIGIN_IN_LOWERARM = (0.13916, 0.0, 0.0179)
+
+# Measured ideal TCP: 170 mm along lowerarm +X from the remote reference hole.
+# The drawing's independent 17.9 mm perpendicular offset remains unchanged.
+TCP_ORIGIN_IN_LOWERARM = (0.170, 0.0, 0.0179)
 
 # Nominal position of the TCP in base_link when q=[0,0,0].  This is useful when
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.33756, 0.01823, 0.043001)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.36840, 0.01823, 0.043001)
 
 
 @dataclass

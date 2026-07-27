@@ -75,7 +75,8 @@ class WP3Task1SingleTarget(Node):
         self.get_logger().info("WP3 Task 1 single-target minimum-jerk node started.")
         self.get_logger().info("Target frame: base_link, unit: meter.")
         self.get_logger().info(
-            "TCP definition: fixed tcp_link at the spur_gear_joint center."
+            "TCP definition: fixed measured ideal tcp_link, 170 mm along "
+            "lowerarm +X; independent of the physical spur_gear_joint origin."
         )
         self.get_logger().info(
             "Calibration convention: URDF q=[0,0,0,0] remains the physical model-zero pose "

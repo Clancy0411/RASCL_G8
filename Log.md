@@ -487,3 +487,19 @@ the immediate Method 37 readback, including Drive 3, and interval evidence
 reports `zero_tolerance=500`. A readback such as `26 counts` is about
 `0.000051 rad` (`0.0029 deg`) and no longer blocks the next axis; values outside
 the configured tolerance still fail Homing.
+
+## 2026-07-27 measured lowerarm-to-TCP length
+
+Real-hardware measurement established that the ideal TCP is `170 mm` along
+lowerarm +X from the remote reference screw hole. The drawing's `17.9 mm`
+perpendicular offset remains independent and unchanged. The fixed planning
+frame therefore changed from `[0.13916,0,0.0179] m` to
+`[0.170,0,0.0179] m` in `lowerarm`.
+
+The physical `spur_gear_joint` remains at its CAD origin
+`[0.13916,0,0.0179] m`; its mesh, Drive 3 control, Homing, CSP and count
+mapping were not changed. URDF, Python FK/IK, the motion-node description,
+regression tests and calibration documents now use the same ideal TCP.
+Nominal model values are `[0.36840,0.01823,0.043001] m` at `q=[0,0,0]` and
+`[0.27840,0.01823,0.293001] m` at
+`q=[0,+pi/2,+pi/2]`.

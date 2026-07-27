@@ -5,8 +5,8 @@ This package contains the first WP3 application code for Group 8.
 The current milestone focuses on Task 1 preparation:
 
 - one Cartesian target is given in the `base_link` coordinate frame,
-- the tool center point (TCP) is the fixed `tcp_link` at the
-  `spur_gear_joint` center,
+- the tool center point (TCP) is the fixed, externally measured ideal
+  `tcp_link`,
 - the node solves inverse kinematics for the three arm joints,
 - it generates a joint-space minimum-jerk trajectory,
 - it publishes the trajectory to `/rascl_position_controller/commands`,
@@ -20,10 +20,12 @@ FAULHABER CSP mode and cyclic EtherCAT Position PDOs on real hardware.
 ## Coordinate convention
 
 All target coordinates are expressed in the URDF `base_link` frame, in meters.
-The TCP is the fixed `tcp_link` attached to `lowerarm`; it is co-located with
-the historical `spur_gear_joint` origin at
-`[0.13916, 0, 0.0179] m` in `lowerarm`. It does not move when
-`spur_gear_joint` opens or closes the gripper.
+The TCP is the fixed `tcp_link` attached to `lowerarm` at
+`[0.170, 0, 0.0179] m`: the measured ideal TCP is 170 mm along lowerarm +X,
+while the drawing's independent 17.9 mm perpendicular offset is retained.
+The physical `spur_gear_joint` remains at its CAD origin
+`[0.13916, 0, 0.0179] m`, 30.84 mm behind the TCP along lowerarm +X.
+Therefore gripper opening/closing does not move the planning TCP.
 
 The project applies a global XY translation from a physical calibration point:
 model XY `[0.12, 0.12] m` coincided with measured XY `[0.16, 0.16] m`.
@@ -44,7 +46,7 @@ The joint-coordinate convention from `3588dc98` is preserved:
 calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.33756, 0.01823, 0.043001] m
+base_link TCP = [0.36840, 0.01823, 0.043001] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -52,13 +54,14 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.24756, 0.01823, 0.293001] m
+base_link auto-home TCP = [0.27840, 0.01823, 0.293001] m
 ```
 
 The earlier single-pose gear-surface and grasp-center offsets are not applied
-to the current TCP. Calibration measurements now refer directly to the fixed
-`spur_gear_joint` center. The separate global base-frame calibration above
-contains the current XY correction.
+to the current TCP. Calibration measurements must refer to the externally
+measured ideal TCP represented by `tcp_link`, not the physical spur-gear axis.
+The separate global base-frame calibration above contains the current XY
+correction.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

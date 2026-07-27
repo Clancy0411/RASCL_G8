@@ -120,11 +120,12 @@
     </collision>
   </link>
 
-  <!-- Fixed Cartesian TCP at the center of spur_gear_joint. -->
+  <!-- Measured ideal TCP: 170 mm along lowerarm +X. The physical spur gear
+       remains at its separate CAD origin below. -->
   <joint name="tcp_fixed_joint" type="fixed">
     <parent link="lowerarm"/>
     <child link="tcp_link"/>
-    <origin xyz="0.13916 0 0.0179" rpy="0 -1.570796327 0"/>
+    <origin xyz="0.170 0 0.0179" rpy="0 -1.570796327 0"/>
   </joint>
 
   <link name="tcp_link"/>

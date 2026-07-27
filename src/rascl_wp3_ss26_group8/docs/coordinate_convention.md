@@ -4,10 +4,11 @@ Frame: `base_link` from `rascl_description/urdf/rascl.urdf`.
 
 Unit: meter.
 
-TCP for the first milestone: fixed `tcp_link`, attached to `lowerarm` and
-co-located with the historical `spur_gear_joint` origin at
-`[0.13916, 0, 0.0179] m` in `lowerarm`. It remains independent of
-`spur_gear_joint` motion.
+TCP for the first milestone: fixed `tcp_link`, attached to `lowerarm` at
+`[0.170, 0, 0.0179] m`. The measured ideal TCP is 170 mm along lowerarm +X;
+the drawing's independent 17.9 mm perpendicular offset remains unchanged.
+The physical `spur_gear_joint` stays at `[0.13916, 0, 0.0179] m`, so it is
+30.84 mm behind the planning TCP and its motion remains independent.
 
 Global XY calibration: model XY `[0.12, 0.12] m` coincided with measured
 physical XY `[0.16, 0.16] m`. The complete arm model is shifted
@@ -32,7 +33,7 @@ Home pose must read:
 In this automatic-Home pose, the kinematic model gives:
 
 ```text
-TCP in base_link = [0.24756, 0.01823, 0.293001] m
+TCP in base_link = [0.27840, 0.01823, 0.293001] m
 ```
 
 The original physical URDF-zero joint-angle convention remains; the listed TCP
@@ -40,13 +41,13 @@ uses the new calibrated `tcp_link`:
 
 ```text
 q = [0, 0, 0, 0] rad
-TCP in base_link = [0.33756, 0.01823, 0.043001] m
+TCP in base_link = [0.36840, 0.01823, 0.043001] m
 ```
 
 The earlier single-pose gear-surface and grasp-center offsets are no longer
-applied. Current calibration measurements refer directly to the fixed
-`spur_gear_joint` center. The separate global base-frame translation above
-remains active and must be evaluated independently.
+applied. Current calibration measurements refer to the measured ideal
+`tcp_link`, not the physical spur-gear axis. The separate global base-frame
+translation above remains active and must be evaluated independently.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
 interface applies nominal `direction=[+1,+1,+1,-1]` and
