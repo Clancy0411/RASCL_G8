@@ -55,12 +55,7 @@
   <joint name="shoulder_joint" type="revolute">
     <parent link="base_link"/>
     <child link="shoulder"/>
-    <!--
-      Global XY calibration: the real TCP at model XY [0.12, 0.12] was measured
-      at physical XY [0.16, 0.16]. Shift the whole arm model +40 mm in base_link
-      X and Y so requested and measured XY use the same coordinates. Z is unchanged.
-    -->
-    <origin xyz="0.040 0.020 0.057441" rpy="0 0 0"/>
+    <origin xyz="0 0 0.057441" rpy="0 0 0"/>
     <axis xyz="0 0 -1"/>
     <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="1.0"/>
   </joint>
@@ -119,15 +114,6 @@
       </geometry>
     </collision>
   </link>
-
-  <!-- Fixed Cartesian TCP at the center of spur_gear_joint. -->
-  <joint name="tcp_fixed_joint" type="fixed">
-    <parent link="lowerarm"/>
-    <child link="tcp_link"/>
-    <origin xyz="0.13916 0 0.0179" rpy="0 -1.570796327 0"/>
-  </joint>
-
-  <link name="tcp_link"/>
 
   <joint name="spur_gear_joint" type="revolute">
     <parent link="lowerarm"/>

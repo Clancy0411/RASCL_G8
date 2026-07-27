@@ -1,9 +1,9 @@
 """Small self-contained kinematics helper for the RASCL robot.
 
-The first WP3 milestone uses the calibrated ``tcp_link`` as the tool center
-point (TCP).  The geometry constants below are copied from
-rascl_description/urdf/rascl.urdf.  This avoids adding a heavy kinematics
-dependency while still making Cartesian targets consistent with URDF and TF.
+The uncompensated test baseline uses the CAD ``spur_gear_joint`` origin as the
+tool center point (TCP).  The geometry constants below are copied from
+rascl_description/urdf/rascl.urdf.  This keeps Cartesian targets consistent
+with the original URDF geometry while real-hardware errors are remeasured.
 """
 
 from __future__ import annotations
@@ -26,22 +26,16 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 
-# Global XY calibration. A joint pose reported at model XY [0.12, 0.12] was
-# measured at physical XY [0.16, 0.16]. Relative to the previous base origin,
-# the complete arm model is therefore translated +40 mm in both base_link X
-# and Y. The Z origin and all rotating/local geometry remain unchanged.
-BASE_TO_SHOULDER_ORIGIN = (0.040, 0.020, 0.057441)
-
-# Fixed Cartesian TCP at the spur_gear_joint center in the lowerarm frame.
-# Keeping a separate fixed link prevents gripper rotation from moving the
-# planning frame while matching the historical spur-gear-center reference.
+# Raw CAD/URDF geometry.  No measured base-frame translation or single-pose TCP
+# correction is applied in this test version.
+BASE_TO_SHOULDER_ORIGIN = (0.0, 0.0, 0.057441)
 TCP_ORIGIN_IN_LOWERARM = (0.13916, 0.0, 0.0179)
 
 # Nominal position of the TCP in base_link when q=[0,0,0].  This is useful when
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.33756, 0.01823, 0.043001)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.29756, -0.00177, 0.043001)
 
 
 @dataclass
@@ -155,7 +149,7 @@ def clamp_to_limits(q: Sequence[float], limits: Sequence[Tuple[float, float]] = 
 
 
 def forward_tcp(q_arm: Sequence[float]) -> Vector3:
-    """Return the calibrated ``tcp_link`` origin in base_link coordinates.
+    """Return the CAD ``spur_gear_joint`` origin in base_link coordinates.
 
     Args:
         q_arm: [shoulder_joint, upperarm_joint, lowerarm_joint] in radians.
@@ -182,8 +176,8 @@ def forward_tcp(q_arm: Sequence[float]) -> Vector3:
     transform = _matmul(transform, _origin((0.17, 0.08, 0.02183), (-math.pi, 0.0, 0.0)))
     transform = _matmul(transform, _axis_rotation((0.0, 0.0, -1.0), q3))
 
-    # Match the dedicated fixed tcp_link in rascl.urdf.  TCP must not depend on
-    # the gripper's spur_gear_joint angle.
+    # The raw baseline defines TCP at the spur_gear_joint origin.  Rotation of
+    # Drive 3 does not change the position of that joint origin.
     transform = _matmul(transform, _origin(TCP_ORIGIN_IN_LOWERARM, (0.0, -math.pi / 2.0, 0.0)))
     return _position(transform)
 

@@ -545,9 +545,9 @@ group_pack_logs() {
 
 group_tcp_pose() {
   load_ros
-  echo "当前模型 TCP：base_link -> tcp_link（读取实时 /joint_states）"
+  echo "当前原始 CAD 模型 TCP：base_link -> spur_gear（读取实时 /joint_states）"
   echo "Translation 的 x/y/z 单位为米；以下显示约 3 秒。"
-  timeout 3s ros2 run tf2_ros tf2_echo base_link tcp_link || [[ "$?" -eq 124 ]]
+  timeout 3s ros2 run tf2_ros tf2_echo base_link spur_gear || [[ "$?" -eq 124 ]]
 }
 
 group_gripper_action() {

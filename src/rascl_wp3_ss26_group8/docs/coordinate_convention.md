@@ -4,17 +4,19 @@ Frame: `base_link` from `rascl_description/urdf/rascl.urdf`.
 
 Unit: meter.
 
-TCP for the first milestone: fixed `tcp_link`, attached to `lowerarm` and
-co-located with the historical `spur_gear_joint` origin at
-`[0.13916, 0, 0.0179] m` in `lowerarm`. It remains independent of
-`spur_gear_joint` motion.
+This branch is the uncompensated measurement baseline.  Its TCP is the CAD
+`spur_gear_joint` origin in `lowerarm`:
 
-Global XY calibration: model XY `[0.12, 0.12] m` coincided with measured
-physical XY `[0.16, 0.16] m`. The complete arm model is shifted
-`[+0.040, +0.040, 0] m` relative to the preceding calibration, so the current
-`base_link -> shoulder_joint` origin is `[0.040, 0.020, 0.057441] m`.
-This fixed base-frame translation must not be folded into the rotating local
-TCP vector. Z is unchanged.
+```text
+[0.13916, 0, 0.0179] m
+```
+
+The former single-pose `tcp_link`, grasp-center extension, and all measured
+base-frame XY translations have been removed. The latest calibrated shoulder
+origin `[0.040, 0.020, 0.057441] m` is restored to the drawing value
+`[0, 0, 0.057441] m`. External measurements may still be recorded as physical
+Y/X/Z, but that convention is not converted into an automatic model correction
+in this baseline.
 
 Calibration for real hardware uses the validated reference-switch search from
 the `auto_homing` branch. Start in its safe search region, validate each axis
@@ -29,21 +31,20 @@ the URDF zero pose. With the nominal software count calibration, it must read:
 In this automatic-Home pose, the kinematic model gives:
 
 ```text
-TCP in base_link = [0.24756, 0.01823, 0.293001] m
+TCP in base_link = [0.20756, -0.00177, 0.293001] m
 ```
 
-The original physical URDF-zero joint-angle convention remains; the listed TCP
-uses the new calibrated `tcp_link`:
+The original physical URDF-zero joint-angle convention remains:
 
 ```text
 q = [0, 0, 0, 0] rad
-TCP in base_link = [0.33756, 0.01823, 0.043001] m
+TCP in base_link = [0.29756, -0.00177, 0.043001] m
 ```
 
-The earlier single-pose gear-surface and grasp-center offsets are no longer
-applied. Current calibration measurements refer directly to the fixed
-`spur_gear_joint` center. The separate global base-frame translation above
-remains active and must be evaluated independently.
+Use the same physical marker on the gripper for every measurement.  The CAD
+joint origin is a reproducible software reference, but it is not automatically
+the jaw contact center.  Record the raw discrepancy at Home and at several
+additional poses before fitting a new base transform or TCP offset.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
 interface applies nominal `direction=[+1,+1,+1,-1]` and

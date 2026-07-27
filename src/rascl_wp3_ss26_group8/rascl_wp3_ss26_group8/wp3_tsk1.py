@@ -34,7 +34,7 @@ class WP3Task1SingleTarget(Node):
     def __init__(self) -> None:
         super().__init__("wp3_tsk1")
 
-        # Target position of the calibrated tcp_link in the base_link frame.
+        # Target position of the uncompensated spur_gear_joint origin in base_link.
         self.declare_parameter("target_x", NOMINAL_ZERO_TCP_IN_BASE_LINK[0])
         self.declare_parameter("target_y", NOMINAL_ZERO_TCP_IN_BASE_LINK[1])
         self.declare_parameter("target_z", NOMINAL_ZERO_TCP_IN_BASE_LINK[2])
@@ -75,7 +75,7 @@ class WP3Task1SingleTarget(Node):
         self.get_logger().info("WP3 Task 1 single-target minimum-jerk node started.")
         self.get_logger().info("Target frame: base_link, unit: meter.")
         self.get_logger().info(
-            "TCP definition: fixed tcp_link at the spur_gear_joint center."
+            "TCP definition: uncompensated CAD spur_gear_joint origin."
         )
         self.get_logger().info(
             "Calibration convention: URDF q=[0,0,0,0] remains the physical model-zero pose "
