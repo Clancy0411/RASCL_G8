@@ -743,6 +743,58 @@ class BridgePDOTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "requires successful Homing"):
             node._adjust_homed_drive_counts(2, 500)
 
+    def test_node_sets_current_arm_pose_as_home_without_touching_drive3(self):
+        drives = [mock.Mock() for _ in range(4)]
+        for drive, before, after in zip(
+            drives[:3],
+            (1_250, -2_500, 3_750),
+            (3, -4, 5),
+        ):
+            drive.read_actual_position_counts.return_value = before
+            drive.home_current_position.return_value = after
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            homing_complete=True,
+            required_homing_drive_ids={0, 1, 2},
+            drives=drives,
+        )
+        node.spur_gear_reference_complete = True
+        node.home_adjust_timeout_s = 120.0
+        node.home_adjust_tolerance_counts = 100
+        logger = mock.Mock()
+        node.get_logger = lambda: logger
+
+        message = node._set_current_arm_position_as_home()
+
+        for drive in drives[:3]:
+            drive.home_current_position.assert_called_once_with(120.0, 100)
+        drives[3].read_actual_position_counts.assert_not_called()
+        drives[3].home_current_position.assert_not_called()
+        self.assertIn("drive0_before=1250", message)
+        self.assertIn("drive1_before=-2500", message)
+        self.assertIn("drive2_before=3750", message)
+        self.assertIn("drive0_after=3", message)
+        self.assertIn("Drive 3 unchanged", message)
+        warning_messages = [call.args[0] for call in logger.warning.call_args_list]
+        self.assertTrue(
+            any(message.startswith("MANUAL_ARM_HOME_CAPTURE") for message in warning_messages)
+        )
+        self.assertTrue(
+            any(message.startswith("MANUAL_ARM_HOME_SET") for message in warning_messages)
+        )
+
+    def test_node_rejects_manual_arm_home_before_drive3_reference(self):
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            homing_complete=True,
+            required_homing_drive_ids={0, 1, 2},
+            drives=[mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock()],
+        )
+        node.spur_gear_reference_complete = False
+
+        with self.assertRaisesRegex(RuntimeError, "Drive 3 reference"):
+            node._set_current_arm_position_as_home()
+
     def test_node_drive3_reference_failure_disables_drive(self):
         drive = mock.Mock()
         drive.move_relative_counts_and_wait.side_effect = RuntimeError(

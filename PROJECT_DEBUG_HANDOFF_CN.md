@@ -636,12 +636,16 @@ bash ./rascl_debug.sh <组号>
 19 Homing 后、CSP 前相对微调 Drive 0（输入 counts）
 20 Homing 后、CSP 前相对微调 Drive 1（输入 counts）
 21 Homing 后、CSP 前相对微调 Drive 2（输入 counts）
+22 用 Method 37 将 Drive 0–2 当前姿态设为本次会话 Home；Drive 3 不变
 ```
 
 脚本不会自动跨终端操作。组 `4` 和组 `7` 是前台持续进程。
 组 `19/20/21` 仅用于标定传感器区间中点到真实 Home 的差值：可反复输入正/负
 相对 counts，返回的 `correction_from_homed_zero` 是实时累计值；不会重设零点或
 写入永久参数。必须在组 `6` 成功后、组 `7` 之前使用。
+三轴到达确认的物理 Home 后执行组 `22`；输出会保留三个
+`driveN_before` 并要求 `driveN_after` 接近 0。该动作不运动，只重设 D0–D2 的会话
+零点；D3 不变。下次组 `6` 会覆盖该手动 Home。
 
 ## 14. 新机器第一次运行
 
@@ -686,11 +690,12 @@ Drive 3: absolute_counts=0, ... reference_complete=true
 bash ./rascl_debug.sh 19   # Drive 0
 bash ./rascl_debug.sh 20   # Drive 1
 bash ./rascl_debug.sh 21   # Drive 2
+bash ./rascl_debug.sh 22   # 当前 D0-D2 姿态设为会话 Home
 ```
 
-记录每轴最终 `correction_from_homed_zero`。永久标定公式为
-`new_home_offset_counts = current_home_offset_counts + correction_from_homed_zero`；
-改代码并重新编译前，不要把临时微调误认为已经保存。
+记录组 `22` 返回的 `drive0/1/2_before`。要永久改变自动 Homing 的物理终点，应在
+传感器区间中点后自动移动这些修正量，再执行 Method 37；只改
+`home_offset_counts` 只改变 ROS 映射，不改变自动 Homing 的物理终点。
 
 随后仍在 T2：
 

@@ -70,8 +70,11 @@ direction/offset pair only together when recalibrating Drive 2.
 For counts-level Home calibration, debug groups `19/20/21` can move Drives
 0/1/2 after `home_all` and before CSP. They are temporary relative Profile
 Position adjustments and do not redefine zero. The returned
-`correction_from_homed_zero` is incorporated permanently with
-`new_home_offset_counts = current_home_offset_counts + correction`.
+`correction_from_homed_zero` is the live correction from the sensor-interval
+midpoint. Group `22` can then use Method 37 to make the current Drive 0–2 pose
+the session Home while leaving Drive 3 unchanged. A permanent physical Home
+change must reproduce those post-midpoint moves before Method 37; changing
+`home_offset_counts` alone changes only the encoder-to-URDF mapping.
 
 ### `config/controllers.yaml`
 

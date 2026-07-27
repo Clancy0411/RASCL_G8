@@ -563,7 +563,16 @@ Before moving it clears only the selected drive's volatile
 `0x2310:01/:02` mappings so a stale limit flag in the reference region cannot
 block one Profile Position direction; `0x2310:04`, polarity and
 `0x607B/0x607D` are preserved.
-Permanent calibration uses
-`new_home_offset_counts = current_home_offset_counts +
-correction_from_homed_zero` followed by a rebuild and complete new Homing/CSP
-session.
+
+Debug group `22` now captures the three current correction counts and runs
+Method 37 on Drives 0–2 without issuing a position target. It verifies all
+three zero readbacks and explicitly leaves Drive 3 unchanged. This lets the
+fine-adjusted physical pose enter CSP as the existing nominal Home for the
+current session. The captured values are logged before the first Method 37
+write so a later-axis failure does not erase the calibration evidence.
+
+This also corrects the earlier permanent-calibration wording:
+`home_offset_counts` changes the encoder-to-URDF mapping but cannot move the
+next automatic Homing endpoint. Permanent physical correction must move each
+axis by the measured post-midpoint count and then run Method 37 during
+`home_all`.

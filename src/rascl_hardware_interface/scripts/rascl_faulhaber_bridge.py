@@ -3117,6 +3117,9 @@ class RASCLFaulhaberBridge(Node):
         self.adjust_home_counts_srv = self.create_service(
             Trigger, "~/adjust_home_counts", self.on_adjust_home_counts
         )
+        self.set_current_arm_home_srv = self.create_service(
+            Trigger, "~/set_current_arm_home", self.on_set_current_arm_home
+        )
         self.goto_home_all_srv = self.create_service(
             Trigger, "~/goto_home_all", self.on_goto_home_all
         )
@@ -3585,6 +3588,80 @@ class RASCLFaulhaberBridge(Node):
         except Exception as exc:
             response.success = False
             response.message = f"Home fine adjustment failed: {exc}"
+        return response
+
+    def _set_current_arm_position_as_home(self) -> str:
+        """Define the current Drive 0-2 positions as this session's Home zero."""
+
+        if not self.bus.homing_complete:
+            raise RuntimeError(
+                "Setting current pose as Home requires successful Homing of all "
+                "Drive 0-2 first"
+            )
+        if not self.spur_gear_reference_complete:
+            raise RuntimeError(
+                "Setting current pose as Home requires the Drive 3 reference "
+                "sequence to finish"
+            )
+
+        drive_indices = sorted(self.bus.required_homing_drive_ids)
+        if drive_indices != [0, 1, 2]:
+            raise RuntimeError(
+                "Manual arm Home expects required Homing drives [0, 1, 2], got "
+                f"{drive_indices}"
+            )
+
+        before = {
+            drive_index: self.bus.drives[drive_index].read_actual_position_counts()
+            for drive_index in drive_indices
+        }
+        before_message = " ".join(
+            f"drive{drive_index}_before={before[drive_index]}"
+            for drive_index in drive_indices
+        )
+        # Log the captured calibration values before the first Method 37 write,
+        # so they remain available even if a later drive fails.
+        self.get_logger().warning("MANUAL_ARM_HOME_CAPTURE " + before_message)
+
+        after: Dict[int, int] = {}
+        for drive_index in drive_indices:
+            try:
+                after[drive_index] = self.bus.drives[
+                    drive_index
+                ].home_current_position(
+                    self.home_adjust_timeout_s,
+                    self.home_adjust_tolerance_counts,
+                )
+            except Exception as exc:
+                completed = ",".join(str(index) for index in sorted(after)) or "none"
+                raise RuntimeError(
+                    f"Drive {drive_index} Method 37 failed after completed drives "
+                    f"[{completed}]; captured values: {before_message}; {exc}"
+                ) from exc
+
+        after_message = " ".join(
+            f"drive{drive_index}_after={after[drive_index]}"
+            for drive_index in drive_indices
+        )
+        message = (
+            "Current arm pose set as session Home with Method 37; "
+            f"{before_message}; {after_message}; Drive 3 unchanged"
+        )
+        self.get_logger().warning("MANUAL_ARM_HOME_SET " + message)
+        return message
+
+    def on_set_current_arm_home(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        try:
+            with self.lock:
+                self._ensure_non_csp_operation("set current arm pose as Home")
+                response.message = self._set_current_arm_position_as_home()
+            self.publish_home_done()
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.message = f"Set current arm Home failed: {exc}"
         return response
 
     def on_goto_home_all(

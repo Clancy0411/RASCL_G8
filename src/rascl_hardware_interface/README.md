@@ -177,6 +177,14 @@ With the normal mapping-cleanup option enabled, it first clears only that
 drive's volatile lower/upper input mappings at `0x2310:01/:02`; the Homing
 reference, polarity, and `0x607B/0x607D` remain unchanged.
 
+After fine adjustment, the `set_current_arm_home` Trigger service captures the
+live Drive 0–2 counts and runs Method 37 on those three drives without issuing
+a position move. It reports every `driveN_before` calibration value and
+`driveN_after` zero readback. Drive 3 is not read, moved, or re-zeroed. The
+service has the same completed-Homing and pre-CSP requirements and establishes
+only a session Home; the next sensor `home_all` overwrites it. Debug group `22`
+wraps this service.
+
 ## Running with Real Hardware (CSP/PDO)
 
 After `home_all`, keep that bridge running and start ros2_control without a

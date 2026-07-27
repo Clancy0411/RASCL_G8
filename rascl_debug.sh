@@ -462,7 +462,30 @@ group_adjust_home_counts() {
   grep -q "success=True" <<<"$response" ||
     die "Drive $drive Home 微调失败；不要进入 CSP"
   echo "可重复执行本组；correction_from_homed_zero 是当前相对本次 Homing 零点的实际累计 counts。"
-  echo "确认三轴物理 Home 后记录各轴该值，再执行组 7；本操作不会重设零点。"
+  echo "确认三轴物理 Home 后记录各轴该值；若要让当前姿态成为本次会话 Home，先执行组 22，再执行组 7。"
+}
+
+group_set_current_arm_home() {
+  local response
+  load_ros
+  response="$(
+    ros2 service call \
+      /rascl_faulhaber_bridge/set_current_arm_home \
+      std_srvs/srv/Trigger "{}"
+  )" || die "当前姿态设为 Home 的服务调用失败"
+  printf '%s\n' "$response"
+  grep -q "success=True" <<<"$response" ||
+    die "当前姿态未能完整设为 Home；不要进入 CSP"
+  for drive in 0 1 2; do
+    grep -q "drive${drive}_before=" <<<"$response" ||
+      die "缺少 Drive $drive 置零前 counts；不要进入 CSP"
+    grep -q "drive${drive}_after=" <<<"$response" ||
+      die "缺少 Drive $drive Method 37 回读；不要进入 CSP"
+  done
+  grep -q "Drive 3 unchanged" <<<"$response" ||
+    die "服务未确认 Drive 3 保持不变；不要进入 CSP"
+  echo "Drive 0-2 当前姿态已成为本次会话 Home；Drive 3 零位未改变。现在可执行组 7。"
+  echo "请保存 drive0/1/2_before；下次重新执行组 6 时，本次手动 Home 会被覆盖。"
 }
 
 group_csp_launch() {
@@ -1079,10 +1102,11 @@ print_menu() {
     " 19  Homing 后微调 Drive 0（相对 counts）               [T2，会运动]" \
     " 20  Homing 后微调 Drive 1（相对 counts）               [T2，会运动]" \
     " 21  Homing 后微调 Drive 2（相对 counts）               [T2，会运动]" \
+    " 22  将 Drive 0-2 当前姿态设为本次 Home                 [T2，不运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→（可选 19/20/21）→7；T3=8→13→14→9→10。Drive 3：T3=15 运动，17 读 counts。"
+    "CSP 顺序：T1=4；T2=6→（标定时 19/20/21→22）→7；T3=8→13→14→9→10。Drive 3：T3=15 运动，17 读 counts。"
 }
 
 run_group() {
@@ -1108,6 +1132,7 @@ run_group() {
     19) group_adjust_home_counts 0 ;;
     20) group_adjust_home_counts 1 ;;
     21) group_adjust_home_counts 2 ;;
+    22) group_set_current_arm_home ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

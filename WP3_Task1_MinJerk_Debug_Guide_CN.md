@@ -36,6 +36,8 @@ T2：6
     ↓ D0–D2 回到各自传感区间中点后，D3 自动 +50000 counts 并置零；必须显示 success=True
 T2：可选 19 / 20 / 21
     ↓ 仅在标定时，以相对 counts 分别微调 D0 / D1 / D2；记录 correction_from_homed_zero
+T2：标定时执行 22
+    ↓ 不运动；以 Method 37 将当前 D0–D2 姿态设为本次会话 Home，D3 不变
 T2：7
     ↓ ros2_control 保持运行，不能 Ctrl-C
 T3：8 → 13 → 14 → 9 → 10
@@ -84,9 +86,16 @@ T3：8 → 13 → 14 → 9 → 10
    - `19/20/21` 分别微调 Drive `0/1/2`。输入带正负号的相对 counts；同组可反复执行。
    - 输出的 `correction_from_homed_zero` 是该轴相对本次 Method 37 Homing 零点的实时累计
      counts，不需要手工累加。三个组都不会重新 Homing、不会重设零点、不会移动 Drive 3。
-   - 找到正确物理 Home 后记录三个累计值。它们是标定数据，不会因本次试验自动写入代码；
-     后续永久修正时分别加到当前三个 `home_offset_counts`。
-4. **仍在 T2 选择组 7：启动 CSP ros2_control。**
+   - 找到正确物理 Home 后记录三个累计值，再执行组 `22`。它们是标定数据，不会因本次
+     试验自动写入代码。
+4. **标定时仍在 T2 选择组 22：将当前姿态设为本次会话 Home。**
+   - Drive 0–2 依次用 Method 37 把当前位置定义为 `0 counts`，不会产生主动运动；
+     Drive 3 的夹爪零位不变。
+   - 必须保存输出中的 `drive0_before/drive1_before/drive2_before`。它们是将来固化自动
+     Homing 所需的三轴修正量；三个 `driveN_after` 应接近 `0`。
+   - 该 Home 只对当前上电/EtherCAT 会话有效。重新执行组 `6` 会再次以传感器区间中点
+     置零并覆盖它。
+5. **仍在 T2 选择组 7：启动 CSP ros2_control。**
    - 组 7 必须复用仍在 T1 运行的 bridge，不能另开 bridge。
    - T1 必须出现 `CSP_LIMIT_SWITCH_CONFIGURATION`。D0–D3 的
      `lower/upper` 最终都必须是 `0x00/0x00`，且 `device` 不再含
@@ -111,23 +120,23 @@ T3：8 → 13 → 14 → 9 → 10
      失败，组 `7` 会直接拒绝进入 CSP，此时禁止发送运动目标。
    - T1 必须出现 `Master reached OP state` 和 Homing-to-CSP handoff 成功信息。
    - T2 必须出现 `Activated real RASCL hardware in csp mode`；组 7 随后持续占住 T2。
-5. **T3 组 8：检查 controller 和 joint state。**
+6. **T3 组 8：检查 controller 和 joint state。**
    - `joint_state_broadcaster` 与 `rascl_position_controller` 必须都是 `active`。
    - `/joint_states` 必须连续输出；四轴应接近 `[0,+1.5708,+1.5708,0]`。
    - 任一项不满足，禁止执行组 9/10。
-6. **T3 组 13：查看当前模型 TCP。**
+7. **T3 组 13：查看当前模型 TCP。**
    - 读取 TF `base_link -> tcp_link`；当前 TCP 是沿 lowerarm +X 测得的
      170 mm 理想点，名义 Home 应接近
      `[0.23840,-0.00177,0.293001] m`。记录输出并测量同一实体参考点。
-7. **T3 组 14：输入下一目标。**
+8. **T3 组 14：输入下一目标。**
    - 依次输入 TCP 的 `x/y/z`（米）和运动时间（秒）。
    - 整数或小数都可，例如输入 `5` 会自动作为 `5.0` 秒发送给 ROS。
    - 只设置目标，不会运动。
-8. **T3 组 9：只规划。**
+9. **T3 组 9：只规划。**
    - 必须 IK success、命令正常结束，且脚本确认 CSV 不含 `nan/inf`。
    - 成功后会保存“当前 CSP 会话 + 当前目标”的执行授权；可在同一菜单或另一次
      `bash ./rascl_debug.sh 10` 中执行。
-9. **T3 组 10：执行。**
+10. **T3 组 10：执行。**
    - 脚本再次确认两个 controller 为 `active` 且 `/joint_states` 可用。
    - 组 `10` 不再要求输入二次确认，执行后立即开始已规划的轨迹。
    - 结束时必须出现 `MOTION_RESULT reached=true`。节点会核对最终四轴反馈和 TCP；仅把
@@ -370,9 +379,10 @@ bash ./rascl_debug.sh
 | 17 | T2/T3 | 只读 Drive 3 当前绝对 counts（本次 Method 37 零位） |
 | 18 | T2 | CSP 前只读输入映射和 Drive 2 保护参数 |
 | 19 / 20 / 21 | T2 | `home_all` 后、CSP 前分别相对微调 Drive 0 / 1 / 2 |
+| 22 | T2 | 将 Drive 0–2 当前姿态设为本次会话 Home；Drive 3 不变 |
 
 日常实机顺序以本指南最前面的
-`T1:4 → T2:6→（标定时可选 19/20/21）→7 → T3:8→13→14→9→10`
+`T1:4 → T2:6→（标定时 19/20/21→22）→7 → T3:8→13→14→9→10`
 为准。下面保留原始命令用于排错。
 
 ## 2. 编译与软件测试
@@ -657,14 +667,29 @@ Drive 3 参考未完成、PDO 已准备或 CSP 已启动时，服务会拒绝动
 `positive/negative_limit_switch` 阻挡 Profile Position；`0x2310:04` Homing reference、
 输入 polarity 和 `0x607B/0x607D` 均不改变，组 `7` 仍会对全部轴统一复核。
 
-测试得出最终修正量后，停止会话并修改固定映射：
+三轴到达确认过的物理 Home 后执行：
 
-```text
-new_home_offset_counts = current_home_offset_counts + correction_from_homed_zero
+```bash
+bash ./rascl_debug.sh 22
 ```
 
-当前基值是 D0/D1/D2 = `[0,-802816,-802816]`。修改并重新编译后必须重新执行完整
-`4 → 6 → 7`，不能把刚才的临时微调位置当作已永久标定。
+组 `22` 不发送位置目标，只读取 D0–D2 当前 counts，然后逐轴运行 Method 37。成功消息
+必须同时包含：
+
+```text
+drive0_before=... drive1_before=... drive2_before=...
+drive0_after=...  drive1_after=...  drive2_after=...
+Drive 3 unchanged
+```
+
+保存三个 `before` 值；`after` 应在 `100 counts` 内接近 `0`。此后可以直接执行组 `7`，
+当前物理姿态会按现有映射表示为名义 Home `[0,+pi/2,+pi/2]`。组 `22` 只建立会话零点，
+不会永久改变下一次自动 Homing。
+
+要让以后每次组 `6` 都自动到达该物理姿态，正确的永久方案是在“区间中点”之后按三轴
+`before` 修正量移动，再执行 Method 37。只修改 `home_offset_counts` 只会改变
+encoder-to-URDF 映射，不会让机械臂物理移动到修正后的 Home；因此先把三个实测值发回，
+再统一固化自动 Homing 流程。
 
 ## 6. 可选：一次性精标 home_offset_counts
 
