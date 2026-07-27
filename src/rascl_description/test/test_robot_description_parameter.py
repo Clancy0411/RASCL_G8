@@ -115,3 +115,6 @@ def test_homing_motion_defaults_limit_transient_lag_and_interval_travel():
     assert defaults["homing_interval_max_travel_drive1_counts"] == "300000"
     assert defaults["homing_interval_max_travel_drive2_counts"] == "300000"
     assert defaults["homing_interval_timeout_s"] == "120.0"
+    assert '"homing_midpoint_tolerance_counts": 500' in HOMING_LAUNCH.read_text(
+        encoding="utf-8"
+    )

@@ -241,7 +241,7 @@ homing_interval_max_travel_drive1_counts = 300000
 homing_interval_max_travel_drive2_counts = 300000
 homing_interval_timeout_s = 120.0
 homing_interval_poll_s = 0.01
-homing_midpoint_tolerance_counts = 100
+homing_midpoint_tolerance_counts = 500
 第二边沿穿越和回中点速度 = homing_zero_speeds = [200,200,200]
 第二边沿穿越和回中点曲线 = 0x6086:00 = 1（正弦加速度，会话内临时设置）
 spur_gear_reference_delta_counts = +50000
@@ -272,7 +272,8 @@ Drive 3，再返回失败；不得通过跳过该失败来强制执行 Method 37
 不可破坏的约束：
 
 1. T1 启动唯一 Homing bridge；Drive 0–2 必须各自返回
-   `driveN_interval(entry,exit,width,midpoint,reached,zero=0)`；
+   `driveN_interval(entry,exit,width,midpoint,reached,zero,zero_tolerance=500)`，
+   并要求 `abs(zero)<=500`；
 2. `home_all` 成功后 T1 不能停止；
 3. T2 的 CSP ros2_control 必须复用 T1 bridge；
 4. Home 与 CSP 之间不能关闭并重建 EtherCAT master；

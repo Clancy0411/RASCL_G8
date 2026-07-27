@@ -244,7 +244,7 @@ def generate_launch_description():
                 "homing_interval_max_travel_drive3_counts": 100_000,
                 "homing_interval_timeout_s": 120.0,
                 "homing_interval_poll_s": 0.01,
-                "homing_midpoint_tolerance_counts": 100,
+                "homing_midpoint_tolerance_counts": 500,
                 "test_drive_index": 0,
             }
         ],

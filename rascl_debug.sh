@@ -334,6 +334,7 @@ group_homing_bridge() {
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
   echo "Drive 0-2 自动寻找参考输入区间两端，以 200 的低速正弦曲线回到 (entry+exit)/2 并置零；D0/D1/D2 第二边沿最大搜索距离分别为 $HOMING_INTERVAL_MAX_TRAVEL_DRIVE0_COUNTS/$HOMING_INTERVAL_MAX_TRAVEL_DRIVE1_COUNTS/$HOMING_INTERVAL_MAX_TRAVEL_DRIVE2_COUNTS counts，穿越/回中点超时 $HOMING_INTERVAL_TIMEOUT_S s。"
+  echo "Homing 中点到位和 Method 37 置零回读共用 500 counts 容差；不再使用会误拦截动作的 10-count 严格检查。"
   echo "三轴到位后 Drive 3 相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，并以 Method 37 把到达位置设为 0 counts。"
   echo "Drive 3 参考运动：速度 $SPUR_GEAR_REFERENCE_PROFILE_VELOCITY counts/s，加/减速度 $SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION/$SPUR_GEAR_REFERENCE_PROFILE_DECELERATION，following-error 持续 $SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S s 才中断。"
   echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；0x607B/0x607D 软件位置限位只读取、不改写。"

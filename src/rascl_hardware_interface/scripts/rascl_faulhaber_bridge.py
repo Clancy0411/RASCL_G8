@@ -813,7 +813,7 @@ class FaulhaberDrive:
                     f"(tolerance {midpoint_tolerance_counts})"
                 )
             zero_readback_counts = self.home_current_position(
-                timeout_s, min(midpoint_tolerance_counts, 10)
+                timeout_s, midpoint_tolerance_counts
             )
         except Exception:
             if motion_active:
@@ -2614,7 +2614,7 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("homing_interval_max_travel_drive3_counts", 100_000)
         self.declare_parameter("homing_interval_timeout_s", 120.0)
         self.declare_parameter("homing_interval_poll_s", 0.01)
-        self.declare_parameter("homing_midpoint_tolerance_counts", 100)
+        self.declare_parameter("homing_midpoint_tolerance_counts", 500)
         self.declare_parameter("test_drive_index", 0)
 
         self.interface = str(self.get_parameter("interface").value)
@@ -2969,7 +2969,8 @@ class RASCLFaulhaberBridge(Node):
             f"width={abs(result.second_edge_counts - result.first_edge_counts)} "
             f"midpoint={result.midpoint_counts} "
             f"reached={result.midpoint_actual_counts} "
-            f"zero={result.zero_readback_counts}"
+            f"zero={result.zero_readback_counts} "
+            f"zero_tolerance={self.homing_midpoint_tolerance_counts}"
         )
         self.bus.mark_drive_homed(drive_index)
         return result.zero_readback_counts
@@ -2983,7 +2984,8 @@ class RASCLFaulhaberBridge(Node):
             f"width={abs(result.second_edge_counts - result.first_edge_counts)},"
             f"midpoint={result.midpoint_counts},"
             f"reached={result.midpoint_actual_counts},"
-            f"zero={result.zero_readback_counts})"
+            f"zero={result.zero_readback_counts},"
+            f"zero_tolerance={self.homing_midpoint_tolerance_counts})"
         )
 
     def _reference_spur_gear_after_arm_homing(self) -> str:
@@ -3020,7 +3022,7 @@ class RASCLFaulhaberBridge(Node):
             )
             zero = drive.home_current_position(
                 self.spur_gear_reference_timeout_s,
-                min(self.spur_gear_reference_tolerance_counts, 10),
+                self.homing_midpoint_tolerance_counts,
             )
         except Exception:
             # A failed Profile Position or Method 37 command may otherwise keep

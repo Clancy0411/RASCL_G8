@@ -389,6 +389,39 @@ class BridgePDOTest(unittest.TestCase):
             int(0).to_bytes(4, "little", signed=True),
         )
 
+    def test_homing_method_37_accepts_small_readback_inside_configured_tolerance(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=1, sdo_delay_s=0.0, verbose=False
+        )
+        completed_status = (
+            bridge.STATUS_OPERATION_ENABLED_STATE
+            | bridge.STATUS_TARGET_REACHED
+            | bridge.STATUS_HOMING_ATTAINED
+        )
+
+        def write_controlword(command, delay=None):
+            del delay
+            if command == bridge.CMD_ENABLE_OPERATION:
+                return bridge.STATUS_OPERATION_ENABLED_STATE
+            return 0
+
+        with (
+            mock.patch.object(drive, "reset_fault_if_needed"),
+            mock.patch.object(
+                drive, "set_operation_mode", side_effect=lambda mode: mode
+            ),
+            mock.patch.object(
+                drive, "write_controlword", side_effect=write_controlword
+            ),
+            mock.patch.object(drive, "read_status", return_value=completed_status),
+            mock.patch.object(drive, "read_actual_position_counts", return_value=26),
+        ):
+            zero = drive.home_current_position(
+                timeout_s=1.0, tolerance_counts=100
+            )
+
+        self.assertEqual(zero, 26)
+
     def test_interval_homing_crosses_both_edges_and_zeros_positive_midpoint(self):
         slave = FakeSlave()
         drive = bridge.FaulhaberDrive(
@@ -446,7 +479,7 @@ class BridgePDOTest(unittest.TestCase):
         start_traverse.assert_called_once_with(100_000)
         halt_traverse.assert_called_once_with(1.0)
         move_midpoint.assert_called_once_with(120, 2.0)
-        zero_midpoint.assert_called_once_with(1.0, 10)
+        zero_midpoint.assert_called_once_with(1.0, 100)
         profile_type_writes = [
             int.from_bytes(payload, "little", signed=True)
             for index, subindex, payload in slave.writes
@@ -590,7 +623,7 @@ class BridgePDOTest(unittest.TestCase):
         node.homing_interval_max_travel_counts = [100_000]
         node.homing_interval_timeout_s = 120.0
         node.homing_interval_poll_s = 0.01
-        node.homing_midpoint_tolerance_counts = 100
+        node.homing_midpoint_tolerance_counts = 500
         node.motion_timeout_s = 8.0
         node.bus = types.SimpleNamespace(
             drives=[drive],
@@ -617,7 +650,7 @@ class BridgePDOTest(unittest.TestCase):
             interval_timeout_s=120.0,
             max_travel_counts=100_000,
             poll_s=0.01,
-            midpoint_tolerance_counts=100,
+            midpoint_tolerance_counts=500,
         )
         self.assertIn("entry=0", logger.warning.call_args.args[0])
         self.assertIn("midpoint=-120", logger.warning.call_args.args[0])
@@ -644,6 +677,7 @@ class BridgePDOTest(unittest.TestCase):
         node.spur_gear_reference_profile_acceleration = 1_000
         node.spur_gear_reference_profile_deceleration = 1_000
         node.spur_gear_reference_following_error_confirm_s = 0.30
+        node.homing_midpoint_tolerance_counts = 500
         node.spur_gear_reference_complete = False
         node.spur_gear_reference_source_counts = None
         node.spur_gear_reference_target_counts = None
@@ -659,7 +693,7 @@ class BridgePDOTest(unittest.TestCase):
         drive.move_relative_counts_and_wait.assert_called_once_with(
             50_000, 30.0, 100, 0.30
         )
-        drive.home_current_position.assert_called_once_with(30.0, 10)
+        drive.home_current_position.assert_called_once_with(30.0, 500)
         self.assertTrue(node.spur_gear_reference_complete)
         self.assertEqual(node.spur_gear_reference_pre_zero_counts, 169_975)
         self.assertEqual(node.spur_gear_reference_zero_readback, 0)

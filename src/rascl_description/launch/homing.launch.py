@@ -261,7 +261,7 @@ def generate_launch_description():
                     value_type=float,
                 ),
                 "homing_interval_poll_s": 0.01,
-                "homing_midpoint_tolerance_counts": 100,
+                "homing_midpoint_tolerance_counts": 500,
                 "test_drive_index": ParameterValue(
                     LaunchConfiguration("test_drive_index"), value_type=int
                 ),

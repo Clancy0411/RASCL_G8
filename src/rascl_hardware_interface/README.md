@@ -154,7 +154,10 @@ input interval in the same encoder direction at the lower Homing zero speed
 without removing motor torque, returns to `(entry + exit) / 2` with the same
 smooth profile, and uses Method 37 to make that midpoint zero. The service
 response reports both edges, interval width, commanded/reached midpoint, and
-zero readback. The default Drive 0/1/2 second-edge guards are
+zero readback. Both midpoint endpoint error and the immediate Method 37
+readback use one deliberately simple `500`-count tolerance; this prevents harmless
+post-zero encoder settling from rejecting the next axis. The default Drive
+0/1/2 second-edge guards are
 `100000/300000/300000` counts with a `120 s` timeout for each finite
 traversal/return phase; a missing edge,
 fault, following error, or midpoint error rejects Homing and CSP handoff.

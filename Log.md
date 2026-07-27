@@ -475,3 +475,15 @@ second-edge travel guards are now independent defaults of
 also reports `last_actual`, `reference_active`, `active_interval_seen`, and
 `internal_limit_seen`. Native first-edge methods, directions, inputs, offsets,
 Drive 3, CSP/PDO, URDF, and Cartesian planning are unchanged.
+
+The next real run validated the smooth interval search on Drives 0 and 1:
+Drive 0 returned `entry=0, exit=-57190, midpoint=-28595, reached=-28592,
+zero=0`. Drive 1 also found its interval and returned to midpoint, but its
+successful Method 37 completion was rejected before Drive 2 started because
+the immediate zero readback was `26 counts` while the call had silently reduced
+the configured `100-count` midpoint tolerance to `10 counts`. The implementation
+now uses one easy-to-understand `500-count` tolerance for midpoint arrival and
+the immediate Method 37 readback, including Drive 3, and interval evidence
+reports `zero_tolerance=500`. A readback such as `26 counts` is about
+`0.000051 rad` (`0.0029 deg`) and no longer blocks the next axis; values outside
+the configured tolerance still fail Homing.

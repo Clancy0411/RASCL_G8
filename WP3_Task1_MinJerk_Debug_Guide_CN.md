@@ -68,8 +68,9 @@ T3：8 → 13 → 14 → 9 → 10
    - 开始时会打印每个 Drive 的输入状态及 `0x2310 lower/upper/option/reference`，
      用于记录 CSP 修复前的限位输入映射。
    - 先运动 Drive 0–2。每轴都必须打印
-     `driveN_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)`；
-     缺少任一轴记录时脚本会停止。随后 Drive 3 执行 `+50000 counts` 并置零。
+     `driveN_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=...,zero_tolerance=500)`；
+     `abs(zero)` 必须不超过 `500 counts`。缺少任一轴记录时脚本会停止。随后
+     Drive 3 执行 `+50000 counts` 并置零。
    - 必须返回 `success=True`、`CSP handoff armed`，且消息中包含
      `drive3_reference(...delta=50000,...zero=0,method=37)`。
    - 随后脚本自动调用 counts 查询；必须显示
@@ -568,8 +569,8 @@ ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 ```
 
 服务返回中的 `entry/exit` 是同一驱动坐标系下的两边沿 counts；`width` 是区间宽度，
-`midpoint` 是计算目标，`reached` 必须与它相差不超过 `100 counts`，`zero` 必须为
-`0` 附近。当前 `0x607C=0`，所以原生 Homing 锁存的第一边沿严格定义为
+`midpoint` 是计算目标，`reached` 必须与它相差不超过 `500 counts`，`zero` 必须为
+`0` 附近且绝对值不超过 `500 counts`。当前 `0x607C=0`，所以原生 Homing 锁存的第一边沿严格定义为
 `entry=0`；边沿后的减速停稳读数不参与中点计算。
 第二边沿从第一边沿继续搜索的默认上限为 D0/D1/D2
 `100000/300000/300000 counts`。D0 已实测区间宽度约 `59657 counts`；D1 的
@@ -601,9 +602,9 @@ ros2 service call /rascl_faulhaber_bridge/read_drive2_diagnostics \
 ```text
 success=True
 Homing completed for required drives; CSP handoff armed ...
-drive0_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)
-drive1_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)
-drive2_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)
+drive0_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=...,zero_tolerance=500)
+drive1_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=...,zero_tolerance=500)
+drive2_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=...,zero_tolerance=500)
 drive3_reference(...zero=0,method=37)
 Drive 3: absolute_counts=0 ... reference_complete=true
 ```
@@ -840,7 +841,7 @@ source install/local_setup.bash
 
 1. 软件测试和 fake hardware 全部通过。
 2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；三轴均返回两边沿、中点和
-   `zero=0` 记录；Drive 3 随后完成
+   `abs(zero)<=500` 记录；Drive 3 随后完成
    `+50000 counts + Method 37` 置零，组 `17` 回读接近 `0`。
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
 4. Drive 0–2 连续交接；Drive 3 完成固定参考与 Method 37 置零后进入 CSP。
@@ -859,7 +860,7 @@ source install/local_setup.bash
 | Homing method | D0–D2 第一边沿 `[28,28,24]`；区间中点再用 `37` 置零；Drive 3 当前点置零 `37` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]`；D3 Method 37 以零偏置定义当前位置 |
-| D0–D2 区间穿越 | 第一边沿速度 `1000`；第二边沿与回中点速度 `200`、正弦曲线；最大 `[100000,300000,300000] counts`；每阶段 `120 s`；中点容差 `100 counts` |
+| D0–D2 区间穿越 | 第一边沿速度 `1000`；第二边沿与回中点速度 `200`、正弦曲线；最大 `[100000,300000,300000] counts`；每阶段 `120 s`；中点/置零回读容差 `500 counts` |
 | ROS direction（名义） | `[+1,+1,+1,-1]` |
 | ROS offset（名义） | `[0,-802816,-802816,0]` |
 | CSP mode | 8 |
