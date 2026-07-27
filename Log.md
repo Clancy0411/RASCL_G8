@@ -437,3 +437,22 @@ with it: `close/c=-500000 counts` maximum travel and
 `open/o=+200000 counts` exact travel. Direct signed integer group `15` input
 keeps raw encoder semantics, so a positive custom value still increases the
 group `17` `absolute_counts` readback.
+
+## 2026-07-27 Drive 0–2 reference-interval midpoint Homing
+
+Drive 0–2 no longer keep the first detected reference-switch edge as their raw
+zero. The existing FAULHABER methods `[28,28,24]` still find the proven first
+edge. Each drive then continues in the same encoder direction at the configured
+`1000` search speed until the polarity-corrected reference input becomes
+inactive, records that exit count, halts without removing torque, returns to
+`(entry+exit)/2`, and uses Method 37 to define the midpoint as `0 counts`.
+Because `0x607C=0`, the native latched edge is exactly `entry=0`; the
+post-edge deceleration stop readback is diagnostic only and is not averaged.
+
+The finite second-edge and midpoint moves are limited to `100000 counts` and
+`120 s` per phase; the initial native search keeps its original `8 s` timeout.
+Fault, following error, a missing exit edge, or midpoint error prevents the axis
+from being marked Homed and blocks CSP handoff. `home_one/home_all` and debug
+groups `5/6` now report and verify `entry`, `exit`, `width`, `midpoint`,
+`reached`, and `zero` for every required arm drive. Drive directions, URDF/count
+offsets, Drive 3 reference logic, CSP/PDO, and Cartesian planning are unchanged.

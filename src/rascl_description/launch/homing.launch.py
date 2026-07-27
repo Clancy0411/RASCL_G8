@@ -1,8 +1,9 @@
-"""Start one bridge for reference Homing and the later CSP handoff.
+"""Start one bridge for interval-centre Homing and the later CSP handoff.
 
-The master starts with the proven SDO-only PRE-OP Homing path.  After home_all,
-ros2_control reuses this bridge; its first ENTER_CSP_ALL lazily maps PDOs and
-enters CSP without closing the master or sending a disable controlword.
+The master starts with the SDO-only PRE-OP Homing path. Drives 0-2 find both
+edges of their reference-input interval and make its midpoint zero. After
+home_all, ros2_control reuses this bridge; its first ENTER_CSP_ALL lazily maps
+PDOs and enters CSP without closing the master or sending a disable controlword.
 """
 
 from launch import LaunchDescription
@@ -23,7 +24,23 @@ def generate_launch_description():
     motion_timeout_arg = DeclareLaunchArgument(
         "motion_timeout_s",
         default_value="8.0",
-        description="Maximum reference-search time per drive.",
+        description="Timeout applied to each Homing search/move phase per drive.",
+    )
+    homing_interval_max_travel_arg = DeclareLaunchArgument(
+        "homing_interval_max_travel_counts",
+        default_value="100000",
+        description=(
+            "Maximum low-speed travel allowed from the first Homing edge while "
+            "searching for the opposite edge."
+        ),
+    )
+    homing_interval_timeout_arg = DeclareLaunchArgument(
+        "homing_interval_timeout_s",
+        default_value="120.0",
+        description=(
+            "Timeout for the finite first-edge-to-exit traversal and midpoint "
+            "return; the initial native search keeps motion_timeout_s."
+        ),
     )
     test_drive_index_arg = DeclareLaunchArgument(
         "test_drive_index",
@@ -210,6 +227,16 @@ def generate_launch_description():
                 "homing_search_speeds": [1000, 1000, 1000, 1000],
                 "homing_zero_speeds": [200, 200, 200, 200],
                 "homing_accelerations": [1000, 1000, 1000, 1000],
+                "homing_interval_max_travel_counts": ParameterValue(
+                    LaunchConfiguration("homing_interval_max_travel_counts"),
+                    value_type=int,
+                ),
+                "homing_interval_timeout_s": ParameterValue(
+                    LaunchConfiguration("homing_interval_timeout_s"),
+                    value_type=float,
+                ),
+                "homing_interval_poll_s": 0.01,
+                "homing_midpoint_tolerance_counts": 100,
                 "test_drive_index": ParameterValue(
                     LaunchConfiguration("test_drive_index"), value_type=int
                 ),
@@ -223,6 +250,8 @@ def generate_launch_description():
             host_arg,
             port_arg,
             motion_timeout_arg,
+            homing_interval_max_travel_arg,
+            homing_interval_timeout_arg,
             test_drive_index_arg,
             pdo_cycle_ns_arg,
             pdo_timeout_us_arg,

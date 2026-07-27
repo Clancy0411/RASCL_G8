@@ -82,7 +82,7 @@ def test_spur_gear_direction_defaults_are_consistently_reversed():
     assert urdf_default == "-1"
 
 
-def test_drive3_reference_profile_defaults_limit_transient_lag():
+def test_homing_motion_defaults_limit_transient_lag_and_interval_travel():
     tree = ast.parse(
         HOMING_LAUNCH.read_text(encoding="utf-8"),
         filename=str(HOMING_LAUNCH),
@@ -111,3 +111,5 @@ def test_drive3_reference_profile_defaults_limit_transient_lag():
     assert defaults["spur_gear_reference_profile_acceleration"] == "1000"
     assert defaults["spur_gear_reference_profile_deceleration"] == "1000"
     assert defaults["spur_gear_reference_following_error_confirm_s"] == "0.30"
+    assert defaults["homing_interval_max_travel_counts"] == "100000"
+    assert defaults["homing_interval_timeout_s"] == "120.0"

@@ -238,6 +238,10 @@ def generate_launch_description():
                 "homing_search_speeds": [1000, 1000, 1000, 1000],
                 "homing_zero_speeds": [200, 200, 200, 200],
                 "homing_accelerations": [1000, 1000, 1000, 1000],
+                "homing_interval_max_travel_counts": 100_000,
+                "homing_interval_timeout_s": 120.0,
+                "homing_interval_poll_s": 0.01,
+                "homing_midpoint_tolerance_counts": 100,
                 "test_drive_index": 0,
             }
         ],

@@ -16,10 +16,13 @@ physical XY `[0.16, 0.16] m`. The complete arm model is shifted
 This fixed base-frame translation must not be folded into the rotating local
 TCP vector. Z is unchanged.
 
-Calibration for real hardware uses the validated reference-switch search from
-the `auto_homing` branch. Start in its safe search region, validate each axis
-with `home_one`, and then call `home_all`. The automatic-Home switch pose is not
-the URDF zero pose. With the nominal software count calibration, it must read:
+Calibration for real hardware starts with the validated reference-switch search
+from the `auto_homing` branch, then refines zero to the sensor interval centre.
+Each arm drive records the entry and exit counts, returns to
+`(entry + exit) / 2`, and uses Method 37 to make that midpoint raw zero. Start
+in the same safe search region, validate each axis with `home_one`, and then
+call `home_all`. With the nominal software count calibration, this automatic
+Home pose must read:
 
 ```text
 [shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]

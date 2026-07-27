@@ -13,7 +13,7 @@ import struct
 import sys
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import pysoem
 import rclpy
@@ -129,6 +129,7 @@ CMD_DISABLE_VOLTAGE = 0x0000
 CMD_FAULT_RESET = 0x0080
 CMD_START_MOTION = 0x003F
 CMD_START_HOMING = CMD_ENABLE_OPERATION | 0x0010
+CMD_HALT = CMD_ENABLE_OPERATION | 0x0100
 
 # Statusword state/operation bits.
 STATUS_STATE_MASK = 0x006F
@@ -217,6 +218,16 @@ PDO_RX_SIZE_BYTES = 6
 PDO_TX_SIZE_BYTES = 6
 
 PDOState = Tuple[int, int, int]  # actual_position, statusword, mode_display
+
+
+class HomingIntervalResult(NamedTuple):
+    """Encoder evidence and final zero readback for one interval-centre Home."""
+
+    first_edge_counts: int
+    second_edge_counts: int
+    midpoint_counts: int
+    midpoint_actual_counts: int
+    zero_readback_counts: int
 
 
 class FaulhaberDrive:
@@ -574,6 +585,263 @@ class FaulhaberDrive:
         self.write_controlword(CMD_DISABLE_VOLTAGE)
         raise TimeoutError(
             f"Drive {self.drive_id}: homing timed out after {timeout_s:.1f} seconds"
+        )
+
+    @staticmethod
+    def homing_search_direction(method: int) -> int:
+        """Return the encoder direction used by the configured switch method."""
+
+        if method == 24:
+            return 1
+        if method == 28:
+            return -1
+        raise ValueError(f"Unsupported interval-centre homing method {method}")
+
+    def read_reference_input_active(self, reference_input: int) -> bool:
+        """Read one polarity-corrected reference input from 0x2311:01."""
+
+        if not 1 <= reference_input <= 8:
+            raise ValueError(f"Drive {self.drive_id}: invalid reference input {reference_input}")
+        logical_inputs = self.sdo_read_int(
+            DIGITAL_IO_STATUS, DIGITAL_INPUT_LOGICAL, signed=False
+        )
+        return bool(logical_inputs & (1 << (reference_input - 1)))
+
+    def halt_profile_position_motion(self, timeout_s: float) -> int:
+        """Decelerate a Profile Position move while retaining motor torque."""
+
+        if timeout_s <= 0.0:
+            raise ValueError("Halt timeout must be positive")
+
+        self.write_controlword(CMD_HALT)
+        deadline = time.monotonic() + timeout_s
+        actual_counts = self.read_actual_position_counts()
+        velocity = self.sdo_read_int(VELOCITY_ACTUAL_VALUE, 0, signed=True)
+        while time.monotonic() < deadline:
+            status = self.read_status()
+            actual_counts = self.read_actual_position_counts()
+            velocity = self.sdo_read_int(VELOCITY_ACTUAL_VALUE, 0, signed=True)
+            if status & STATUS_FAULT:
+                self.write_controlword(CMD_DISABLE_VOLTAGE)
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: fault while halting interval traversal; "
+                    f"statusword=0x{status:04X}"
+                )
+            if abs(velocity) <= 1:
+                self.write_controlword(CMD_ENABLE_OPERATION)
+                return actual_counts
+            time.sleep(0.01)
+
+        self.write_controlword(CMD_DISABLE_VOLTAGE)
+        raise TimeoutError(
+            f"Drive {self.drive_id}: interval traversal did not halt within "
+            f"{timeout_s:.1f} seconds; actual={actual_counts}, velocity={velocity}"
+        )
+
+    def home_to_reference_interval_midpoint(
+        self,
+        method: int,
+        reference_input: int,
+        offset_counts: int,
+        search_speed: int,
+        zero_speed: int,
+        acceleration: int,
+        timeout_s: float,
+        interval_timeout_s: float,
+        max_travel_counts: int,
+        poll_s: float,
+        midpoint_tolerance_counts: int,
+    ) -> HomingIntervalResult:
+        """Find both switch edges, return to their midpoint, and zero there.
+
+        The drive's native Homing method first finds the proven entry edge. The
+        bridge then traverses the active reference interval in the same encoder
+        direction at ``search_speed``. The first inactive sample is the second
+        edge. Method 37 establishes the returned midpoint as zero.
+        """
+
+        if max_travel_counts <= 0:
+            raise ValueError("Homing interval maximum travel must be positive")
+        if timeout_s <= 0.0:
+            raise ValueError("Homing interval timeout must be positive")
+        if interval_timeout_s <= 0.0:
+            raise ValueError("Homing interval traversal timeout must be positive")
+        if poll_s <= 0.0:
+            raise ValueError("Homing interval poll period must be positive")
+        if midpoint_tolerance_counts < 0:
+            raise ValueError("Homing midpoint tolerance must be non-negative")
+        if offset_counts != 0:
+            raise ValueError(
+                f"Drive {self.drive_id}: interval-centre Homing requires "
+                f"0x607C=0, got offset_counts={offset_counts}"
+            )
+
+        direction = self.homing_search_direction(method)
+        first_edge_stop_counts = self.home_to_reference_switch(
+            method=method,
+            reference_input=reference_input,
+            offset_counts=offset_counts,
+            search_speed=search_speed,
+            zero_speed=zero_speed,
+            acceleration=acceleration,
+            timeout_s=timeout_s,
+        )
+        # Native Homing latches the electrical edge and, with 0x607C=0,
+        # defines that captured position as exactly zero. 0x6064 read after
+        # completion is the decelerated stop position and must not replace the
+        # captured edge coordinate in the midpoint calculation.
+        first_edge_counts = 0
+        if self.verbose:
+            print(
+                f"[Drive {self.drive_id}] first Homing edge=0 counts; "
+                f"post-edge stop={first_edge_stop_counts} counts"
+            )
+        search_start_counts = self.read_actual_position_counts()
+        search_target_counts = first_edge_counts + direction * max_travel_counts
+        if not -(1 << 31) <= search_target_counts <= (1 << 31) - 1:
+            raise ValueError(
+                f"Drive {self.drive_id}: interval search target "
+                f"{search_target_counts} exceeds signed 32-bit position range"
+            )
+
+        original_profile = (
+            self.sdo_read_int(PROFILE_VELOCITY, 0, signed=False),
+            self.sdo_read_int(PROFILE_ACCELERATION, 0, signed=False),
+            self.sdo_read_int(PROFILE_DECELERATION, 0, signed=False),
+        )
+        motion_active = False
+        second_edge_counts: Optional[int] = None
+        midpoint_counts: Optional[int] = None
+        midpoint_actual_counts: Optional[int] = None
+        zero_readback_counts: Optional[int] = None
+        try:
+            # The first native edge may be sampled on either side of the
+            # electrical transition. Do not accept an inactive state as the
+            # second edge until the active interval has actually been observed.
+            active_interval_seen = self.read_reference_input_active(reference_input)
+            self.configure_profile_motion(search_speed, acceleration, acceleration)
+            self.move_absolute_counts(search_target_counts)
+            motion_active = True
+            deadline = time.monotonic() + interval_timeout_s
+            actual_counts = search_start_counts
+            status = self.read_status()
+            internal_limit_seen = bool(status & STATUS_INTERNAL_LIMIT_ACTIVE)
+
+            while time.monotonic() < deadline:
+                status = self.read_status()
+                actual_counts = self.read_actual_position_counts()
+                reference_active = self.read_reference_input_active(reference_input)
+                internal_limit_seen = internal_limit_seen or bool(
+                    status & STATUS_INTERNAL_LIMIT_ACTIVE
+                )
+                if status & STATUS_FAULT:
+                    raise RuntimeError(
+                        f"Drive {self.drive_id}: fault while traversing Homing interval; "
+                        f"statusword=0x{status:04X}"
+                    )
+                if status & STATUS_FOLLOWING_OR_HOMING_ERROR:
+                    raise RuntimeError(
+                        f"Drive {self.drive_id}: following error while traversing "
+                        f"Homing interval; actual={actual_counts}, "
+                        f"statusword=0x{status:04X}"
+                    )
+                if reference_active:
+                    active_interval_seen = True
+                elif (
+                    active_interval_seen
+                    and abs(actual_counts - first_edge_counts) > 0
+                ):
+                    second_edge_counts = actual_counts
+                    break
+
+                if status & STATUS_TARGET_REACHED:
+                    raise RuntimeError(
+                        f"Drive {self.drive_id}: reference input did not become inactive "
+                        f"within {max_travel_counts} counts after the first edge; "
+                        f"internal_limit_seen={str(internal_limit_seen).lower()}"
+                    )
+                time.sleep(poll_s)
+
+            if second_edge_counts is None:
+                raise TimeoutError(
+                    f"Drive {self.drive_id}: second Homing edge was not found within "
+                    f"{interval_timeout_s:.1f} seconds; first_edge={first_edge_counts}, "
+                    f"last_actual={actual_counts}, reference_active="
+                    f"{str(reference_active).lower()}, internal_limit_seen="
+                    f"{str(internal_limit_seen).lower()}"
+                )
+
+            self.halt_profile_position_motion(timeout_s)
+            motion_active = False
+            directed_width = (second_edge_counts - first_edge_counts) * direction
+            if directed_width <= 0:
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: invalid Homing interval order; "
+                    f"direction={direction:+d}, first_edge={first_edge_counts}, "
+                    f"second_edge={second_edge_counts}"
+                )
+
+            midpoint_counts = first_edge_counts + (
+                second_edge_counts - first_edge_counts
+            ) // 2
+            motion_active = True
+            midpoint_actual_counts = self.move_absolute_counts_and_wait(
+                midpoint_counts, interval_timeout_s
+            )
+            motion_active = False
+            if (
+                abs(midpoint_actual_counts - midpoint_counts)
+                > midpoint_tolerance_counts
+            ):
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: midpoint move ended at "
+                    f"{midpoint_actual_counts}, expected {midpoint_counts} "
+                    f"(tolerance {midpoint_tolerance_counts})"
+                )
+            zero_readback_counts = self.home_current_position(
+                timeout_s, min(midpoint_tolerance_counts, 10)
+            )
+        except Exception:
+            if motion_active:
+                try:
+                    self.halt_profile_position_motion(timeout_s)
+                except Exception as stop_exc:
+                    try:
+                        self.write_controlword(CMD_DISABLE_VOLTAGE)
+                    except Exception:
+                        pass
+                    print(
+                        f"[Drive {self.drive_id}] Homing interval failure and halt failed: "
+                        f"{stop_exc}"
+                    )
+            raise
+        finally:
+            try:
+                self.sdo_write_int(
+                    PROFILE_VELOCITY, 0, original_profile[0], size=4, signed=False
+                )
+                self.sdo_write_int(
+                    PROFILE_ACCELERATION, 0, original_profile[1], size=4, signed=False
+                )
+                self.sdo_write_int(
+                    PROFILE_DECELERATION, 0, original_profile[2], size=4, signed=False
+                )
+            except Exception as restore_exc:
+                print(
+                    f"[Drive {self.drive_id}] Could not restore Profile Position "
+                    f"parameters after Homing interval search: {restore_exc}"
+                )
+
+        assert second_edge_counts is not None
+        assert midpoint_counts is not None
+        assert midpoint_actual_counts is not None
+        assert zero_readback_counts is not None
+        return HomingIntervalResult(
+            first_edge_counts=first_edge_counts,
+            second_edge_counts=second_edge_counts,
+            midpoint_counts=midpoint_counts,
+            midpoint_actual_counts=midpoint_actual_counts,
+            zero_readback_counts=zero_readback_counts,
         )
 
     def set_digout1(self, on: bool) -> None:
@@ -2323,6 +2591,10 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("homing_search_speeds", [1000, 1000, 1000, 1000])
         self.declare_parameter("homing_zero_speeds", [200, 200, 200, 200])
         self.declare_parameter("homing_accelerations", [1000, 1000, 1000, 1000])
+        self.declare_parameter("homing_interval_max_travel_counts", 100_000)
+        self.declare_parameter("homing_interval_timeout_s", 120.0)
+        self.declare_parameter("homing_interval_poll_s", 0.01)
+        self.declare_parameter("homing_midpoint_tolerance_counts", 100)
         self.declare_parameter("test_drive_index", 0)
 
         self.interface = str(self.get_parameter("interface").value)
@@ -2412,6 +2684,18 @@ class RASCLFaulhaberBridge(Node):
         self.homing_search_speeds = self._int_parameter_list("homing_search_speeds")
         self.homing_zero_speeds = self._int_parameter_list("homing_zero_speeds")
         self.homing_accelerations = self._int_parameter_list("homing_accelerations")
+        self.homing_interval_max_travel_counts = int(
+            self.get_parameter("homing_interval_max_travel_counts").value
+        )
+        self.homing_interval_timeout_s = float(
+            self.get_parameter("homing_interval_timeout_s").value
+        )
+        self.homing_interval_poll_s = float(
+            self.get_parameter("homing_interval_poll_s").value
+        )
+        self.homing_midpoint_tolerance_counts = int(
+            self.get_parameter("homing_midpoint_tolerance_counts").value
+        )
         self._validate_homing_parameters()
 
         self.lock = threading.RLock()
@@ -2421,6 +2705,7 @@ class RASCLFaulhaberBridge(Node):
         self.spur_gear_reference_target_counts: Optional[int] = None
         self.spur_gear_reference_pre_zero_counts: Optional[int] = None
         self.spur_gear_reference_zero_readback: Optional[int] = None
+        self.homing_interval_results: Dict[int, HomingIntervalResult] = {}
         self.bus = FaulhaberBus(
             self.interface,
             self.slave_indices,
@@ -2471,6 +2756,12 @@ class RASCLFaulhaberBridge(Node):
                 "CSP handoff will preserve 0x2310:01/:02 by parameter; "
                 "a mapped active input may stop otherwise valid motion"
             )
+        self.get_logger().info(
+            "Drive 0-2 Homing uses the centre of the reference-input interval: "
+            "find the first edge with the configured native method, traverse the "
+            "active interval at Homing search speed, return to (entry+exit)/2, "
+            "then set that midpoint to zero with Method 37"
+        )
         if self.ignore_spur_gear_in_csp:
             self.get_logger().warning(
                 "Emergency three-axis fallback: spur_gear_joint (Drive 3) will not Home, "
@@ -2536,6 +2827,14 @@ class RASCLFaulhaberBridge(Node):
         for name, values in parameters.items():
             if len(values) != expected:
                 raise ValueError(f"{name} needs {expected} entries, got {len(values)}")
+        if self.homing_interval_max_travel_counts <= 0:
+            raise ValueError("homing_interval_max_travel_counts must be positive")
+        if self.homing_interval_timeout_s <= 0.0:
+            raise ValueError("homing_interval_timeout_s must be positive")
+        if self.homing_interval_poll_s <= 0.0:
+            raise ValueError("homing_interval_poll_s must be positive")
+        if self.homing_midpoint_tolerance_counts < 0:
+            raise ValueError("homing_midpoint_tolerance_counts must be non-negative")
 
     def _drive2_position_protection_message(self) -> str:
         if len(self.bus.drives) <= 2:
@@ -2614,9 +2913,10 @@ class RASCLFaulhaberBridge(Node):
         self.spur_gear_reference_target_counts = None
         self.spur_gear_reference_pre_zero_counts = None
         self.spur_gear_reference_zero_readback = None
+        self.homing_interval_results.pop(drive_index, None)
         self.bus.mark_drive_homing_started(drive_index)
         drive = self.bus.drives[drive_index]
-        position = drive.home_to_reference_switch(
+        result = drive.home_to_reference_interval_midpoint(
             method=self.homing_methods[drive_index],
             reference_input=self.reference_inputs[drive_index],
             offset_counts=self.homing_offsets[drive_index],
@@ -2624,9 +2924,35 @@ class RASCLFaulhaberBridge(Node):
             zero_speed=self.homing_zero_speeds[drive_index],
             acceleration=self.homing_accelerations[drive_index],
             timeout_s=self.motion_timeout_s,
+            interval_timeout_s=self.homing_interval_timeout_s,
+            max_travel_counts=self.homing_interval_max_travel_counts,
+            poll_s=self.homing_interval_poll_s,
+            midpoint_tolerance_counts=self.homing_midpoint_tolerance_counts,
+        )
+        self.homing_interval_results[drive_index] = result
+        self.get_logger().warning(
+            f"HOMING_INTERVAL drive={drive_index} "
+            f"entry={result.first_edge_counts} "
+            f"exit={result.second_edge_counts} "
+            f"width={abs(result.second_edge_counts - result.first_edge_counts)} "
+            f"midpoint={result.midpoint_counts} "
+            f"reached={result.midpoint_actual_counts} "
+            f"zero={result.zero_readback_counts}"
         )
         self.bus.mark_drive_homed(drive_index)
-        return position
+        return result.zero_readback_counts
+
+    def _homing_interval_message(self, drive_index: int) -> str:
+        result = self.homing_interval_results[drive_index]
+        return (
+            f"drive{drive_index}_interval("
+            f"entry={result.first_edge_counts},"
+            f"exit={result.second_edge_counts},"
+            f"width={abs(result.second_edge_counts - result.first_edge_counts)},"
+            f"midpoint={result.midpoint_counts},"
+            f"reached={result.midpoint_actual_counts},"
+            f"zero={result.zero_readback_counts})"
+        )
 
     def _reference_spur_gear_after_arm_homing(self) -> str:
         """Move Drive 3 by the configured increment, then make that position zero."""
@@ -2793,7 +3119,9 @@ class RASCLFaulhaberBridge(Node):
                 else ""
             )
             response.message = (
-                f"Drive {drive_index} homing completed; actual_position={position}{suffix}"
+                f"Drive {drive_index} interval-centre Homing completed; "
+                f"actual_position={position}; "
+                f"{self._homing_interval_message(drive_index)}{suffix}"
             )
         except Exception as exc:
             response.success = False
@@ -2815,6 +3143,11 @@ class RASCLFaulhaberBridge(Node):
                 "Homing completed for required drives; CSP handoff armed: "
                 + " ".join(
                     f"drive{index}={position}" for index, position in positions.items()
+                )
+                + "; "
+                + " ".join(
+                    self._homing_interval_message(index)
+                    for index in sorted(positions)
                 )
                 + f" {spur_reference}"
             )

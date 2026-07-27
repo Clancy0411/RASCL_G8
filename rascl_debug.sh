@@ -16,6 +16,8 @@ LOWERARM_DIRECTION="${RASCL_LOWERARM_DIRECTION:-1}"
 LOWERARM_HOME_OFFSET_COUNTS="${RASCL_LOWERARM_HOME_OFFSET_COUNTS:--802816}"
 DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS="${RASCL_DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS:-25000}"
 DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS="${RASCL_DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS:-250}"
+HOMING_INTERVAL_MAX_TRAVEL_COUNTS="${RASCL_HOMING_INTERVAL_MAX_TRAVEL_COUNTS:-100000}"
+HOMING_INTERVAL_TIMEOUT_S="${RASCL_HOMING_INTERVAL_TIMEOUT_S:-120.0}"
 CSP_TORQUE_LIMIT_PER_MILLE="${RASCL_CSP_TORQUE_LIMIT_PER_MILLE:-1000}"
 CSP_STALL_ERROR_COUNTS="${RASCL_CSP_STALL_ERROR_COUNTS:-25000}"
 CSP_STALL_PROGRESS_COUNTS="${RASCL_CSP_STALL_PROGRESS_COUNTS:-100}"
@@ -313,13 +315,19 @@ group_homing_bridge() {
     die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_DECELERATION 必须是正整数"
   is_positive_number "$SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S" ||
     die "RASCL_SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S 必须是正数"
+  is_integer "$HOMING_INTERVAL_MAX_TRAVEL_COUNTS" &&
+    (( HOMING_INTERVAL_MAX_TRAVEL_COUNTS > 0 )) ||
+    die "RASCL_HOMING_INTERVAL_MAX_TRAVEL_COUNTS 必须是正整数"
+  is_positive_number "$HOMING_INTERVAL_TIMEOUT_S" ||
+    die "RASCL_HOMING_INTERVAL_TIMEOUT_S 必须是正数"
   [[ "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "true" ||
     "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "false" ]] ||
     die "RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP 只能是 true 或 false"
   ensure_state_dir
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
-  echo "Drive 0-2 自动 Homing；三轴到位后 Drive 3 相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，并以 Method 37 把到达位置设为 0 counts。"
+  echo "Drive 0-2 自动寻找参考输入区间两端，反向回到 (entry+exit)/2 并置零；单轴第二边沿最大搜索距离 $HOMING_INTERVAL_MAX_TRAVEL_COUNTS counts，穿越/回中点超时 $HOMING_INTERVAL_TIMEOUT_S s。"
+  echo "三轴到位后 Drive 3 相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，并以 Method 37 把到达位置设为 0 counts。"
   echo "Drive 3 参考运动：速度 $SPUR_GEAR_REFERENCE_PROFILE_VELOCITY counts/s，加/减速度 $SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION/$SPUR_GEAR_REFERENCE_PROFILE_DECELERATION，following-error 持续 $SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S s 才中断。"
   echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；0x607B/0x607D 软件位置限位只读取、不改写。"
   echo "CSP 交接会清零并回读验证 Drive 0-3 的 0x2310:01/:02 正/负限位输入映射；Homing 参考输入、极性与软件位置限位保持不变。"
@@ -328,6 +336,8 @@ group_homing_bridge() {
   echo "Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1 电流参数不改。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
+    homing_interval_max_travel_counts:="$HOMING_INTERVAL_MAX_TRAVEL_COUNTS" \
+    homing_interval_timeout_s:="$HOMING_INTERVAL_TIMEOUT_S" \
     csp_torque_limit_per_mille:="$CSP_TORQUE_LIMIT_PER_MILLE" \
     clear_limit_switch_mappings_for_csp:="$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" \
     drive2_following_error_window_counts:="$DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS" \
@@ -370,6 +380,8 @@ home_one() {
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
     die "Drive $drive Homing 未成功；停止后续流程"
+  grep -q "drive${drive}_interval(" <<<"$response" ||
+    die "Drive $drive 未返回 Homing 区间两边沿和中点记录；停止后续流程"
 }
 
 group_home_individual() {
@@ -385,13 +397,17 @@ group_home_all() {
   local response
   load_ros
   read_inputs
-  echo "home_all 先 Homing Drive 0-2；成功后 Drive 3 自动相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，再把到达位置设为 0 counts。"
+  echo "home_all 先让 Drive 0-2 穿过各自参考输入区间并回到中点置零；成功后 Drive 3 自动相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，再把到达位置设为 0 counts。"
   response="$(
     ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
   )" || die "home_all 服务调用失败"
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
     die "home_all 或 Drive 3 参考运动/置零失败；禁止进入 CSP"
+  for drive in 0 1 2; do
+    grep -q "drive${drive}_interval(" <<<"$response" ||
+      die "home_all 缺少 Drive $drive 的 Homing 区间记录；禁止进入 CSP"
+  done
   group_spur_gear_counts
   read_drive2_diagnostics
 }

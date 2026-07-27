@@ -222,7 +222,8 @@ spur_gear_joint = [-2*pi,+2*pi] = [-6.283185307,+6.283185307]
 当前策略：
 
 ```text
-Drive 0–2 自动 Homing
+Drive 0–2 原生方法找到第一边沿后，继续穿过参考输入有效区间
+记录第二边沿，反向回到 (entry+exit)/2，并以 Method 37 将中点设为 0 counts
 Drive 0–2 全部到位后，Drive 3 从实时位置相对运动 +50000 counts
 Drive 3 到位后用 Homing Method 37 将当前位置设为 0 counts
 Drive 0–3 全部参与随后 CSP/PDO
@@ -235,6 +236,10 @@ skip_spur_gear_homing = true
 ignore_spur_gear_in_csp = false
 homing_methods = [28,28,24,24]
 reference_inputs = [2,2,2,1]
+homing_interval_max_travel_counts = 100000
+homing_interval_timeout_s = 120.0
+homing_interval_poll_s = 0.01
+homing_midpoint_tolerance_counts = 100
 spur_gear_reference_delta_counts = +50000
 spur_gear_reference_timeout_s = 30.0
 spur_gear_reference_tolerance_counts = 100
@@ -262,7 +267,8 @@ Drive 3，再返回失败；不得通过跳过该失败来强制执行 Method 37
 
 不可破坏的约束：
 
-1. T1 启动唯一 Homing bridge；
+1. T1 启动唯一 Homing bridge；Drive 0–2 必须各自返回
+   `driveN_interval(entry,exit,width,midpoint,reached,zero=0)`；
 2. `home_all` 成功后 T1 不能停止；
 3. T2 的 CSP ros2_control 必须复用 T1 bridge；
 4. Home 与 CSP 之间不能关闭并重建 EtherCAT master；
@@ -582,8 +588,8 @@ bash ./rascl_debug.sh <组号>
 2  启动 fake ros2_control
 3  Fake 检查 + 规划 + 执行
 4  启动实机 Homing bridge
-5  逐轴 Homing Drive 0、1、2；最后自动执行 Drive 3 参考运动和置零
-6  home_all：Drive 0–2 Homing，再执行 Drive 3 +50000 counts 和 Method 37 置零
+5  逐轴执行 Drive 0、1、2 区间中点 Homing；最后自动执行 Drive 3 参考运动和置零
+6  home_all：Drive 0–2 区间中点置零，再执行 Drive 3 +50000 counts 和 Method 37 置零
 7  启动实机 CSP ros2_control，Drive 3 参与
 8  Controller/joint state 保持检查
 9  只规划实机 minimum-jerk
@@ -631,7 +637,9 @@ bash ./rascl_debug.sh 6
 
 ```text
 success=True
-Homing completed for required drives; CSP handoff armed: ... drive3_reference(...delta=50000,...zero=0,method=37)
+Homing completed for required drives; CSP handoff armed:
+drive0_interval(...) drive1_interval(...) drive2_interval(...)
+drive3_reference(...delta=50000,...zero=0,method=37)
 Drive 3: absolute_counts=0, ... reference_complete=true
 ```
 
@@ -734,7 +742,8 @@ MOTION_RESULT
 
 ## 17. 后续修改要求
 
-1. 不破坏 Drive 0–2 已验证的自动 Homing；
+1. Drive 0–2 保持 `[28,28,24]` 的第一边沿搜索方向，并在穿出有效区间后回到
+   `(entry+exit)/2`，Method 37 中点置零成功后才标记 Homed；
 2. Drive 3 保持“不做传感器寻零、完成 +50000 counts 与 Method 37 置零后参与 CSP”；
 3. Homing→CSP 必须复用同一 EtherCAT master；
 4. 保留 `0x2332:00=200`；

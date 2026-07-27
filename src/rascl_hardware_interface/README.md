@@ -13,7 +13,7 @@ The package provides:
 * conversion between motor encoder counts and ROS joint positions in radians,
 * fake-hardware support for software-side testing,
 * a Python TCP bridge for communication with the Faulhaber controllers via EtherCAT,
-* reference-switch homing plus a separate raw-count-to-URDF calibration,
+* reference-input interval-centre homing plus a separate raw-count-to-URDF calibration,
 * optional automated tests for the hardware interface lifecycle.
 
 ## Main Files and Directories
@@ -77,7 +77,7 @@ The bridge is responsible for:
 * enabling the Faulhaber drives,
 * reading actual motor positions and status words,
 * sending target positions,
-* automatic reference-switch homing,
+* automatic reference-input interval-centre homing,
 * CSP mode with cyclic EtherCAT Position PDO exchange.
 
 Make sure the script is executable:
@@ -144,6 +144,18 @@ error disables Drive 3 before `home_all` returns failure.
 Validate Drives 0–2 with `home_one`, or call `home_all` once. Keep the Homing
 launch running until the complete CSP session has ended. For a gravity-loaded
 arm, stopping it between Homing and CSP removes drive voltage.
+
+For each of Drives 0–2, the configured native method first finds the proven
+reference-input entry edge (`28, 28, 24`). With the required `0x607C=0`, that
+latched edge is exactly `entry=0`; the later decelerated stop readback is not
+used as the edge coordinate. The bridge then traverses the active
+input interval in the same encoder direction at the configured Homing search
+speed, records the exit edge, halts without removing motor torque, returns to
+`(entry + exit) / 2`, and uses Method 37 to make that midpoint zero. The service
+response reports both edges, interval width, commanded/reached midpoint, and
+zero readback. The default second-edge guard is `100000` counts with a `120 s`
+timeout for each finite traversal/return phase; a missing edge,
+fault, following error, or midpoint error rejects Homing and CSP handoff.
 
 ## Running with Real Hardware (CSP/PDO)
 

@@ -33,7 +33,7 @@ bash ./rascl_debug.sh
 T1：4
     ↓ bridge 保持运行，不能 Ctrl-C
 T2：6
-    ↓ D0–D2 Home 后 D3 自动 +50000 counts 并置零；必须显示 success=True
+    ↓ D0–D2 回到各自传感区间中点后，D3 自动 +50000 counts 并置零；必须显示 success=True
 T2：7
     ↓ ros2_control 保持运行，不能 Ctrl-C
 T3：8 → 13 → 14 → 9 → 10
@@ -44,7 +44,11 @@ T3：8 → 13 → 14 → 9 → 10
 1. **T1 组 4：启动唯一 EtherCAT/Homing bridge。**
    - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
-   - Drive 0–2 使用传感器自动 Homing。三轴到位后，Drive 3 从实时位置相对运动
+   - Drive 0–2 使用传感器区间中点 Homing：原生方法先找到第一边沿，随后以
+     `1000` 的搜索速度沿同方向穿出有效区间，记录第二边沿，Halt 后反向到
+     `(entry+exit)/2`，最后用 Method 37 把中点设为 `0 counts`。D0/D1 穿越负方向，
+     D2 穿越正方向；不改变关节 direction 或 URDF offset。
+   - 三轴到位后，Drive 3 从实时位置相对运动
      `+50000 counts`，再用 FAULHABER Homing Method 37 把到达位置设为 `0 counts`。
    - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
      Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
@@ -62,7 +66,9 @@ T3：8 → 13 → 14 → 9 → 10
    - 脚本不再要求输入二次确认，选择组 `6` 后立即开始 Home。
    - 开始时会打印每个 Drive 的输入状态及 `0x2310 lower/upper/option/reference`，
      用于记录 CSP 修复前的限位输入映射。
-   - 先运动 Drive 0–2；全部成功后 Drive 3 执行 `+50000 counts` 参考运动并置零。
+   - 先运动 Drive 0–2。每轴都必须打印
+     `driveN_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)`；
+     缺少任一轴记录时脚本会停止。随后 Drive 3 执行 `+50000 counts` 并置零。
    - 必须返回 `success=True`、`CSP handoff armed`，且消息中包含
      `drive3_reference(...delta=50000,...zero=0,method=37)`。
    - 随后脚本自动调用 counts 查询；必须显示
@@ -498,6 +504,8 @@ ros2 daemon start
 ```bash
 ros2 launch rascl_description homing.launch.py \
   interface:=enx3c18a0256deb \
+  homing_interval_max_travel_counts:=100000 \
+  homing_interval_timeout_s:=120.0 \
   csp_torque_limit_per_mille:=1000 \
   clear_limit_switch_mappings_for_csp:=true \
   drive2_following_error_window_counts:=25000 \
@@ -524,6 +532,7 @@ Drive 3 的 `+50000 counts` 参考运动约需 20 秒。短于 `0.30 s` 的 foll
 ```text
 Homing-to-CSP session starts SDO-only in PRE-OP
 PDO mapping is deferred until home_all succeeds
+Drive 0-2 Homing uses the centre of the reference-input interval
 TCP bridge listening on 127.0.0.1:15001
 ```
 
@@ -547,6 +556,22 @@ ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
 
 ```
 
+每轴动作顺序固定为：
+
+```text
+第一边沿 → 同方向低速穿过有效区间 → 第二边沿 → Halt
+→ 反向到 (entry+exit)/2 → Method 37 将中点设为 0 counts
+```
+
+服务返回中的 `entry/exit` 是同一驱动坐标系下的两边沿 counts；`width` 是区间宽度，
+`midpoint` 是计算目标，`reached` 必须与它相差不超过 `100 counts`，`zero` 必须为
+`0` 附近。当前 `0x607C=0`，所以原生 Homing 锁存的第一边沿严格定义为
+`entry=0`；边沿后的减速停稳读数不参与中点计算。
+第二边沿最多允许从第一边沿继续搜索 `100000 counts`。第一边沿的原生搜索仍受
+`motion_timeout_s=8 s` 限制；有限距离的穿越和回中点分别使用 `120 s` 超时。未找到
+第二边沿、出现 fault/following error，或中点未到达时，
+该轴不会标记为 Homed，也不能交接 CSP。
+
 Drive 2 成功后，bridge 会自动让 Drive 3 相对运动 `+50000 counts` 并执行 Method 37
 置零；应看到 `drive3_reference(...zero=0,method=37)` 和 `CSP handoff armed`。
 不要单独对 Drive 3 执行 `home_one`。
@@ -569,7 +594,11 @@ ros2 service call /rascl_faulhaber_bridge/read_drive2_diagnostics \
 
 ```text
 success=True
-Homing completed for required drives; CSP handoff armed ... drive3_reference(...zero=0,method=37)
+Homing completed for required drives; CSP handoff armed ...
+drive0_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)
+drive1_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)
+drive2_interval(entry=...,exit=...,width=...,midpoint=...,reached=...,zero=0)
+drive3_reference(...zero=0,method=37)
 Drive 3: absolute_counts=0 ... reference_complete=true
 ```
 
@@ -804,7 +833,8 @@ source install/local_setup.bash
 ## 11. 验收标准
 
 1. 软件测试和 fake hardware 全部通过。
-2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；Drive 3 随后完成
+2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；三轴均返回两边沿、中点和
+   `zero=0` 记录；Drive 3 随后完成
    `+50000 counts + Method 37` 置零，组 `17` 回读接近 `0`。
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
 4. Drive 0–2 连续交接；Drive 3 完成固定参考与 Method 37 置零后进入 CSP。
@@ -820,9 +850,10 @@ source install/local_setup.bash
 |---|---|
 | Drive / Joint | `0 shoulder`, `1 upperarm`, `2 lowerarm`, `3 spur_gear` |
 | Drive 3 策略 | 跳过传感器搜索；D0–D2 完成后相对 `+50000 counts`，Method 37 置零 |
-| Homing method | D0–D2 `[28,28,24]`；Drive 3 当前点置零 `37` |
+| Homing method | D0–D2 第一边沿 `[28,28,24]`；区间中点再用 `37` 置零；Drive 3 当前点置零 `37` |
 | Reference input | `[2,2,2,1]` |
 | Drive 0x607C | `[0,0,0,0]`；D3 Method 37 以零偏置定义当前位置 |
+| D0–D2 区间穿越 | 搜索速度 `[1000,1000,1000]`；最大 `100000 counts`；每阶段 `120 s`；中点容差 `100 counts` |
 | ROS direction（名义） | `[+1,+1,+1,-1]` |
 | ROS offset（名义） | `[0,-802816,-802816,0]` |
 | CSP mode | 8 |

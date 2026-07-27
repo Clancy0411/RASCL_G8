@@ -389,6 +389,232 @@ class BridgePDOTest(unittest.TestCase):
             int(0).to_bytes(4, "little", signed=True),
         )
 
+    def test_interval_homing_crosses_both_edges_and_zeros_positive_midpoint(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=2, sdo_delay_s=0.0, verbose=False
+        )
+        operation_enabled = bridge.STATUS_OPERATION_ENABLED_STATE
+        with (
+            mock.patch.object(
+                drive, "home_to_reference_switch", return_value=75
+            ) as first_edge_home,
+            mock.patch.object(
+                drive,
+                "read_actual_position_counts",
+                side_effect=[80, 100, 160, 240],
+            ),
+            mock.patch.object(
+                drive,
+                "read_reference_input_active",
+                # The native edge is initially sampled inactive. The scan must
+                # observe the active interval before accepting the next low.
+                side_effect=[False, True, True, False],
+            ),
+            mock.patch.object(drive, "read_status", return_value=operation_enabled),
+            mock.patch.object(
+                drive, "sdo_read_int", side_effect=[3_000, 1_000, 1_000]
+            ),
+            mock.patch.object(drive, "configure_profile_motion") as configure_profile,
+            mock.patch.object(drive, "move_absolute_counts") as start_traverse,
+            mock.patch.object(
+                drive, "halt_profile_position_motion", return_value=210
+            ) as halt_traverse,
+            mock.patch.object(
+                drive, "move_absolute_counts_and_wait", return_value=120
+            ) as move_midpoint,
+            mock.patch.object(
+                drive, "home_current_position", return_value=0
+            ) as zero_midpoint,
+        ):
+            result = drive.home_to_reference_interval_midpoint(
+                method=24,
+                reference_input=2,
+                offset_counts=0,
+                search_speed=1_000,
+                zero_speed=200,
+                acceleration=1_000,
+                timeout_s=1.0,
+                interval_timeout_s=2.0,
+                max_travel_counts=100_000,
+                poll_s=0.001,
+                midpoint_tolerance_counts=100,
+            )
+
+        first_edge_home.assert_called_once()
+        configure_profile.assert_called_once_with(1_000, 1_000, 1_000)
+        start_traverse.assert_called_once_with(100_000)
+        halt_traverse.assert_called_once_with(1.0)
+        move_midpoint.assert_called_once_with(120, 2.0)
+        zero_midpoint.assert_called_once_with(1.0, 10)
+        self.assertEqual(
+            result,
+            bridge.HomingIntervalResult(
+                first_edge_counts=0,
+                second_edge_counts=240,
+                midpoint_counts=120,
+                midpoint_actual_counts=120,
+                zero_readback_counts=0,
+            ),
+        )
+
+    def test_interval_homing_halt_keeps_operation_enabled(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=1, sdo_delay_s=0.0, verbose=False
+        )
+        with (
+            mock.patch.object(
+                drive, "write_controlword", return_value=bridge.STATUS_OPERATION_ENABLED_STATE
+            ) as write_controlword,
+            mock.patch.object(
+                drive, "read_actual_position_counts", side_effect=[205, 210]
+            ),
+            mock.patch.object(
+                drive, "sdo_read_int", side_effect=[15, 0]
+            ),
+            mock.patch.object(
+                drive,
+                "read_status",
+                return_value=bridge.STATUS_OPERATION_ENABLED_STATE,
+            ),
+        ):
+            stopped_at = drive.halt_profile_position_motion(timeout_s=1.0)
+
+        self.assertEqual(stopped_at, 210)
+        self.assertEqual(
+            [call.args[0] for call in write_controlword.call_args_list],
+            [bridge.CMD_HALT, bridge.CMD_ENABLE_OPERATION],
+        )
+        self.assertNotIn(
+            bridge.CMD_DISABLE_VOLTAGE,
+            [call.args[0] for call in write_controlword.call_args_list],
+        )
+
+    def test_interval_homing_rejects_nonzero_native_edge_offset(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=0, sdo_delay_s=0.0, verbose=False
+        )
+        with mock.patch.object(drive, "home_to_reference_switch") as native_home:
+            with self.assertRaisesRegex(ValueError, "requires 0x607C=0"):
+                drive.home_to_reference_interval_midpoint(
+                    method=28,
+                    reference_input=2,
+                    offset_counts=1,
+                    search_speed=1_000,
+                    zero_speed=200,
+                    acceleration=1_000,
+                    timeout_s=1.0,
+                    interval_timeout_s=2.0,
+                    max_travel_counts=100_000,
+                    poll_s=0.001,
+                    midpoint_tolerance_counts=100,
+                )
+
+        native_home.assert_not_called()
+
+    def test_interval_homing_method_28_traverses_negative_and_returns_midpoint(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=0, sdo_delay_s=0.0, verbose=False
+        )
+        with (
+            mock.patch.object(drive, "home_to_reference_switch", return_value=-60),
+            mock.patch.object(
+                drive,
+                "read_actual_position_counts",
+                side_effect=[-70, -90, -220],
+            ),
+            mock.patch.object(
+                drive,
+                "read_reference_input_active",
+                side_effect=[True, True, False],
+            ),
+            mock.patch.object(
+                drive,
+                "read_status",
+                return_value=bridge.STATUS_OPERATION_ENABLED_STATE,
+            ),
+            mock.patch.object(
+                drive, "sdo_read_int", side_effect=[3_000, 1_000, 1_000]
+            ),
+            mock.patch.object(drive, "configure_profile_motion"),
+            mock.patch.object(drive, "move_absolute_counts") as start_traverse,
+            mock.patch.object(drive, "halt_profile_position_motion", return_value=-230),
+            mock.patch.object(
+                drive, "move_absolute_counts_and_wait", return_value=-110
+            ) as move_midpoint,
+            mock.patch.object(drive, "home_current_position", return_value=0),
+        ):
+            result = drive.home_to_reference_interval_midpoint(
+                method=28,
+                reference_input=2,
+                offset_counts=0,
+                search_speed=1_000,
+                zero_speed=200,
+                acceleration=1_000,
+                timeout_s=1.0,
+                interval_timeout_s=2.0,
+                max_travel_counts=100_000,
+                poll_s=0.001,
+                midpoint_tolerance_counts=100,
+            )
+
+        start_traverse.assert_called_once_with(-100_000)
+        move_midpoint.assert_called_once_with(-110, 2.0)
+        self.assertEqual(result.second_edge_counts, -220)
+        self.assertEqual(result.midpoint_counts, -110)
+        self.assertEqual(result.zero_readback_counts, 0)
+
+    def test_node_home_drive_records_interval_evidence_before_marking_homed(self):
+        result = bridge.HomingIntervalResult(0, -240, -120, -118, 0)
+        drive = mock.Mock()
+        drive.home_to_reference_interval_midpoint.return_value = result
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.spur_gear_reference_complete = True
+        node.spur_gear_reference_source_counts = 1
+        node.spur_gear_reference_target_counts = 2
+        node.spur_gear_reference_pre_zero_counts = 3
+        node.spur_gear_reference_zero_readback = 0
+        node.homing_interval_results = {}
+        node.homing_methods = [28]
+        node.reference_inputs = [2]
+        node.homing_offsets = [0]
+        node.homing_search_speeds = [1_000]
+        node.homing_zero_speeds = [200]
+        node.homing_accelerations = [1_000]
+        node.homing_interval_max_travel_counts = 100_000
+        node.homing_interval_timeout_s = 120.0
+        node.homing_interval_poll_s = 0.01
+        node.homing_midpoint_tolerance_counts = 100
+        node.motion_timeout_s = 8.0
+        node.bus = types.SimpleNamespace(
+            drives=[drive],
+            mark_drive_homing_started=mock.Mock(),
+            mark_drive_homed=mock.Mock(),
+        )
+        logger = mock.Mock()
+        node.get_logger = lambda: logger
+
+        position = node._home_drive(0)
+
+        self.assertEqual(position, 0)
+        self.assertEqual(node.homing_interval_results[0], result)
+        node.bus.mark_drive_homing_started.assert_called_once_with(0)
+        node.bus.mark_drive_homed.assert_called_once_with(0)
+        drive.home_to_reference_interval_midpoint.assert_called_once_with(
+            method=28,
+            reference_input=2,
+            offset_counts=0,
+            search_speed=1_000,
+            zero_speed=200,
+            acceleration=1_000,
+            timeout_s=8.0,
+            interval_timeout_s=120.0,
+            max_travel_counts=100_000,
+            poll_s=0.01,
+            midpoint_tolerance_counts=100,
+        )
+        self.assertIn("entry=0", logger.warning.call_args.args[0])
+        self.assertIn("midpoint=-120", logger.warning.call_args.args[0])
+
     def test_node_drive3_reference_records_method37_zero(self):
         drive = mock.Mock()
         drive.move_relative_counts_and_wait.return_value = (

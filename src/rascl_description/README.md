@@ -42,7 +42,8 @@ The command order used by the position controller is:
 
 All joint positions are represented in radians on the ROS side.
 
-For real hardware, the raw reference-switch counts of Drive 0--2 are mapped to
+For real hardware, the reference-input interval midpoint of Drive 0--2 is made
+raw zero, then mapped to
 the fixed URDF joint convention through per-joint `direction` and
 `home_offset_counts`. The nominal arm-axis defaults are:
 
@@ -52,7 +53,9 @@ direction          = [+1, +1, +1]
 home_offset_counts = [0, -802816, -802816] counts
 ```
 
-Therefore raw zero after automatic Homing is represented as
+Each arm drive first finds its configured reference edge, continues through the
+active sensor interval, returns to `(entry + exit) / 2`, and applies Method 37
+there. Therefore raw zero after automatic Homing is represented as
 `[0,+pi/2,+pi/2] rad` for those three axes. Drive 3 (`spur_gear_joint`) is
 pre-installed and deliberately skips the sensor reference search. After Drives
 0–2 Home, it moves `+50000` counts from its live position and uses Homing Method
