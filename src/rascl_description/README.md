@@ -179,17 +179,19 @@ The values correspond to:
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
 command. Entering ASCII `close` (or `c`) requests at most `-500000` counts and
 stops early at object contact. Entering `open` (or `o`) requests an exact
-`+200000`-count relative move. Only `close` uses tracking lag together with a
-near-stationary encoder condition (`<=100 counts` progress for `0.10 s`) to hold
-the measured Drive 3 position before expected contact becomes a following
-error. This prevents ordinary minimum-jerk tracking lag from becoming a false
-contact. `open` and signed non-zero integer commands request exact relative
+`+200000`-count relative move. Only `close` enables the Drive 3
+`0x60E0/0x60E1=100` (10%-rated) guard and uses `20000 counts/s`. Contact is
+declared at `300 counts` of directional lag with at most `50 counts` of encoder
+progress for `0.06 s`; the hold adds only `100 counts` of closing preload.
+`open` and signed non-zero integer commands restore `0x60E0/0x60E1=1000`,
+use `20000 counts/s`, and request exact relative
 increments and do not use contact termination. Every command starts from the
 current spur joint state, then
-publishes a 50 Hz minimum-jerk
-four-joint CSP trajectory that preserves the measured arm pose. At the default
-20000 counts/s, the duration is derived automatically from the requested
-increment. Direct integer input keeps raw encoder semantics: a positive value
+publishes a 50 Hz minimum-jerk four-joint CSP trajectory that preserves the
+measured arm pose. Duration is derived automatically from the requested
+increment. A completed close also requests a staged Drive 3 torque/current
+snapshot without stopping the PDO loop. Direct integer input keeps raw encoder
+semantics: a positive value
 increases Drive 3 `absolute_counts`; the ROS encoder-to-joint direction is
 `-1`. It requires the session reference to have completed, but the command
 itself remains relative. Repeating commands accumulates another move, subject
@@ -199,10 +201,10 @@ of `[-2*pi,+2*pi]` rad. This project limit does not overwrite drive objects
 ros2_control owns the CSP connection.
 
 Group `17` reads the exact Drive 3 `absolute_counts` in the current Method-37
-coordinate without commanding motion. Use it before and after small group `15`
-increments to determine suitable absolute open and closed positions. Do not use
-the force-based `close/c` shortcut during this calibration; it previously
-damaged a gripper.
+coordinate without commanding motion. Use it before and after group `15`
+increments to determine suitable absolute open and closed positions. If the
+default 100-per-mille close limit cannot overcome unloaded friction, raise it
+only to 150 and then 200 on a complete session restart.
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

@@ -322,24 +322,27 @@ open  或 o = 固定相对 +200000 counts，要求完整到位
 ```
 
 组 `15` 的输入仍然不是绝对目标；执行前后用组 `17` 读取以本次 Method 37 零位为基准
-的 `absolute_counts`，可据此实验确定开、合位置。只有 `close` 是接触感知快捷动作：跟踪误差达到
-默认 `2000 counts`，并且连续 `0.10 s` 内编码器进度不超过 `100 counts` 时，脚本才在
-drive following error 前保持实测位置，并记录 `SPUR_CONTACT` 和
-`SPUR_RESULT outcome=contact_or_endpoint`。增加近似静止条件是为了避免 minimum-jerk
-正常跟踪滞后被误判为接触。`-500000 counts`
+的 `absolute_counts`，可据此实验确定开、合位置。只有 `close` 是接触感知快捷动作：
+先把 Drive 3 会话内 `0x60E0/0x60E1` 从正常 `1000` 降到 `100`，再以
+`20000 counts/s` 接近。跟踪误差达到 `300 counts`，并且连续 `0.06 s` 内编码器进度
+不超过 `50 counts` 时，保持接触位置并只预压 `100 counts`。日志包含 `SPUR_CONTACT`、
+`SPUR_RESULT outcome=contact_or_endpoint` 和分步 SDO 采集的
+`SPUR_CONTACT_SNAPSHOT`。`-500000 counts`
 是最大闭合行程，不保证走满。`open=+200000 counts` 和直接输入的有符号 counts 均要求
-精确相对运动，不启用接触提前终止。Drive 3 的 URDF、ros2_control、运动学和脚本预检
-限位已统一为 `[-2*pi,+2*pi]`；这不会修改驱动器对象 `0x607B/0x607D`。默认速度为：
+精确相对运动、不启用接触提前终止，并在执行前恢复 `0x60E0/0x60E1=1000`。Drive 3
+的 URDF、ros2_control、运动学和脚本预检限位已统一为 `[-2*pi,+2*pi]`；这不会修改
+驱动器对象 `0x607B/0x607D`。默认速度为：
 
 ```text
-20000 counts/s
+close: 20000 counts/s
+open / 自定义 counts: 20000 counts/s
 ```
 
-运动时间由 counts 自动计算；`close` 最长约 25 秒，`open` 约 10 秒。组 `15` 使用 50 Hz
+运动时间由 counts 自动计算；`close` 若未提前接触最长约 25 秒，`open` 约 10 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
-此前自动 `close` 曾因夹持力过大损坏 gripper；在重新确定绝对开合位置前，不要使用
-`close/c`，只使用幅度受控的相对 counts，并在每次动作后执行组 `17`。
+若 `100‰` 不足以克服空载摩擦，只在完整重启时依次试
+`RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE=150`、`200`；不要直接恢复旧的 `1000‰`。
 预检查和实际运动节点取得完整 `/joint_states` 的默认超时均为 5 秒；运动节点异常会以
 `SPUR_TRACE failed` 写入 ROS 日志，便于组 `12` 打包分析。
 

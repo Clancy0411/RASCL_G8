@@ -142,18 +142,20 @@ open  或 o = 从当前位置固定相对 +200000 counts；要求完整到位
 
 Drive 3 的绝对 counts 以本次 Method 37 零位为基准；组 `15` 的数值输入仍是相对当前位置
 的增量。它的 URDF、ros2_control、运动学和脚本预检限位统一为 `[-2*pi,+2*pi]`；越界
-目标仍会被拒绝。只有 `close` 是接触
-感知快捷动作：若命令与反馈的误差达到默认 `2000 counts`，并且连续 `0.10 s` 内
-编码器进度不超过 `100 counts`，脚本才会在驱动器置位 following error 前把目标收回到
-实测位置，记录 `SPUR_CONTACT`，然后将这次夹持接触视为成功。近似静止条件可防止
-minimum-jerk 正常跟踪滞后被误判为接触。它的 `-500000 counts` 是最大闭合
+目标仍会被拒绝。只有 `close` 是接触感知快捷动作。执行前，bridge 会在保持 50 Hz PDO
+的同时逐周期写入并回读 Drive 3 `0x60E0/0x60E1=100`（额定转矩 10%），然后以
+`20000 counts/s` 接近。命令/反馈误差达到 `300 counts`，且连续 `0.06 s` 内编码器进度
+不超过 `50 counts` 时判定接触；目标只再向闭合方向预压 `100 counts`，随后保持低转矩。
+脚本记录 `SPUR_CONTACT`、`SPUR_RESULT` 和包含实际转矩/电流的
+`SPUR_CONTACT_SNAPSHOT`。它的 `-500000 counts` 是最大闭合
 行程，不保证走满。`open` 固定精确运动 `+200000 counts`，不启用接触提前终止；直接
-输入的有符号 counts 同样是精确相对运动。精确目标不可达时仍会失败。
+输入的有符号 counts 同样是精确相对运动。`open` 或自定义 counts 会先恢复正常
+`0x60E0/0x60E1=1000` 和 `20000 counts/s`；精确目标不可达时仍会失败。
 
 脚本以 50 Hz minimum-jerk CSP 轨迹平滑发送，前三轴使用刚读到的 `/joint_states`
-保持不动。默认平均速度为
-`20000 counts/s`，运动时间根据 counts 自动计算；`close` 最长约 25 秒、`open`
-约 10 秒，`500000 counts` 约 25 秒，不再单独询问运动时间。
+保持不动。`close`、`open` 和自定义 counts 均默认 `20000 counts/s`；完整
+`500000 counts` 最长约 25 秒，`open` 约 10 秒，close 通常会在接触时提前结束。
+运动时间由 counts 自动计算，不再单独询问。
 组 `15` 的预检查和实际运动节点都会等待最多 5 秒取得完整 `/joint_states`，避免新建
 DDS 节点时 1 秒发现窗口过短；仍未收到反馈才禁止运动。可通过
 `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S` 有意覆盖该超时。每次组 `15` 会等待运动和
@@ -166,14 +168,17 @@ bash ./rascl_debug.sh 17
 ```
 
 输出中的 `absolute_counts` 是相对本次 Drive 3 零位的驱动器实际位置，可直接记录为候选
-打开/闭合位置。组 `17` 只读且可在 CSP 中使用。当前 `close` 曾造成 gripper 机械损坏；
-在新的绝对打开/闭合位置和 Drive 3 转矩上限完成标定前，只使用小步自定义 counts 测试，
-不要再次使用 `close/c`。
+打开/闭合位置。组 `17` 只读且可在 CSP 中使用。新的 `close` 不再等待 drive following
+error 才停止，而是使用 10% 额定转矩、低速和提前接触判定。若空载时 100‰不足以克服
+摩擦，可先用 `RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE=150` 重启完整会话；仍不足再用
+`200`，不要直接恢复旧的 `1000`。
 
 每次组 `15` 会在 ROS 日志中写入 `SPUR_TRACE`：相对 counts、源/目标估算 raw counts、
 每秒实际位置和剩余 counts、完成时误差及最终 `SPUR_RESULT`。快捷动作检测到接触时
-还会写入 `SPUR_CONTACT`。组 `12` 打包的日志包含这些记录；若再次故障，同时会有
-bridge 的 `CSP_SNAPSHOT D3(target=...,actual=...,error=...,status=...)`。
+还会写入 `SPUR_CONTACT`；动作后 bridge 会记录 `SPUR_CONTACT_SNAPSHOT`，包括
+`0x6074/0x6077` 转矩需求/实际值、`0x6078` 实际电流、位置误差和限位状态。组 `12`
+打包的日志包含这些记录；若再次故障，同时会有 bridge 的
+`CSP_SNAPSHOT D3(target=...,actual=...,error=...,status=...)`。
 
 组 `15` 只能在组 `7` 的 controller 都为 `active`、且 `wp3_tsk1` 没有执行时使用。
 它会清除旧组 `9` 的规划授权，因此之后运行 Task 1 必须重新执行 `14 → 9 → 10`。
@@ -511,6 +516,7 @@ ros2 launch rascl_description homing.launch.py \
   homing_interval_max_travel_drive2_counts:=300000 \
   homing_interval_timeout_s:=120.0 \
   csp_torque_limit_per_mille:=1000 \
+  spur_close_torque_limit_per_mille:=100 \
   clear_limit_switch_mappings_for_csp:=true \
   drive2_following_error_window_counts:=25000 \
   drive2_following_error_timeout_ms:=250 \

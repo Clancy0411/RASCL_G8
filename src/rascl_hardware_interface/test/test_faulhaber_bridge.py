@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+import threading
 import time
 import types
 import unittest
@@ -1074,6 +1075,102 @@ class BridgePDOTest(unittest.TestCase):
     def test_above_bridge_csp_torque_ceiling_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "1..6000"):
             make_bus(csp_torque_limit_per_mille=6001)
+
+    def test_live_spur_torque_limit_is_staged_and_verified(self):
+        messages = []
+        bus = make_bus(diagnostic_logger=messages.append)
+        slaves = [FakeSlave() for _ in range(4)]
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+        bus.csp_active = True
+        bus.latest_states = [
+            (
+                0,
+                bridge.STATUS_OPERATION_ENABLED_STATE,
+                bridge.MODE_CYCLIC_SYNC_POSITION,
+            )
+            for _ in bus.drives
+        ]
+        bus.target_counts = [0, 0, 0, 0]
+        result = []
+        failure = []
+
+        def request():
+            try:
+                result.append(bus.request_spur_torque_limit(100))
+            except Exception as exc:  # pragma: no cover - asserted below
+                failure.append(exc)
+
+        worker = threading.Thread(target=request)
+        worker.start()
+        deadline = time.monotonic() + 1.0
+        while not bus._spur_torque_pending and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertTrue(bus._spur_torque_pending)
+
+        writes_before = len(slaves[3].writes)
+        self.assertTrue(bus._advance_spur_torque_request_locked())
+        self.assertEqual(len(slaves[3].writes), writes_before + 1)
+        self.assertTrue(bus._advance_spur_torque_request_locked())
+        self.assertEqual(len(slaves[3].writes), writes_before + 2)
+        while bus._spur_torque_pending:
+            bus._advance_spur_torque_request_locked()
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failure, [])
+        self.assertIn("0x60E0/0x60E1=100/100", result[0])
+        self.assertEqual(bus.current_spur_torque_limit_per_mille, 100)
+        self.assertIn("SPUR_TORQUE_GUARD", messages[-1])
+
+    def test_live_spur_contact_snapshot_is_staged_and_logged(self):
+        messages = []
+        bus = make_bus(diagnostic_logger=messages.append)
+        slaves = [FakeSlave() for _ in range(4)]
+        slaves[3].values[(bridge.ACTUAL_TORQUE, 0)] = int(87).to_bytes(
+            2, "little", signed=True
+        )
+        slaves[3].values[(bridge.ACTUAL_CURRENT, 0)] = int(92).to_bytes(
+            2, "little", signed=True
+        )
+        bus.drives = [
+            bridge.FaulhaberDrive(slave, index, sdo_delay_s=0.0, verbose=False)
+            for index, slave in enumerate(slaves)
+        ]
+        bus.csp_active = True
+        bus.latest_states = [
+            (
+                index * 100,
+                bridge.STATUS_OPERATION_ENABLED_STATE,
+                bridge.MODE_CYCLIC_SYNC_POSITION,
+            )
+            for index in range(4)
+        ]
+        bus.target_counts = [0, 100, 200, 350]
+        result = []
+
+        worker = threading.Thread(
+            target=lambda: result.append(bus.request_spur_contact_snapshot())
+        )
+        worker.start()
+        deadline = time.monotonic() + 1.0
+        while not bus._spur_contact_pending and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertTrue(bus._spur_contact_pending)
+        while bus._spur_contact_pending:
+            bus._advance_spur_contact_snapshot_locked()
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertIn(
+            "SPUR_CONTACT_SNAPSHOT target=350,actual=300,error=50",
+            result[0],
+        )
+        self.assertIn("torque(0x6074/0x6077 demand/actual)=0/87", result[0])
+        self.assertIn("0x6078(current)=92", result[0])
+        self.assertEqual(messages[-1], result[0])
 
     def test_position_protection_read_retries_a_transient_mailbox_error(self):
         slave = FakeSlave()

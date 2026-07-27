@@ -1473,6 +1473,34 @@ class FaulhaberBus:
         self.live_diagnostic_pending = False
         self.last_stall_snapshot = "No CSP stall has been detected in this session."
 
+        # Drive 3's gripper-close guard changes 0x60E0/0x60E1 while CSP is
+        # running.  Mailbox operations are deliberately staged at one SDO per
+        # PDO cycle so the 50 Hz process-data watchdog is never starved.
+        self.current_spur_torque_limit_per_mille: Optional[int] = None
+        self._spur_torque_queue: List[
+            Tuple[str, str, int, int, int, bool, int]
+        ] = []
+        self._spur_torque_values: Dict[str, int] = {}
+        self._spur_torque_target: Optional[int] = None
+        self._spur_torque_error: Optional[str] = None
+        self._spur_torque_message = "No live Drive 3 torque-limit request."
+        self._spur_torque_pending = False
+        self._spur_torque_event = threading.Event()
+
+        # The close-contact snapshot uses the same staged mailbox discipline.
+        # It records Drive 3 PDO state immediately, then fills in the detailed
+        # drive-side torque/current/status values over following cycles.
+        self._spur_contact_queue: List[Tuple[str, int, int, bool, int]] = []
+        self._spur_contact_values: Dict[str, int] = {}
+        self._spur_contact_unavailable: List[str] = []
+        self._spur_contact_state: Optional[PDOState] = None
+        self._spur_contact_target: Optional[int] = None
+        self._spur_contact_pending = False
+        self._spur_contact_event = threading.Event()
+        self.last_spur_contact_snapshot = (
+            "No Drive 3 close-contact snapshot has been requested in this session."
+        )
+
         self._validate_cycle_configuration()
 
     def mark_homing_complete(self, complete: bool) -> None:
@@ -1869,6 +1897,10 @@ class FaulhaberBus:
                 f"{self._format_torque_limits(after)}"
                 f"{current_text}"
             )
+            if drive.drive_id == len(self.drives) - 1:
+                self.current_spur_torque_limit_per_mille = int(
+                    after["positive_torque_limit"]
+                )
         message = (
             "CSP directional torque limits verified for this session only "
             "(0x6072 read-only; 0x60E0/0x60E1 writable; 1000=rated torque): "
@@ -2219,6 +2251,216 @@ class FaulhaberBus:
         self.live_diagnostic_pending = False
         self.last_stall_snapshot = "No CSP stall has been detected in this session."
 
+    def _cancel_spur_staged_requests_locked(self, reason: str) -> None:
+        """Wake service callers if CSP stops while a staged request is active."""
+
+        if self._spur_torque_pending:
+            self._spur_torque_error = reason
+            self._spur_torque_message = f"Drive 3 torque-limit request aborted: {reason}"
+            self._spur_torque_pending = False
+            self._spur_torque_queue.clear()
+            self._spur_torque_event.set()
+        if self._spur_contact_pending:
+            self.last_spur_contact_snapshot = (
+                f"Drive 3 contact snapshot aborted: {reason}"
+            )
+            self._spur_contact_pending = False
+            self._spur_contact_queue.clear()
+            self._spur_contact_event.set()
+
+    def request_spur_torque_limit(
+        self, limit_per_mille: int, timeout_s: float = 3.0
+    ) -> str:
+        """Stage and verify a live Drive 3 directional torque-limit change."""
+
+        limit = int(limit_per_mille)
+        if not 1 <= limit <= MAX_TORQUE_PER_MILLE:
+            raise ValueError(
+                f"Drive 3 torque limit must be 1..{MAX_TORQUE_PER_MILLE} per-mille"
+            )
+        with self.pdo_lock:
+            if self.pdo_error:
+                raise RuntimeError(f"CSP/PDO loop failed: {self.pdo_error}")
+            if not self.csp_active:
+                raise RuntimeError("Drive 3 torque limit can only change while CSP is active")
+            drive_id = len(self.drives) - 1
+            if drive_id not in self.required_csp_drive_ids:
+                raise RuntimeError("Drive 3 is disabled in this CSP session")
+            if self._spur_torque_pending:
+                raise RuntimeError("another Drive 3 torque-limit request is still pending")
+
+            self._spur_torque_target = limit
+            self._spur_torque_values = {}
+            self._spur_torque_error = None
+            self._spur_torque_message = (
+                f"Drive 3 torque-limit request to {limit} per-mille is pending"
+            )
+            # Each operation gets up to three PDO cycles.  This tolerates a
+            # transient mailbox WKC loss without ever retrying twice in one
+            # process-data period.
+            self._spur_torque_queue = [
+                ("write", "positive_write", POSITIVE_TORQUE_LIMIT, 0, limit, False, 3),
+                ("write", "negative_write", NEGATIVE_TORQUE_LIMIT, 0, limit, False, 3),
+                ("read", "positive", POSITIVE_TORQUE_LIMIT, 0, 0, False, 3),
+                ("read", "negative", NEGATIVE_TORQUE_LIMIT, 0, 0, False, 3),
+            ]
+            self._spur_torque_pending = True
+            self._spur_torque_event.clear()
+
+        if not self._spur_torque_event.wait(float(timeout_s)):
+            raise TimeoutError("Drive 3 torque-limit readback did not finish within 3 seconds")
+        with self.pdo_lock:
+            if self._spur_torque_error:
+                raise RuntimeError(self._spur_torque_error)
+            return self._spur_torque_message
+
+    def _advance_spur_torque_request_locked(self) -> bool:
+        """Perform at most one mailbox operation for a live torque request."""
+
+        if not self._spur_torque_pending:
+            return False
+        if not self._spur_torque_queue:
+            return False
+
+        operation = self._spur_torque_queue.pop(0)
+        action, label, index, subindex, value, signed, attempts_left = operation
+        drive = self.drives[-1]
+        try:
+            if action == "write":
+                drive.sdo_write_int(
+                    index, subindex, value, size=2, signed=signed
+                )
+            else:
+                self._spur_torque_values[label] = drive.sdo_read_int(
+                    index, subindex, signed=signed
+                )
+        except Exception as exc:
+            if attempts_left > 1:
+                self._spur_torque_queue.insert(
+                    0,
+                    (
+                        action,
+                        label,
+                        index,
+                        subindex,
+                        value,
+                        signed,
+                        attempts_left - 1,
+                    ),
+                )
+                return True
+            self._spur_torque_error = (
+                f"Drive 3 live torque-limit {action} 0x{index:04X}:{subindex:02X} "
+                f"failed after 3 PDO cycles ({type(exc).__name__}: {exc})"
+            )
+            self._spur_torque_message = self._spur_torque_error
+            self._spur_torque_pending = False
+            self._spur_torque_queue.clear()
+            self._spur_torque_event.set()
+            self.diagnostic_logger("SPUR_TORQUE_GUARD_FAILED " + self._spur_torque_error)
+            return True
+
+        if self._spur_torque_queue:
+            return True
+
+        assert self._spur_torque_target is not None
+        positive = self._spur_torque_values.get("positive")
+        negative = self._spur_torque_values.get("negative")
+        if positive != self._spur_torque_target or negative != self._spur_torque_target:
+            self._spur_torque_error = (
+                "Drive 3 live torque-limit readback mismatch: "
+                f"expected={self._spur_torque_target}, "
+                f"positive/negative={positive}/{negative}"
+            )
+            self._spur_torque_message = self._spur_torque_error
+        else:
+            self.current_spur_torque_limit_per_mille = self._spur_torque_target
+            self._spur_torque_message = (
+                "Drive 3 CSP torque limit verified for this session: "
+                f"0x60E0/0x60E1={positive}/{negative} per-mille "
+                "(1000=rated torque)"
+            )
+            self.diagnostic_logger(
+                "SPUR_TORQUE_GUARD " + self._spur_torque_message
+            )
+        self._spur_torque_pending = False
+        self._spur_torque_event.set()
+        return True
+
+    def request_spur_contact_snapshot(self, timeout_s: float = 3.0) -> str:
+        """Capture a detailed Drive 3 hold/contact snapshot without pausing PDO."""
+
+        with self.pdo_lock:
+            if self.pdo_error:
+                raise RuntimeError(f"CSP/PDO loop failed: {self.pdo_error}")
+            if not self.csp_active:
+                raise RuntimeError("Drive 3 contact snapshot requires active CSP")
+            if self._spur_contact_pending:
+                raise RuntimeError("another Drive 3 contact snapshot is still pending")
+            drive_id = len(self.drives) - 1
+            if drive_id not in self.required_csp_drive_ids:
+                raise RuntimeError("Drive 3 is disabled in this CSP session")
+
+            self._spur_contact_state = self.latest_states[drive_id]
+            self._spur_contact_target = int(self.target_counts[drive_id])
+            self._spur_contact_values = {}
+            self._spur_contact_unavailable = []
+            self._spur_contact_queue = [
+                (label, index, subindex, signed, 3)
+                for label, index, subindex, signed in LIVE_DIAGNOSTIC_READS
+            ]
+            self._spur_contact_pending = True
+            self._spur_contact_event.clear()
+            self.last_spur_contact_snapshot = (
+                "Drive 3 close-contact snapshot is pending"
+            )
+
+        if not self._spur_contact_event.wait(float(timeout_s)):
+            raise TimeoutError("Drive 3 contact snapshot did not finish within 3 seconds")
+        with self.pdo_lock:
+            return self.last_spur_contact_snapshot
+
+    def _advance_spur_contact_snapshot_locked(self) -> bool:
+        """Read at most one Drive 3 diagnostic object in the current PDO cycle."""
+
+        if not self._spur_contact_pending:
+            return False
+        if self._spur_contact_queue:
+            operation = self._spur_contact_queue.pop(0)
+            label, index, subindex, signed, attempts_left = operation
+            try:
+                self._spur_contact_values[label] = self.drives[-1].sdo_read_int(
+                    index, subindex, signed=signed
+                )
+            except Exception as exc:
+                if attempts_left > 1:
+                    self._spur_contact_queue.insert(
+                        0, (label, index, subindex, signed, attempts_left - 1)
+                    )
+                    return True
+                self._spur_contact_unavailable.append(
+                    f"{label}:{type(exc).__name__}"
+                )
+            if self._spur_contact_queue:
+                return True
+
+        assert self._spur_contact_state is not None
+        assert self._spur_contact_target is not None
+        actual, statusword, mode = self._spur_contact_state
+        details = self.drives[-1].format_live_diagnostics(
+            self._spur_contact_values, self._spur_contact_unavailable
+        )
+        self.last_spur_contact_snapshot = (
+            "SPUR_CONTACT_SNAPSHOT "
+            f"target={self._spur_contact_target},actual={actual},"
+            f"error={self._spur_contact_target - actual},"
+            f"status=0x{statusword:04X},mode={mode}; {details}"
+        )
+        self._spur_contact_pending = False
+        self._spur_contact_event.set()
+        self.diagnostic_logger(self.last_spur_contact_snapshot)
+        return True
+
     def _detect_csp_stalls_locked(
         self, states: Sequence[PDOState], now_ns: Optional[int] = None
     ) -> List[int]:
@@ -2441,7 +2683,13 @@ class FaulhaberBus:
                     self._start_live_stall_diagnostics_locked(
                         states, stalled_drive_ids
                     )
-                    self._advance_live_stall_diagnostics_locked()
+                    # Across all live mailbox work, perform at most one SDO per
+                    # process-data cycle. Torque switching has highest priority
+                    # because group 15 waits for its verified readback before
+                    # publishing a close/open trajectory.
+                    if not self._advance_spur_torque_request_locked():
+                        if not self._advance_spur_contact_snapshot_locked():
+                            self._advance_live_stall_diagnostics_locked()
 
                 next_cycle_ns += self.pdo_cycle_ns
                 remaining_s = (next_cycle_ns - time.monotonic_ns()) / 1_000_000_000.0
@@ -2456,6 +2704,9 @@ class FaulhaberBus:
                 # A lost/invalid cyclic exchange must immediately stop applying
                 # process-data outputs.  Keep the original error for the TCP
                 # client, then make the best-effort EtherCAT state transition.
+                self._cancel_spur_staged_requests_locked(
+                    f"CSP/PDO loop stopped: {exc}"
+                )
                 self._safeop_locked()
             self.diagnostic_logger(f"CSP_PDO_STOPPED {exc}")
             print(f"[EtherCAT] CSP/PDO loop stopped: {exc}")
@@ -2514,6 +2765,7 @@ class FaulhaberBus:
             thread.join(timeout=max(1.0, 5.0 * self.pdo_cycle_ns / 1_000_000_000.0))
 
         with self.pdo_lock:
+            self._cancel_spur_staged_requests_locked("CSP session is exiting")
             statuses = [state[1] for state in self.latest_states]
             try:
                 if self.target_counts and self.master is not None:
@@ -2582,6 +2834,7 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("pdo_timeout_us", 5_000)
         self.declare_parameter("enable_dc_sync", False)
         self.declare_parameter("csp_torque_limit_per_mille", 1000)
+        self.declare_parameter("spur_close_torque_limit_per_mille", 100)
         self.declare_parameter("clear_limit_switch_mappings_for_csp", True)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
@@ -2636,6 +2889,19 @@ class RASCLFaulhaberBridge(Node):
         self.csp_torque_limit_per_mille = int(
             self.get_parameter("csp_torque_limit_per_mille").value
         )
+        self.spur_close_torque_limit_per_mille = int(
+            self.get_parameter("spur_close_torque_limit_per_mille").value
+        )
+        if not 1 <= self.spur_close_torque_limit_per_mille <= MAX_TORQUE_PER_MILLE:
+            raise ValueError(
+                "spur_close_torque_limit_per_mille must be "
+                f"1..{MAX_TORQUE_PER_MILLE}"
+            )
+        if self.spur_close_torque_limit_per_mille > self.csp_torque_limit_per_mille:
+            raise ValueError(
+                "spur_close_torque_limit_per_mille cannot exceed "
+                "csp_torque_limit_per_mille"
+            )
         self.clear_limit_switch_mappings_for_csp = bool(
             self.get_parameter("clear_limit_switch_mappings_for_csp").value
         )
@@ -2770,6 +3036,12 @@ class RASCLFaulhaberBridge(Node):
             f"progress<{self.csp_stall_progress_counts} counts for "
             f"{self.csp_stall_timeout_ms} ms"
         )
+        self.get_logger().info(
+            "Drive 3 close guard: group 15 close will temporarily set "
+            "0x60E0/0x60E1 to "
+            f"{self.spur_close_torque_limit_per_mille} per-mille; open and "
+            f"custom motion restore {self.csp_torque_limit_per_mille} per-mille"
+        )
         if self.clear_limit_switch_mappings_for_csp:
             self.get_logger().info(
                 "CSP handoff will clear and verify volatile lower/upper "
@@ -2827,6 +3099,17 @@ class RASCLFaulhaberBridge(Node):
         )
         self.read_spur_gear_counts_srv = self.create_service(
             Trigger, "~/read_spur_gear_counts", self.on_read_spur_gear_counts
+        )
+        self.enable_spur_close_guard_srv = self.create_service(
+            Trigger, "~/enable_spur_close_guard", self.on_enable_spur_close_guard
+        )
+        self.restore_spur_torque_srv = self.create_service(
+            Trigger, "~/restore_spur_torque", self.on_restore_spur_torque
+        )
+        self.capture_spur_contact_snapshot_srv = self.create_service(
+            Trigger,
+            "~/capture_spur_contact_snapshot",
+            self.on_capture_spur_contact_snapshot,
         )
         self.blink_digout1_srv = self.create_service(
             Trigger, "~/blink_digout1", self.on_blink_digout1
@@ -3287,6 +3570,49 @@ class RASCLFaulhaberBridge(Node):
         except Exception as exc:
             response.success = False
             response.message = f"Read Drive 3 counts failed: {exc}"
+        return response
+
+    def on_enable_spur_close_guard(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        """Lower Drive 3 directional torque before the close trajectory starts."""
+
+        try:
+            response.message = self.bus.request_spur_torque_limit(
+                self.spur_close_torque_limit_per_mille
+            )
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.message = f"Enable Drive 3 close guard failed: {exc}"
+        return response
+
+    def on_restore_spur_torque(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        """Restore Drive 3's normal CSP torque before open/custom motion."""
+
+        try:
+            response.message = self.bus.request_spur_torque_limit(
+                self.csp_torque_limit_per_mille
+            )
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.message = f"Restore Drive 3 CSP torque failed: {exc}"
+        return response
+
+    def on_capture_spur_contact_snapshot(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        """Log Drive 3 torque/current/status through staged live SDO reads."""
+
+        try:
+            response.message = self.bus.request_spur_contact_snapshot()
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.message = f"Capture Drive 3 contact snapshot failed: {exc}"
         return response
 
     def on_digout1(self, msg: Bool) -> None:

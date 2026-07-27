@@ -73,6 +73,14 @@ def generate_launch_description():
             "Symmetric CSP directional torque limit for Drives 0-3; 1000 is rated."
         ),
     )
+    spur_close_torque_limit_arg = DeclareLaunchArgument(
+        "spur_close_torque_limit_per_mille",
+        default_value="100",
+        description=(
+            "Temporary symmetric Drive 3 torque limit used by group 15 close; "
+            "100 is 10% of rated torque."
+        ),
+    )
     clear_limit_switch_mappings_arg = DeclareLaunchArgument(
         "clear_limit_switch_mappings_for_csp",
         default_value="true",
@@ -190,6 +198,10 @@ def generate_launch_description():
                 "csp_torque_limit_per_mille": ParameterValue(
                     LaunchConfiguration("csp_torque_limit_per_mille"), value_type=int
                 ),
+                "spur_close_torque_limit_per_mille": ParameterValue(
+                    LaunchConfiguration("spur_close_torque_limit_per_mille"),
+                    value_type=int,
+                ),
                 "clear_limit_switch_mappings_for_csp": ParameterValue(
                     LaunchConfiguration("clear_limit_switch_mappings_for_csp"),
                     value_type=bool,
@@ -284,6 +296,7 @@ def generate_launch_description():
             pdo_timeout_us_arg,
             enable_dc_sync_arg,
             csp_torque_limit_arg,
+            spur_close_torque_limit_arg,
             clear_limit_switch_mappings_arg,
             drive2_following_error_window_arg,
             drive2_following_error_timeout_arg,

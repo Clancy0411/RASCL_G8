@@ -526,3 +526,20 @@ commands. The automatically calculated duration is therefore halved:
 The 50 Hz minimum-jerk CSP path, relative-count semantics, travel limits,
 contact detector, arm-joint hold and Drive 3 Homing reference profile
 (`3000 counts/s`) are unchanged.
+
+## 2026-07-27 gentle Drive 3 contact close
+
+The former group `15` close could apply the normal `1000`-per-mille Drive 3
+torque until a 2000-count lag was detected, which was too late for the gripper.
+Close now stages and verifies session-only `0x60E0/0x60E1=100` at one SDO per
+PDO cycle, approaches at `20000 counts/s`, detects contact at
+`300 counts / 50-count maximum progress / 0.06 s`, and holds with only
+`100 counts` of closing preload. The low limit remains active while holding.
+Open and direct relative-count commands restore verified
+`0x60E0/0x60E1=1000` and retain `20000 counts/s`.
+
+After close, group `15` requests a staged `SPUR_CONTACT_SNAPSHOT` containing
+Drive 3 position error, status, torque demand/actual value, actual current and
+the existing limit/input diagnostics. Torque switching and snapshot collection
+perform at most one mailbox operation per 50 Hz PDO cycle; Homing, the Drive 3
+Method-37 reference profile and arm Cartesian trajectories are unchanged.
