@@ -447,3 +447,18 @@ with it: `close/c=-500000 counts` maximum travel and
 `open/o=+200000 counts` exact travel. Direct signed integer group `15` input
 keeps raw encoder semantics, so a positive custom value still increases the
 group `17` `absolute_counts` readback.
+
+## 2026-07-27 Drive 0–2 reference-switch interval midpoint Home
+
+The green Home sensor is an active position interval rather than an instantaneous
+point, so the previous CiA-402 edge Home could leave the nominal horizontal pose
+offset from the physical center. Drives 0–2 now keep the validated first-edge
+search (D0/D1 Method 28 in negative counts, D2 Method 24 in positive counts),
+continue in the same direction until logical reference input `0x2311:01` is
+inactive for three consecutive samples, return to the measured active-interval
+midpoint, and run Method 37 to make that midpoint zero. `home_one/home_all` and
+the `CENTERED_HOME` log expose `entry/exit/width/midpoint` counts. A `100000`
+count maximum scan, `30 s` timeout, `100` count endpoint tolerance, following-
+error check, and failure Disable Voltage prevent a stuck input from becoming an
+unbounded motion. `center_reference_switch_home=false` retains the old edge-only
+behavior as a rollback; Drive 3's fixed `+50000 counts` reference is unchanged.

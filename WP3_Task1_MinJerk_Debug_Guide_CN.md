@@ -44,8 +44,10 @@ T3：8 → 13 → 14 → 9 → 10
 1. **T1 组 4：启动唯一 EtherCAT/Homing bridge。**
    - 当前工作站使用网卡 `enx3c18a0256deb`。脚本组 `4` 会自动使用该默认值；只有切换到另一台工作站时，才通过 `RASCL_INTERFACE=<网卡名>` 覆盖。
    - 启动前只做必需的软件存在性检查；缺包时会在机械臂动作前停止并提示组 `1`。
-   - Drive 0–2 使用传感器自动 Homing。三轴到位后，Drive 3 从实时位置相对运动
-     `+50000 counts`，再用 FAULHABER Homing Method 37 把到达位置设为 `0 counts`。
+   - Drive 0–2 使用传感器区间中点 Homing：既有方法先找到绿灯亮起边沿，再沿同一
+     方向扫描到灯连续 3 次采样熄灭，回到亮灯区 counts 中点并用 Method 37 置零。
+     三轴到位后，Drive 3 从实时位置相对运动 `+50000 counts`，再用 FAULHABER
+     Homing Method 37 把到达位置设为 `0 counts`。
    - 启动日志必须包含 `Drive 2 CSP following-error monitor changed`。本次测试会将
      Drive 2 的 `0x6065/0x6066` 设为 `25000 counts / 250 ms`，并尝试读出
      `0x607B/0x607D`；不会改写这两项软件位置限位。若 PRE-OP 第一次读取出现临时
@@ -63,6 +65,10 @@ T3：8 → 13 → 14 → 9 → 10
    - 开始时会打印每个 Drive 的输入状态及 `0x2310 lower/upper/option/reference`，
      用于记录 CSP 修复前的限位输入映射。
    - 先运动 Drive 0–2；全部成功后 Drive 3 执行 `+50000 counts` 参考运动并置零。
+   - D0–D2 每轴成功时必须出现 `CENTERED_HOME`，并保存其中的
+     `entry/exit/width/midpoint/zero`。默认最大扫描 `100000 counts`、超时 `30 s`；
+     若绿灯不熄灭、发生 following error 或中点定位失败，该轴会 Disable Voltage，
+     `home_all` 返回失败，此时禁止继续组 `7`。
    - 必须返回 `success=True`、`CSP handoff armed`，且消息中包含
      `drive3_reference(...delta=50000,...zero=0,method=37)`。
    - 随后脚本自动调用 counts 查询；必须显示
@@ -802,7 +808,8 @@ source install/local_setup.bash
 ## 11. 验收标准
 
 1. 软件测试和 fake hardware 全部通过。
-2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功；Drive 3 随后完成
+2. Drive 0–2 的 `home_one` 或一次 `home_all` 成功，每轴均记录到有效的
+   `CENTERED_HOME entry/exit/width/midpoint`；Drive 3 随后完成
    `+50000 counts + Method 37` 置零，组 `17` 回读接近 `0`。
 3. Homing bridge 未重启，延迟 PDO mapping 后进入 OP/CSP。
 4. Drive 0–2 连续交接；Drive 3 完成固定参考与 Method 37 置零后进入 CSP。
@@ -820,6 +827,7 @@ source install/local_setup.bash
 | Drive 3 策略 | 跳过传感器搜索；D0–D2 完成后相对 `+50000 counts`，Method 37 置零 |
 | Homing method | D0–D2 `[28,28,24]`；Drive 3 当前点置零 `37` |
 | Reference input | `[2,2,2,1]` |
+| D0–D2 Home 点 | 参考输入亮灯区间中点；熄灭确认 `3` 次；扫描上限 `100000 counts / 30 s` |
 | Drive 0x607C | `[0,0,0,0]`；D3 Method 37 以零偏置定义当前位置 |
 | ROS direction（名义） | `[+1,+1,+1,-1]` |
 | ROS offset（名义） | `[0,-802816,-802816,0]` |

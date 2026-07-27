@@ -222,7 +222,9 @@ spur_gear_joint = [-2*pi,+2*pi] = [-6.283185307,+6.283185307]
 当前策略：
 
 ```text
-Drive 0–2 自动 Homing
+Drive 0–2 先用既有 CiA-402 方法找到绿色参考灯亮起边沿
+Drive 0–2 继续沿各自 Homing 方向运动，直到参考灯连续 3 次采样熄灭
+Drive 0–2 回到亮灯区间中点，再用 Method 37 将中点设为 0 counts
 Drive 0–2 全部到位后，Drive 3 从实时位置相对运动 +50000 counts
 Drive 3 到位后用 Homing Method 37 将当前位置设为 0 counts
 Drive 0–3 全部参与随后 CSP/PDO
@@ -235,6 +237,12 @@ skip_spur_gear_homing = true
 ignore_spur_gear_in_csp = false
 homing_methods = [28,28,24,24]
 reference_inputs = [2,2,2,1]
+center_reference_switch_home = true
+homing_center_timeout_s = 30.0
+homing_center_max_scan_counts = 100000
+homing_center_release_confirm_samples = 3
+homing_center_poll_interval_s = 0.02
+homing_center_position_tolerance_counts = 100
 spur_gear_reference_delta_counts = +50000
 spur_gear_reference_timeout_s = 30.0
 spur_gear_reference_tolerance_counts = 100
@@ -244,6 +252,14 @@ spur_gear_reference_profile_deceleration = 1000
 spur_gear_reference_following_error_confirm_s = 0.30
 drive 0x607C = [0,0,0,0]
 ```
+
+Drive 0/1 的 Method 28 沿负 counts 穿过亮灯区，Drive 2 的 Method 24 沿正 counts
+穿过亮灯区。熄灭边沿确认后先回到该边沿消除扫描过冲，再移动到两边沿的 counts 中点，
+最后用 Method 37 重新置零。`home_one/home_all` 返回值与 bridge 日志中的
+`CENTERED_HOME` 都会报告每轴的 `entry/exit/width/midpoint`，实机首次测试必须保存这些
+数值。若灯未在 `100000 counts` 或 `30 s` 内熄灭、发生 following error、边沿/中点定位
+误差超过 `100 counts`，该轴会 Disable Voltage，Homing 失败且禁止进入 CSP。仅在需要
+回滚旧单边沿行为时使用 `center_reference_switch_home=false`。
 
 这里的 `skip_spur_gear_homing=true` 只表示 Drive 3 不进行传感器寻零；它仍必须执行固定
 相对运动和 Method 37 当前位置置零。参考运动必须在 `+50000 counts` 终点误差不超过
@@ -269,7 +285,8 @@ Drive 3，再返回失败；不得通过跳过该失败来强制执行 Method 37
 5. CSP 运行时不能再次 Homing；
 6. 停止 ros2_control 会 Disable Voltage，停机前必须支撑机械臂；
 7. Drive 3 不做传感器寻零，但不得绕过 `+50000 counts → Method 37 置零`；
-8. `0x607C=0` 只用于 Drive 3 的 Method 37 零位定义，不得用于补偿 URDF/TCP 几何误差。
+8. `0x607C=0` 用于 Drive 0–2 中点和 Drive 3 固定参考点的 Method 37 零位定义，不得用于补偿 URDF/TCP 几何误差；
+9. 中点 Home 扫描必须保留最大行程、超时、输入去抖和失败 Disable Voltage，不得改成无界运动。
 
 ## 7. CSP/PDO 当前配置
 

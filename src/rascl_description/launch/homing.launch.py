@@ -25,6 +25,41 @@ def generate_launch_description():
         default_value="8.0",
         description="Maximum reference-search time per drive.",
     )
+    center_reference_switch_home_arg = DeclareLaunchArgument(
+        "center_reference_switch_home",
+        default_value="true",
+        description=(
+            "After finding the first reference-switch edge, cross the active interval, "
+            "return to its midpoint, and define that midpoint as Home."
+        ),
+    )
+    homing_center_timeout_arg = DeclareLaunchArgument(
+        "homing_center_timeout_s",
+        default_value="30.0",
+        description="Maximum time for each switch-interval scan or centering move.",
+    )
+    homing_center_max_scan_arg = DeclareLaunchArgument(
+        "homing_center_max_scan_counts",
+        default_value="100000",
+        description=(
+            "Maximum travel past the first Home edge while looking for the switch-off edge."
+        ),
+    )
+    homing_center_release_samples_arg = DeclareLaunchArgument(
+        "homing_center_release_confirm_samples",
+        default_value="3",
+        description="Consecutive inactive reference-input samples required at the second edge.",
+    )
+    homing_center_poll_interval_arg = DeclareLaunchArgument(
+        "homing_center_poll_interval_s",
+        default_value="0.02",
+        description="Reference-input polling interval during the centered-Home scan.",
+    )
+    homing_center_tolerance_arg = DeclareLaunchArgument(
+        "homing_center_position_tolerance_counts",
+        default_value="100",
+        description="Allowed Profile Position error at the exit edge and interval midpoint.",
+    )
     test_drive_index_arg = DeclareLaunchArgument(
         "test_drive_index",
         default_value="0",
@@ -144,6 +179,26 @@ def generate_launch_description():
                 "motion_timeout_s": ParameterValue(
                     LaunchConfiguration("motion_timeout_s"), value_type=float
                 ),
+                "center_reference_switch_home": ParameterValue(
+                    LaunchConfiguration("center_reference_switch_home"), value_type=bool
+                ),
+                "homing_center_timeout_s": ParameterValue(
+                    LaunchConfiguration("homing_center_timeout_s"), value_type=float
+                ),
+                "homing_center_max_scan_counts": ParameterValue(
+                    LaunchConfiguration("homing_center_max_scan_counts"), value_type=int
+                ),
+                "homing_center_release_confirm_samples": ParameterValue(
+                    LaunchConfiguration("homing_center_release_confirm_samples"),
+                    value_type=int,
+                ),
+                "homing_center_poll_interval_s": ParameterValue(
+                    LaunchConfiguration("homing_center_poll_interval_s"), value_type=float
+                ),
+                "homing_center_position_tolerance_counts": ParameterValue(
+                    LaunchConfiguration("homing_center_position_tolerance_counts"),
+                    value_type=int,
+                ),
                 "verbose": True,
                 "pdo_cycle_ns": ParameterValue(
                     LaunchConfiguration("pdo_cycle_ns"), value_type=int
@@ -223,6 +278,12 @@ def generate_launch_description():
             host_arg,
             port_arg,
             motion_timeout_arg,
+            center_reference_switch_home_arg,
+            homing_center_timeout_arg,
+            homing_center_max_scan_arg,
+            homing_center_release_samples_arg,
+            homing_center_poll_interval_arg,
+            homing_center_tolerance_arg,
             test_drive_index_arg,
             pdo_cycle_ns_arg,
             pdo_timeout_us_arg,

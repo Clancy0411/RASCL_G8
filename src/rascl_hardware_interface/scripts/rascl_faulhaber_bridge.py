@@ -576,6 +576,178 @@ class FaulhaberDrive:
             f"Drive {self.drive_id}: homing timed out after {timeout_s:.1f} seconds"
         )
 
+    def read_reference_switch_active(self, reference_input: int) -> bool:
+        """Read one configured reference input after the drive's polarity mapping."""
+
+        if not 1 <= reference_input <= 8:
+            raise ValueError(f"Drive {self.drive_id}: invalid reference input {reference_input}")
+        logical_inputs = self.sdo_read_int_retry(
+            DIGITAL_IO_STATUS,
+            DIGITAL_INPUT_LOGICAL,
+        )
+        return bool(logical_inputs & (1 << (reference_input - 1)))
+
+    @staticmethod
+    def reference_switch_homing_direction(method: int) -> int:
+        """Return the encoder-count direction used by switch methods 24 and 28."""
+
+        if method == 24:
+            return 1
+        if method == 28:
+            return -1
+        raise ValueError(
+            f"Centered reference-switch Homing supports methods 24 and 28, got {method}"
+        )
+
+    def center_reference_switch_home(
+        self,
+        method: int,
+        reference_input: int,
+        offset_counts: int,
+        search_speed: int,
+        zero_speed: int,
+        acceleration: int,
+        timeout_s: float,
+        scan_timeout_s: float,
+        max_scan_counts: int,
+        release_confirm_samples: int,
+        poll_interval_s: float,
+        position_tolerance_counts: int,
+    ) -> Dict[str, int]:
+        """Home on the center of the active reference-switch interval.
+
+        The normal CiA-402 Homing command first finds and zeros the entry edge.
+        Profile Position motion then continues in the same direction until the
+        logical reference input is inactive for the configured number of
+        samples.  The drive returns to the midpoint between both edges and
+        Method 37 defines that midpoint as zero.
+        """
+
+        direction = self.reference_switch_homing_direction(method)
+        if offset_counts != 0:
+            raise ValueError(
+                "Centered reference-switch Homing requires homing_offsets=0; "
+                f"Drive {self.drive_id} has {offset_counts}"
+            )
+        if max_scan_counts <= 0:
+            raise ValueError("Centered Homing maximum scan travel must be positive")
+        if scan_timeout_s <= 0.0:
+            raise ValueError("Centered Homing scan timeout must be positive")
+        if release_confirm_samples <= 0:
+            raise ValueError("Centered Homing release sample count must be positive")
+        if poll_interval_s <= 0.0:
+            raise ValueError("Centered Homing poll interval must be positive")
+        if position_tolerance_counts < 0:
+            raise ValueError("Centered Homing position tolerance must be non-negative")
+
+        entry_counts = self.home_to_reference_switch(
+            method=method,
+            reference_input=reference_input,
+            offset_counts=offset_counts,
+            search_speed=search_speed,
+            zero_speed=zero_speed,
+            acceleration=acceleration,
+            timeout_s=timeout_s,
+        )
+        seen_active = self.read_reference_switch_active(reference_input)
+
+        # Cross the active interval slowly.  max_scan_counts is a hard travel
+        # bound for a missing/stuck input; the first confirmed inactive sample
+        # is retained as the exit edge even while later samples debounce it.
+        self.enable_operation(MODE_PROFILE_POSITION)
+        self.configure_profile_motion(search_speed, acceleration, acceleration)
+        scan_target_counts = entry_counts + direction * max_scan_counts
+        self.move_absolute_counts(scan_target_counts)
+        deadline = time.monotonic() + scan_timeout_s
+        first_inactive_counts: Optional[int] = None
+        inactive_samples = 0
+        actual_counts = entry_counts
+
+        while time.monotonic() < deadline:
+            status = self.read_status()
+            if status & STATUS_FAULT:
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: fault while scanning the Home interval; "
+                    f"statusword=0x{status:04X}"
+                )
+            if status & STATUS_FOLLOWING_OR_HOMING_ERROR:
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: following error while scanning the Home "
+                    f"interval; statusword=0x{status:04X}"
+                )
+            if status & STATUS_INTERNAL_LIMIT_ACTIVE:
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: internal position/limit input stopped the "
+                    f"centered-Home scan; statusword=0x{status:04X}"
+                )
+
+            switch_active = self.read_reference_switch_active(reference_input)
+            actual_counts = self.read_actual_position_counts()
+            if switch_active:
+                seen_active = True
+                first_inactive_counts = None
+                inactive_samples = 0
+            elif seen_active:
+                if first_inactive_counts is None:
+                    first_inactive_counts = actual_counts
+                inactive_samples += 1
+                if inactive_samples >= release_confirm_samples:
+                    break
+
+            if (
+                status & STATUS_TARGET_REACHED
+                and abs(actual_counts - scan_target_counts) <= position_tolerance_counts
+            ):
+                switch_state = "remained active" if seen_active else "never became active"
+                raise RuntimeError(
+                    f"Drive {self.drive_id}: reference input {reference_input} "
+                    f"{switch_state} during the full {max_scan_counts}-count "
+                    "centered-Home scan"
+                )
+            time.sleep(poll_interval_s)
+        else:
+            raise TimeoutError(
+                f"Drive {self.drive_id}: centered-Home scan timed out after "
+                f"{scan_timeout_s:.1f} seconds; entry={entry_counts} actual={actual_counts}"
+            )
+
+        assert first_inactive_counts is not None
+        exit_counts = first_inactive_counts
+        interval_counts = direction * (exit_counts - entry_counts)
+        if interval_counts <= 0:
+            raise RuntimeError(
+                f"Drive {self.drive_id}: invalid Home interval direction; "
+                f"entry={entry_counts} exit={exit_counts} method={method}"
+            )
+
+        # Retarget the drive to the sampled release edge to stop any scan
+        # overshoot, then move halfway back through the lit interval.
+        exit_actual = self.move_absolute_counts_and_wait(exit_counts, scan_timeout_s)
+        if abs(exit_actual - exit_counts) > position_tolerance_counts:
+            raise RuntimeError(
+                f"Drive {self.drive_id}: failed to settle at the Home exit edge; "
+                f"target={exit_counts} actual={exit_actual}"
+            )
+        midpoint_counts = entry_counts + direction * ((interval_counts + 1) // 2)
+        midpoint_actual = self.move_absolute_counts_and_wait(midpoint_counts, scan_timeout_s)
+        if abs(midpoint_actual - midpoint_counts) > position_tolerance_counts:
+            raise RuntimeError(
+                f"Drive {self.drive_id}: failed to reach the Home interval midpoint; "
+                f"target={midpoint_counts} actual={midpoint_actual}"
+            )
+        zero_counts = self.home_current_position(
+            timeout_s,
+            min(position_tolerance_counts, 10),
+        )
+        return {
+            "entry": entry_counts,
+            "exit": exit_counts,
+            "width": interval_counts,
+            "midpoint": midpoint_counts,
+            "midpoint_actual": midpoint_actual,
+            "zero": zero_counts,
+        }
+
     def set_digout1(self, on: bool) -> None:
         value = DIGOUT1_ON if on else DIGOUT1_OFF
         self.sdo_write_int(DIGITAL_IO_STATUS, DIGOUT_WRITE, value, size=2, signed=False)
@@ -2323,6 +2495,12 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("homing_search_speeds", [1000, 1000, 1000, 1000])
         self.declare_parameter("homing_zero_speeds", [200, 200, 200, 200])
         self.declare_parameter("homing_accelerations", [1000, 1000, 1000, 1000])
+        self.declare_parameter("center_reference_switch_home", True)
+        self.declare_parameter("homing_center_timeout_s", 30.0)
+        self.declare_parameter("homing_center_max_scan_counts", 100_000)
+        self.declare_parameter("homing_center_release_confirm_samples", 3)
+        self.declare_parameter("homing_center_poll_interval_s", 0.02)
+        self.declare_parameter("homing_center_position_tolerance_counts", 100)
         self.declare_parameter("test_drive_index", 0)
 
         self.interface = str(self.get_parameter("interface").value)
@@ -2412,6 +2590,24 @@ class RASCLFaulhaberBridge(Node):
         self.homing_search_speeds = self._int_parameter_list("homing_search_speeds")
         self.homing_zero_speeds = self._int_parameter_list("homing_zero_speeds")
         self.homing_accelerations = self._int_parameter_list("homing_accelerations")
+        self.center_reference_switch_home = bool(
+            self.get_parameter("center_reference_switch_home").value
+        )
+        self.homing_center_timeout_s = float(
+            self.get_parameter("homing_center_timeout_s").value
+        )
+        self.homing_center_max_scan_counts = int(
+            self.get_parameter("homing_center_max_scan_counts").value
+        )
+        self.homing_center_release_confirm_samples = int(
+            self.get_parameter("homing_center_release_confirm_samples").value
+        )
+        self.homing_center_poll_interval_s = float(
+            self.get_parameter("homing_center_poll_interval_s").value
+        )
+        self.homing_center_position_tolerance_counts = int(
+            self.get_parameter("homing_center_position_tolerance_counts").value
+        )
         self._validate_homing_parameters()
 
         self.lock = threading.RLock()
@@ -2421,6 +2617,7 @@ class RASCLFaulhaberBridge(Node):
         self.spur_gear_reference_target_counts: Optional[int] = None
         self.spur_gear_reference_pre_zero_counts: Optional[int] = None
         self.spur_gear_reference_zero_readback: Optional[int] = None
+        self.centered_home_results: Dict[int, Dict[str, int]] = {}
         self.bus = FaulhaberBus(
             self.interface,
             self.slave_indices,
@@ -2482,6 +2679,14 @@ class RASCLFaulhaberBridge(Node):
                 f"{self.spur_gear_reference_delta_counts:+d} counts and use "
                 "Homing Method 37 to set that position to 0"
             )
+        if self.center_reference_switch_home:
+            self.get_logger().info(
+                "Drives 0-2 use centered reference-switch Homing: cross the active "
+                "interval, return to its midpoint, then set that midpoint to zero; "
+                f"maximum scan={self.homing_center_max_scan_counts} counts, "
+                f"timeout={self.homing_center_timeout_s:.1f} s, "
+                f"release confirmation={self.homing_center_release_confirm_samples} samples"
+            )
         self.bus.connect()
         self._configure_drive2_csp_protection()
         for drive in self.bus.drives:
@@ -2536,6 +2741,18 @@ class RASCLFaulhaberBridge(Node):
         for name, values in parameters.items():
             if len(values) != expected:
                 raise ValueError(f"{name} needs {expected} entries, got {len(values)}")
+        if self.homing_center_max_scan_counts <= 0:
+            raise ValueError("homing_center_max_scan_counts must be positive")
+        if self.homing_center_timeout_s <= 0.0:
+            raise ValueError("homing_center_timeout_s must be positive")
+        if self.homing_center_release_confirm_samples <= 0:
+            raise ValueError("homing_center_release_confirm_samples must be positive")
+        if self.homing_center_poll_interval_s <= 0.0:
+            raise ValueError("homing_center_poll_interval_s must be positive")
+        if self.homing_center_position_tolerance_counts < 0:
+            raise ValueError(
+                "homing_center_position_tolerance_counts must be non-negative"
+            )
 
     def _drive2_position_protection_message(self) -> str:
         if len(self.bus.drives) <= 2:
@@ -2616,17 +2833,63 @@ class RASCLFaulhaberBridge(Node):
         self.spur_gear_reference_zero_readback = None
         self.bus.mark_drive_homing_started(drive_index)
         drive = self.bus.drives[drive_index]
-        position = drive.home_to_reference_switch(
-            method=self.homing_methods[drive_index],
-            reference_input=self.reference_inputs[drive_index],
-            offset_counts=self.homing_offsets[drive_index],
-            search_speed=self.homing_search_speeds[drive_index],
-            zero_speed=self.homing_zero_speeds[drive_index],
-            acceleration=self.homing_accelerations[drive_index],
-            timeout_s=self.motion_timeout_s,
-        )
+        self.centered_home_results.pop(drive_index, None)
+        homing_arguments = {
+            "method": self.homing_methods[drive_index],
+            "reference_input": self.reference_inputs[drive_index],
+            "offset_counts": self.homing_offsets[drive_index],
+            "search_speed": self.homing_search_speeds[drive_index],
+            "zero_speed": self.homing_zero_speeds[drive_index],
+            "acceleration": self.homing_accelerations[drive_index],
+            "timeout_s": self.motion_timeout_s,
+        }
+        try:
+            if self.center_reference_switch_home:
+                result = drive.center_reference_switch_home(
+                    **homing_arguments,
+                    scan_timeout_s=self.homing_center_timeout_s,
+                    max_scan_counts=self.homing_center_max_scan_counts,
+                    release_confirm_samples=(
+                        self.homing_center_release_confirm_samples
+                    ),
+                    poll_interval_s=self.homing_center_poll_interval_s,
+                    position_tolerance_counts=(
+                        self.homing_center_position_tolerance_counts
+                    ),
+                )
+                self.centered_home_results[drive_index] = result
+                position = result["zero"]
+                self.get_logger().warning(
+                    f"CENTERED_HOME D{drive_index} "
+                    f"entry={result['entry']} exit={result['exit']} "
+                    f"width={result['width']} midpoint={result['midpoint']} "
+                    f"midpoint_actual={result['midpoint_actual']} zero={result['zero']}"
+                )
+            else:
+                position = drive.home_to_reference_switch(**homing_arguments)
+        except Exception:
+            # A failed scan can leave a long Profile Position target active.
+            # Remove motor voltage before propagating failure to the ROS service.
+            try:
+                drive.disable_operation()
+            except Exception as stop_exc:
+                self.get_logger().error(
+                    f"Drive {drive_index} Homing failed and Disable Voltage also failed: "
+                    f"{stop_exc}"
+                )
+            raise
         self.bus.mark_drive_homed(drive_index)
         return position
+
+    def _home_position_message(self, drive_index: int, position: int) -> str:
+        result = self.centered_home_results.get(drive_index)
+        if result is None:
+            return f"drive{drive_index}={position}"
+        return (
+            f"drive{drive_index}={position}(centered:entry={result['entry']},"
+            f"exit={result['exit']},width={result['width']},"
+            f"midpoint={result['midpoint']})"
+        )
 
     def _reference_spur_gear_after_arm_homing(self) -> str:
         """Move Drive 3 by the configured increment, then make that position zero."""
@@ -2793,7 +3056,9 @@ class RASCLFaulhaberBridge(Node):
                 else ""
             )
             response.message = (
-                f"Drive {drive_index} homing completed; actual_position={position}{suffix}"
+                "Drive "
+                f"{drive_index} homing completed; "
+                f"{self._home_position_message(drive_index, position)}{suffix}"
             )
         except Exception as exc:
             response.success = False
@@ -2814,7 +3079,8 @@ class RASCLFaulhaberBridge(Node):
             response.message = (
                 "Homing completed for required drives; CSP handoff armed: "
                 + " ".join(
-                    f"drive{index}={position}" for index, position in positions.items()
+                    self._home_position_message(index, position)
+                    for index, position in positions.items()
                 )
                 + f" {spur_reference}"
             )

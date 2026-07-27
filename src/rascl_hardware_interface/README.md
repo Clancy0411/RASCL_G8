@@ -125,6 +125,25 @@ Homing must run without an active CSP/PDO loop. Start the dedicated bridge:
 ros2 launch rascl_description homing.launch.py interface:=robot_interface
 ```
 
+Centered switch Homing is enabled by default for Drives 0–2. The validated
+CiA-402 method first finds the switch-on edge; the bridge then continues in the
+same direction at the configured search speed until logical input `0x2311:01`
+is inactive for three consecutive samples. It records that switch-off edge,
+moves to the midpoint of the active interval, and uses Homing Method 37 to make
+the midpoint `0` counts. `home_one` and `home_all` responses include
+`entry`, `exit`, `width`, and `midpoint` counts, and the bridge logs the same
+values as `CENTERED_HOME`.
+
+The centered scan has independent safety bounds of `100000 counts` and `30 s`.
+An input that never switches off, a timeout, a following error, or a failed
+edge/midpoint move disables that drive and rejects Homing/CSP handoff. The
+launch arguments are `center_reference_switch_home`,
+`homing_center_timeout_s`, `homing_center_max_scan_counts`,
+`homing_center_release_confirm_samples`, `homing_center_poll_interval_s`, and
+`homing_center_position_tolerance_counts`. Set
+`center_reference_switch_home:=false` only to roll back to the old single-edge
+Home behavior.
+
 The launch defaults to three-axis Homing plus four-axis CSP:
 `skip_spur_gear_homing:=true` means `home_all` homes only Drives 0–2. The
 pre-installed Drive 3 (`spur_gear_joint`) does not run a sensor reference

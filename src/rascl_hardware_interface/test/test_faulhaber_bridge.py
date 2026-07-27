@@ -389,6 +389,210 @@ class BridgePDOTest(unittest.TestCase):
             int(0).to_bytes(4, "little", signed=True),
         )
 
+    def test_reference_switch_active_uses_logical_one_based_input_bit(self):
+        slave = FakeSlave()
+        slave.values[
+            (bridge.DIGITAL_IO_STATUS, bridge.DIGITAL_INPUT_LOGICAL)
+        ] = int(0x04).to_bytes(1, "little")
+        drive = bridge.FaulhaberDrive(
+            slave, drive_id=0, sdo_delay_s=0.0, verbose=False
+        )
+
+        self.assertTrue(drive.read_reference_switch_active(3))
+        self.assertFalse(drive.read_reference_switch_active(2))
+
+    def test_centered_home_method24_crosses_positive_interval_and_zeros_midpoint(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=2, sdo_delay_s=0.0, verbose=False
+        )
+        operation_enabled = bridge.STATUS_OPERATION_ENABLED_STATE
+        with (
+            mock.patch.object(
+                drive, "home_to_reference_switch", return_value=0
+            ) as edge_home,
+            mock.patch.object(
+                drive,
+                "read_reference_switch_active",
+                side_effect=[False, False, True, False, True, False, False],
+            ),
+            mock.patch.object(drive, "read_status", return_value=operation_enabled),
+            mock.patch.object(
+                drive,
+                "read_actual_position_counts",
+                side_effect=[50, 100, 150, 200, 400, 450],
+            ),
+            mock.patch.object(drive, "enable_operation") as enable_operation,
+            mock.patch.object(drive, "configure_profile_motion") as configure_motion,
+            mock.patch.object(drive, "move_absolute_counts") as start_scan,
+            mock.patch.object(
+                drive,
+                "move_absolute_counts_and_wait",
+                side_effect=lambda target, _timeout: target,
+            ) as settle,
+            mock.patch.object(drive, "home_current_position", return_value=0) as zero,
+        ):
+            result = drive.center_reference_switch_home(
+                method=24,
+                reference_input=2,
+                offset_counts=0,
+                search_speed=1000,
+                zero_speed=200,
+                acceleration=1000,
+                timeout_s=1.0,
+                scan_timeout_s=1.0,
+                max_scan_counts=100_000,
+                release_confirm_samples=2,
+                poll_interval_s=0.001,
+                position_tolerance_counts=100,
+            )
+
+        edge_home.assert_called_once()
+        enable_operation.assert_called_once_with(bridge.MODE_PROFILE_POSITION)
+        configure_motion.assert_called_once_with(1000, 1000, 1000)
+        start_scan.assert_called_once_with(100_000)
+        self.assertEqual(
+            settle.call_args_list,
+            [mock.call(400, 1.0), mock.call(200, 1.0)],
+        )
+        zero.assert_called_once_with(1.0, 10)
+        self.assertEqual(
+            result,
+            {
+                "entry": 0,
+                "exit": 400,
+                "width": 400,
+                "midpoint": 200,
+                "midpoint_actual": 200,
+                "zero": 0,
+            },
+        )
+
+    def test_centered_home_method28_crosses_negative_interval(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=0, sdo_delay_s=0.0, verbose=False
+        )
+        with (
+            mock.patch.object(drive, "home_to_reference_switch", return_value=0),
+            mock.patch.object(
+                drive,
+                "read_reference_switch_active",
+                side_effect=[True, True, False],
+            ),
+            mock.patch.object(
+                drive, "read_status", return_value=bridge.STATUS_OPERATION_ENABLED_STATE
+            ),
+            mock.patch.object(
+                drive, "read_actual_position_counts", side_effect=[-100, -600]
+            ),
+            mock.patch.object(drive, "enable_operation"),
+            mock.patch.object(drive, "configure_profile_motion"),
+            mock.patch.object(drive, "move_absolute_counts") as start_scan,
+            mock.patch.object(
+                drive,
+                "move_absolute_counts_and_wait",
+                side_effect=lambda target, _timeout: target,
+            ) as settle,
+            mock.patch.object(drive, "home_current_position", return_value=0),
+        ):
+            result = drive.center_reference_switch_home(
+                method=28,
+                reference_input=2,
+                offset_counts=0,
+                search_speed=1000,
+                zero_speed=200,
+                acceleration=1000,
+                timeout_s=1.0,
+                scan_timeout_s=1.0,
+                max_scan_counts=100_000,
+                release_confirm_samples=1,
+                poll_interval_s=0.001,
+                position_tolerance_counts=100,
+            )
+
+        start_scan.assert_called_once_with(-100_000)
+        self.assertEqual(
+            settle.call_args_list,
+            [mock.call(-600, 1.0), mock.call(-300, 1.0)],
+        )
+        self.assertEqual(result["width"], 600)
+        self.assertEqual(result["midpoint"], -300)
+
+    def test_centered_home_rejects_reference_input_stuck_active_at_scan_limit(self):
+        drive = bridge.FaulhaberDrive(
+            FakeSlave(), drive_id=1, sdo_delay_s=0.0, verbose=False
+        )
+        reached = (
+            bridge.STATUS_OPERATION_ENABLED_STATE | bridge.STATUS_TARGET_REACHED
+        )
+        with (
+            mock.patch.object(drive, "home_to_reference_switch", return_value=0),
+            mock.patch.object(
+                drive, "read_reference_switch_active", return_value=True
+            ),
+            mock.patch.object(drive, "read_status", return_value=reached),
+            mock.patch.object(
+                drive, "read_actual_position_counts", return_value=-100_000
+            ),
+            mock.patch.object(drive, "enable_operation"),
+            mock.patch.object(drive, "configure_profile_motion"),
+            mock.patch.object(drive, "move_absolute_counts"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "remained active"):
+                drive.center_reference_switch_home(
+                    method=28,
+                    reference_input=2,
+                    offset_counts=0,
+                    search_speed=1000,
+                    zero_speed=200,
+                    acceleration=1000,
+                    timeout_s=1.0,
+                    scan_timeout_s=1.0,
+                    max_scan_counts=100_000,
+                    release_confirm_samples=3,
+                    poll_interval_s=0.001,
+                    position_tolerance_counts=100,
+                )
+
+    def test_node_centered_home_failure_disables_drive_and_does_not_mark_homed(self):
+        drive = mock.Mock()
+        drive.center_reference_switch_home.side_effect = RuntimeError(
+            "reference input remained active"
+        )
+        node = object.__new__(bridge.RASCLFaulhaberBridge)
+        node.bus = types.SimpleNamespace(
+            drives=[drive],
+            mark_drive_homing_started=mock.Mock(),
+            mark_drive_homed=mock.Mock(),
+        )
+        node.spur_gear_reference_complete = False
+        node.spur_gear_reference_source_counts = None
+        node.spur_gear_reference_target_counts = None
+        node.spur_gear_reference_pre_zero_counts = None
+        node.spur_gear_reference_zero_readback = None
+        node.centered_home_results = {}
+        node.homing_methods = [28]
+        node.reference_inputs = [2]
+        node.homing_offsets = [0]
+        node.homing_search_speeds = [1000]
+        node.homing_zero_speeds = [200]
+        node.homing_accelerations = [1000]
+        node.motion_timeout_s = 8.0
+        node.center_reference_switch_home = True
+        node.homing_center_timeout_s = 30.0
+        node.homing_center_max_scan_counts = 100_000
+        node.homing_center_release_confirm_samples = 3
+        node.homing_center_poll_interval_s = 0.02
+        node.homing_center_position_tolerance_counts = 100
+        logger = mock.Mock()
+        node.get_logger = lambda: logger
+
+        with self.assertRaisesRegex(RuntimeError, "remained active"):
+            node._home_drive(0)
+
+        drive.disable_operation.assert_called_once_with()
+        node.bus.mark_drive_homing_started.assert_called_once_with(0)
+        node.bus.mark_drive_homed.assert_not_called()
+
     def test_node_drive3_reference_records_method37_zero(self):
         drive = mock.Mock()
         drive.move_relative_counts_and_wait.return_value = (
