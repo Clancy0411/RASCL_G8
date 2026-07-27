@@ -21,7 +21,8 @@ HOMING_INTERVAL_MAX_TRAVEL_DRIVE1_COUNTS="${RASCL_HOMING_INTERVAL_MAX_TRAVEL_DRI
 HOMING_INTERVAL_MAX_TRAVEL_DRIVE2_COUNTS="${RASCL_HOMING_INTERVAL_MAX_TRAVEL_DRIVE2_COUNTS:-300000}"
 HOMING_INTERVAL_TIMEOUT_S="${RASCL_HOMING_INTERVAL_TIMEOUT_S:-120.0}"
 CSP_TORQUE_LIMIT_PER_MILLE="${RASCL_CSP_TORQUE_LIMIT_PER_MILLE:-1000}"
-SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE="${RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE:-100}"
+SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE="${RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE:-300}"
+SPUR_HOLD_TORQUE_LIMIT_PER_MILLE="${RASCL_SPUR_HOLD_TORQUE_LIMIT_PER_MILLE:-100}"
 CSP_STALL_ERROR_COUNTS="${RASCL_CSP_STALL_ERROR_COUNTS:-25000}"
 CSP_STALL_PROGRESS_COUNTS="${RASCL_CSP_STALL_PROGRESS_COUNTS:-100}"
 CSP_STALL_TIMEOUT_MS="${RASCL_CSP_STALL_TIMEOUT_MS:-500}"
@@ -337,6 +338,10 @@ group_homing_bridge() {
     (( SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE > 0 &&
        SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE <= CSP_TORQUE_LIMIT_PER_MILLE )) ||
     die "RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE 必须是 1..$CSP_TORQUE_LIMIT_PER_MILLE"
+  is_integer "$SPUR_HOLD_TORQUE_LIMIT_PER_MILLE" &&
+    (( SPUR_HOLD_TORQUE_LIMIT_PER_MILLE > 0 &&
+       SPUR_HOLD_TORQUE_LIMIT_PER_MILLE <= SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE )) ||
+    die "RASCL_SPUR_HOLD_TORQUE_LIMIT_PER_MILLE 必须是 1..$SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE"
   [[ "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "true" ||
     "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "false" ]] ||
     die "RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP 只能是 true 或 false"
@@ -351,7 +356,7 @@ group_homing_bridge() {
   echo "CSP 交接会清零并回读验证 Drive 0-3 的 0x2310:01/:02 正/负限位输入映射；Homing 参考输入、极性与软件位置限位保持不变。"
   echo "CSP 停滞诊断：误差 >= $CSP_STALL_ERROR_COUNTS counts 且 $CSP_STALL_TIMEOUT_MS ms 内进展 < $CSP_STALL_PROGRESS_COUNTS counts 时自动抓取驱动快照。"
   echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
-  echo "组 15 close 会在 PDO 保持 50 Hz 的同时，把 Drive 3 转矩临时降到 $SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE‰；open/自定义 counts 自动恢复 $CSP_TORQUE_LIMIT_PER_MILLE‰。"
+  echo "组 15 close 用 Drive 3 $SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE‰ 转矩克服滑槽摩擦，检测接触后立即降到 $SPUR_HOLD_TORQUE_LIMIT_PER_MILLE‰ 保持；open/自定义 counts 恢复 $CSP_TORQUE_LIMIT_PER_MILLE‰。"
   echo "Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1 电流参数不改。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
@@ -361,6 +366,7 @@ group_homing_bridge() {
     homing_interval_timeout_s:="$HOMING_INTERVAL_TIMEOUT_S" \
     csp_torque_limit_per_mille:="$CSP_TORQUE_LIMIT_PER_MILLE" \
     spur_close_torque_limit_per_mille:="$SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE" \
+    spur_hold_torque_limit_per_mille:="$SPUR_HOLD_TORQUE_LIMIT_PER_MILLE" \
     clear_limit_switch_mappings_for_csp:="$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" \
     drive2_following_error_window_counts:="$DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS" \
     drive2_following_error_timeout_ms:="$DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS" \
@@ -623,7 +629,7 @@ group_gripper_action() {
 
   local snapshot shoulder upperarm lowerarm spur gripper_action action_label
   local delta_counts target_rad minimum_duration motion_duration stop_on_contact
-  local motion_speed torque_service torque_response snapshot_response
+  local motion_speed torque_service torque_response hold_response snapshot_response
   if ! snapshot="$(read_csp_joint_snapshot)"; then
     die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
@@ -717,6 +723,7 @@ import time
 import rclpy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
+from std_srvs.srv import Trigger
 
 (
     shoulder,
@@ -750,6 +757,8 @@ last_feedback_time = None
 contact_error_since = None
 contact_anchor_actual_counts = None
 contact_last_feedback_time = None
+hold_guard_future = None
+hold_guard_verified = False
 
 
 def rad_to_counts(angle):
@@ -789,7 +798,8 @@ def log_feedback(logger, phase, reference_spur=None):
 
 
 def detect_contact(command_spur):
-    global contact_error_since, contact_anchor_actual_counts, contact_last_feedback_time
+    global contact_error_since, contact_anchor_actual_counts
+    global contact_last_feedback_time, hold_guard_future
     if not stop_on_contact or latest_spur is None or last_feedback_time is None:
         return None
     # Evaluate each /joint_states sample once. Reusing a stale sample would make
@@ -827,6 +837,7 @@ def detect_contact(command_spur):
     else:
         preload_target_counts = min(target_counts, preload_target_counts)
     preload_target_spur = counts_to_rad(preload_target_counts)
+    hold_guard_future = hold_guard_client.call_async(Trigger.Request())
     logger.warning(
         "SPUR_CONTACT detected: "
         f"command_counts={command_counts} actual_counts={actual_counts} "
@@ -842,10 +853,27 @@ def detect_contact(command_spur):
     return preload_target_spur
 
 
+def verify_hold_guard(logger):
+    global hold_guard_verified
+    if hold_guard_future is None or hold_guard_verified:
+        return
+    if not hold_guard_future.done():
+        return
+    response = hold_guard_future.result()
+    if response is None or not response.success:
+        message = "no response" if response is None else response.message
+        raise RuntimeError(f"Drive 3 hold torque was not verified: {message}")
+    hold_guard_verified = True
+    logger.info(f"SPUR_HOLD_GUARD {response.message}")
+
+
 rclpy.init()
 node = rclpy.create_node("rascl_spur_relative_motion")
 publisher = node.create_publisher(Float64MultiArray, "/rascl_position_controller/commands", 10)
 subscription = node.create_subscription(JointState, "/joint_states", callback, 10)
+hold_guard_client = node.create_client(
+    Trigger, "/rascl_faulhaber_bridge/enable_spur_hold_guard"
+)
 logger = node.get_logger()
 source_counts = rad_to_counts(source_spur)
 target_counts = rad_to_counts(target_spur)
@@ -856,6 +884,12 @@ logger.info(
 )
 
 try:
+    if stop_on_contact and not hold_guard_client.wait_for_service(
+        timeout_sec=feedback_timeout_s
+    ):
+        raise RuntimeError(
+            "Drive 3 hold-guard service is unavailable; refusing close motion"
+        )
     feedback_deadline = time.monotonic() + feedback_timeout_s
     while latest_spur is None and time.monotonic() < feedback_deadline:
         rclpy.spin_once(node, timeout_sec=0.05)
@@ -897,9 +931,23 @@ try:
         time.sleep(max(0.0, next_tick - time.monotonic()))
 
     settle_deadline = time.monotonic() + settle_s
-    while time.monotonic() < settle_deadline:
+    hold_guard_deadline = time.monotonic() + feedback_timeout_s
+    while (
+        time.monotonic() < settle_deadline
+        or (hold_guard_future is not None and not hold_guard_verified)
+    ):
         publish(publisher, final_target_spur)
         rclpy.spin_once(node, timeout_sec=0.0)
+        verify_hold_guard(logger)
+        if (
+            hold_guard_future is not None
+            and not hold_guard_verified
+            and time.monotonic() >= hold_guard_deadline
+        ):
+            raise RuntimeError(
+                "Drive 3 hold torque was not verified within "
+                f"{feedback_timeout_s:g} seconds"
+            )
         if last_feedback_time is not None and time.monotonic() - last_feedback_time > 0.5:
             raise RuntimeError("/joint_states stopped while Drive 3 was settling")
         if outcome == "target_reached":
@@ -924,9 +972,20 @@ finally:
     rclpy.shutdown()
 PY
   then
+    timeout 5s ros2 service call \
+      /rascl_faulhaber_bridge/enable_spur_hold_guard \
+      std_srvs/srv/Trigger "{}" || true
     die "Drive 3 CSP 轨迹中断；请立即执行组 12 并提交日志"
   fi
   if (( stop_on_contact )); then
+    hold_response="$(
+      timeout 5s ros2 service call \
+        /rascl_faulhaber_bridge/enable_spur_hold_guard \
+        std_srvs/srv/Trigger "{}"
+    )" || die "Drive 3 close 已结束，但保持转矩服务无响应"
+    printf '%s\n' "$hold_response"
+    grep -q "success=True" <<<"$hold_response" ||
+      die "Drive 3 close 已结束，但保持转矩没有成功写入并回读"
     if snapshot_response="$(
       timeout 5s ros2 service call \
         /rascl_faulhaber_bridge/capture_spur_contact_snapshot \

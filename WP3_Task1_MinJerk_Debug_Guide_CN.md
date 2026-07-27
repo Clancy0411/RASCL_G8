@@ -143,9 +143,10 @@ open  或 o = 从当前位置固定相对 +200000 counts；要求完整到位
 Drive 3 的绝对 counts 以本次 Method 37 零位为基准；组 `15` 的数值输入仍是相对当前位置
 的增量。它的 URDF、ros2_control、运动学和脚本预检限位统一为 `[-2*pi,+2*pi]`；越界
 目标仍会被拒绝。只有 `close` 是接触感知快捷动作。执行前，bridge 会在保持 50 Hz PDO
-的同时逐周期写入并回读 Drive 3 `0x60E0/0x60E1=100`（额定转矩 10%），然后以
-`20000 counts/s` 接近。命令/反馈误差达到 `300 counts`，且连续 `0.06 s` 内编码器进度
-不超过 `50 counts` 时判定接触；目标只再向闭合方向预压 `100 counts`，随后保持低转矩。
+的同时逐周期写入并回读 Drive 3 `0x60E0/0x60E1=300`（额定转矩 30%），以
+`20000 counts/s` 克服滑槽摩擦。命令/反馈误差达到 `300 counts`，且连续 `0.06 s` 内
+编码器进度不超过 `50 counts` 时判定接触；bridge 立即把转矩降至 `100`（10%），目标只
+再向闭合方向预压 `100 counts`。
 脚本记录 `SPUR_CONTACT`、`SPUR_RESULT` 和包含实际转矩/电流的
 `SPUR_CONTACT_SNAPSHOT`。它的 `-500000 counts` 是最大闭合
 行程，不保证走满。`open` 固定精确运动 `+200000 counts`，不启用接触提前终止；直接
@@ -169,9 +170,9 @@ bash ./rascl_debug.sh 17
 
 输出中的 `absolute_counts` 是相对本次 Drive 3 零位的驱动器实际位置，可直接记录为候选
 打开/闭合位置。组 `17` 只读且可在 CSP 中使用。新的 `close` 不再等待 drive following
-error 才停止，而是使用 10% 额定转矩、低速和提前接触判定。若空载时 100‰不足以克服
-摩擦，可先用 `RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE=150` 重启完整会话；仍不足再用
-`200`，不要直接恢复旧的 `1000`。
+error 才停止：行程转矩为 `300‰`，接触后立即降到 `100‰` 保持。若 `300‰` 仍不能克服
+空载滑槽摩擦，只调整行程参数 `RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE`；保持参数
+`RASCL_SPUR_HOLD_TORQUE_LIMIT_PER_MILLE=100` 不随之提高。
 
 每次组 `15` 会在 ROS 日志中写入 `SPUR_TRACE`：相对 counts、源/目标估算 raw counts、
 每秒实际位置和剩余 counts、完成时误差及最终 `SPUR_RESULT`。快捷动作检测到接触时
@@ -516,7 +517,8 @@ ros2 launch rascl_description homing.launch.py \
   homing_interval_max_travel_drive2_counts:=300000 \
   homing_interval_timeout_s:=120.0 \
   csp_torque_limit_per_mille:=1000 \
-  spur_close_torque_limit_per_mille:=100 \
+  spur_close_torque_limit_per_mille:=300 \
+  spur_hold_torque_limit_per_mille:=100 \
   clear_limit_switch_mappings_for_csp:=true \
   drive2_following_error_window_counts:=25000 \
   drive2_following_error_timeout_ms:=250 \

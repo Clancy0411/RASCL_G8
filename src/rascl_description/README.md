@@ -180,9 +180,10 @@ For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
 command. Entering ASCII `close` (or `c`) requests at most `-500000` counts and
 stops early at object contact. Entering `open` (or `o`) requests an exact
 `+200000`-count relative move. Only `close` enables the Drive 3
-`0x60E0/0x60E1=100` (10%-rated) guard and uses `20000 counts/s`. Contact is
+`0x60E0/0x60E1=300` (30%-rated) approach guard and uses `20000 counts/s`. Contact is
 declared at `300 counts` of directional lag with at most `50 counts` of encoder
-progress for `0.06 s`; the hold adds only `100 counts` of closing preload.
+progress for `0.06 s`; torque is immediately reduced to `100` (10%-rated) and
+the hold adds only `100 counts` of closing preload.
 `open` and signed non-zero integer commands restore `0x60E0/0x60E1=1000`,
 use `20000 counts/s`, and request exact relative
 increments and do not use contact termination. Every command starts from the
@@ -203,8 +204,8 @@ ros2_control owns the CSP connection.
 Group `17` reads the exact Drive 3 `absolute_counts` in the current Method-37
 coordinate without commanding motion. Use it before and after group `15`
 increments to determine suitable absolute open and closed positions. If the
-default 100-per-mille close limit cannot overcome unloaded friction, raise it
-only to 150 and then 200 on a complete session restart.
+default 300-per-mille approach limit cannot overcome unloaded friction, raise
+only the approach limit and keep the 100-per-mille hold limit unchanged.
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

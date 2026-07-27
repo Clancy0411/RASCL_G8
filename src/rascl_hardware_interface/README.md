@@ -230,11 +230,15 @@ behavior is unchanged. Any readback mismatch rejects CSP.
 The limit is exposed as `csp_torque_limit_per_mille` (valid range 1--6000),
 but the default stops at rated torque and no parameter-store request is issued.
 For group `15` close only, the Trigger service `enable_spur_close_guard`
-stages `0x60E0/0x60E1=100` on Drive 3 at one mailbox operation per PDO cycle.
-This keeps the 50 Hz process-data stream alive while limiting contact torque to
-10% of rated. `restore_spur_torque` verifies the normal `1000` limit before
-open or a custom relative-count move. The close value is exposed as
-`spur_close_torque_limit_per_mille`; neither service stores parameters.
+stages the `0x60E0/0x60E1=300` approach limit on Drive 3 at one mailbox
+operation per PDO cycle. When contact is detected,
+`enable_spur_hold_guard` immediately stages the lower `100` hold limit.
+This keeps the 50 Hz process-data stream alive while separating the torque
+needed to overcome slide friction from the 10%-rated holding torque.
+`restore_spur_torque` verifies the normal `1000` limit before open or a custom
+relative-count move. The two values are exposed as
+`spur_close_torque_limit_per_mille` and
+`spur_hold_torque_limit_per_mille`; none of these services stores parameters.
 
 When the PDO loop detects a drive fault or following error, it also captures a
 best-effort read-only `DRIVE_DIAG` SDO snapshot before requesting SAFE-OP. It
@@ -291,10 +295,11 @@ ros2 service call /rascl_faulhaber_bridge/read_spur_gear_counts \
 relative Drive 3 commands: it accepts one
 ASCII gripper action: `close` (or `c`) requests up to `-500000` counts, while
 `open` (or `o`) requests an exact `+200000`-count relative move. Only `close`
-monitors command/feedback lag. It uses `20000 counts/s` and the 100-per-mille
-torque guard. Object contact requires the lag to reach `300 counts` while
+monitors command/feedback lag. It uses `20000 counts/s` and a 300-per-mille
+approach torque. Object contact requires the lag to reach `300 counts` while
 encoder progress remains at or below `50 counts` for `0.06 s`; the held target
-adds only 100 counts of closing preload. `SPUR_CONTACT`/`SPUR_RESULT` are
+adds only 100 counts of closing preload and torque is reduced to 100 per-mille.
+`SPUR_CONTACT`/`SPUR_RESULT` are
 logged, followed by a staged `SPUR_CONTACT_SNAPSHOT` containing Drive 3
 torque, current, position error and status. `open` and a signed non-zero
 integer request exact relative Drive 3 increments and do not use contact
@@ -310,9 +315,9 @@ increment: positive input increases the group `17` `absolute_counts` value even
 though the encoder-to-URDF direction is now `-1`. The Drive 3 project-side position limit is
 `[-2*pi,+2*pi]` rad in the physical URDF, ros2_control parameters, kinematics,
 and script precheck. This does not overwrite drive-side `0x607B/0x607D`.
-If 100 per-mille cannot overcome unloaded gripper friction, restart the complete
-session with 150 and then 200 per-mille; do not jump back to the former
-1000-per-mille contact behavior.
+If 300 per-mille still cannot overcome unloaded gripper friction, raise only
+`spur_close_torque_limit_per_mille` on a complete session restart; keep
+`spur_hold_torque_limit_per_mille=100`.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search for Drives 0--2. Drive 3 writes its zero Homing

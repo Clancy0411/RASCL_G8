@@ -2834,7 +2834,8 @@ class RASCLFaulhaberBridge(Node):
         self.declare_parameter("pdo_timeout_us", 5_000)
         self.declare_parameter("enable_dc_sync", False)
         self.declare_parameter("csp_torque_limit_per_mille", 1000)
-        self.declare_parameter("spur_close_torque_limit_per_mille", 100)
+        self.declare_parameter("spur_close_torque_limit_per_mille", 300)
+        self.declare_parameter("spur_hold_torque_limit_per_mille", 100)
         self.declare_parameter("clear_limit_switch_mappings_for_csp", True)
         self.declare_parameter("ignore_spur_gear_in_csp", False)
         self.declare_parameter("skip_spur_gear_homing", True)
@@ -2892,6 +2893,9 @@ class RASCLFaulhaberBridge(Node):
         self.spur_close_torque_limit_per_mille = int(
             self.get_parameter("spur_close_torque_limit_per_mille").value
         )
+        self.spur_hold_torque_limit_per_mille = int(
+            self.get_parameter("spur_hold_torque_limit_per_mille").value
+        )
         if not 1 <= self.spur_close_torque_limit_per_mille <= MAX_TORQUE_PER_MILLE:
             raise ValueError(
                 "spur_close_torque_limit_per_mille must be "
@@ -2901,6 +2905,13 @@ class RASCLFaulhaberBridge(Node):
             raise ValueError(
                 "spur_close_torque_limit_per_mille cannot exceed "
                 "csp_torque_limit_per_mille"
+            )
+        if not 1 <= self.spur_hold_torque_limit_per_mille <= (
+            self.spur_close_torque_limit_per_mille
+        ):
+            raise ValueError(
+                "spur_hold_torque_limit_per_mille must be 1.."
+                "spur_close_torque_limit_per_mille"
             )
         self.clear_limit_switch_mappings_for_csp = bool(
             self.get_parameter("clear_limit_switch_mappings_for_csp").value
@@ -3037,9 +3048,10 @@ class RASCLFaulhaberBridge(Node):
             f"{self.csp_stall_timeout_ms} ms"
         )
         self.get_logger().info(
-            "Drive 3 close guard: group 15 close will temporarily set "
-            "0x60E0/0x60E1 to "
-            f"{self.spur_close_torque_limit_per_mille} per-mille; open and "
+            "Drive 3 two-stage close guard: approach/hold "
+            "0x60E0/0x60E1="
+            f"{self.spur_close_torque_limit_per_mille}/"
+            f"{self.spur_hold_torque_limit_per_mille} per-mille; open and "
             f"custom motion restore {self.csp_torque_limit_per_mille} per-mille"
         )
         if self.clear_limit_switch_mappings_for_csp:
@@ -3102,6 +3114,9 @@ class RASCLFaulhaberBridge(Node):
         )
         self.enable_spur_close_guard_srv = self.create_service(
             Trigger, "~/enable_spur_close_guard", self.on_enable_spur_close_guard
+        )
+        self.enable_spur_hold_guard_srv = self.create_service(
+            Trigger, "~/enable_spur_hold_guard", self.on_enable_spur_hold_guard
         )
         self.restore_spur_torque_srv = self.create_service(
             Trigger, "~/restore_spur_torque", self.on_restore_spur_torque
@@ -3600,6 +3615,21 @@ class RASCLFaulhaberBridge(Node):
         except Exception as exc:
             response.success = False
             response.message = f"Restore Drive 3 CSP torque failed: {exc}"
+        return response
+
+    def on_enable_spur_hold_guard(
+        self, _request: Trigger.Request, response: Trigger.Response
+    ) -> Trigger.Response:
+        """Lower Drive 3 from approach torque to its gentle contact hold."""
+
+        try:
+            response.message = self.bus.request_spur_torque_limit(
+                self.spur_hold_torque_limit_per_mille
+            )
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.message = f"Enable Drive 3 hold guard failed: {exc}"
         return response
 
     def on_capture_spur_contact_snapshot(

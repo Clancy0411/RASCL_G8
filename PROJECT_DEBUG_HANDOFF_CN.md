@@ -323,9 +323,10 @@ open  或 o = 固定相对 +200000 counts，要求完整到位
 
 组 `15` 的输入仍然不是绝对目标；执行前后用组 `17` 读取以本次 Method 37 零位为基准
 的 `absolute_counts`，可据此实验确定开、合位置。只有 `close` 是接触感知快捷动作：
-先把 Drive 3 会话内 `0x60E0/0x60E1` 从正常 `1000` 降到 `100`，再以
-`20000 counts/s` 接近。跟踪误差达到 `300 counts`，并且连续 `0.06 s` 内编码器进度
-不超过 `50 counts` 时，保持接触位置并只预压 `100 counts`。日志包含 `SPUR_CONTACT`、
+先把 Drive 3 会话内 `0x60E0/0x60E1` 从正常 `1000` 降到行程转矩 `300`，再以
+`20000 counts/s` 克服滑槽摩擦。跟踪误差达到 `300 counts`，并且连续 `0.06 s` 内
+编码器进度不超过 `50 counts` 时，立即降到保持转矩 `100`，并只预压 `100 counts`。
+日志包含 `SPUR_CONTACT`、
 `SPUR_RESULT outcome=contact_or_endpoint` 和分步 SDO 采集的
 `SPUR_CONTACT_SNAPSHOT`。`-500000 counts`
 是最大闭合行程，不保证走满。`open=+200000 counts` 和直接输入的有符号 counts 均要求
@@ -341,8 +342,9 @@ open / 自定义 counts: 20000 counts/s
 运动时间由 counts 自动计算；`close` 若未提前接触最长约 25 秒，`open` 约 10 秒。组 `15` 使用 50 Hz
 minimum-jerk 轨迹，同时保持 Drive 0–2 当前状态。它可以与
 Cartesian 轨迹在同一 CSP 会话中交替使用，但不能在 `wp3_tsk1` 正在发布时并发执行。
-若 `100‰` 不足以克服空载摩擦，只在完整重启时依次试
-`RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE=150`、`200`；不要直接恢复旧的 `1000‰`。
+若 `300‰` 仍不足以克服空载摩擦，只在完整重启时提高
+`RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE`；保持
+`RASCL_SPUR_HOLD_TORQUE_LIMIT_PER_MILLE=100` 不变。
 预检查和实际运动节点取得完整 `/joint_states` 的默认超时均为 5 秒；运动节点异常会以
 `SPUR_TRACE failed` 写入 ROS 日志，便于组 `12` 打包分析。
 

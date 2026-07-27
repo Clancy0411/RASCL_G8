@@ -531,10 +531,12 @@ contact detector, arm-joint hold and Drive 3 Homing reference profile
 
 The former group `15` close could apply the normal `1000`-per-mille Drive 3
 torque until a 2000-count lag was detected, which was too late for the gripper.
-Close now stages and verifies session-only `0x60E0/0x60E1=100` at one SDO per
-PDO cycle, approaches at `20000 counts/s`, detects contact at
+Close now stages and verifies session-only approach
+`0x60E0/0x60E1=300` at one SDO per PDO cycle, approaches at
+`20000 counts/s`, detects contact at
 `300 counts / 50-count maximum progress / 0.06 s`, and holds with only
-`100 counts` of closing preload. The low limit remains active while holding.
+`100 counts` of closing preload. At contact it immediately stages
+`0x60E0/0x60E1=100` for holding.
 Open and direct relative-count commands restore verified
 `0x60E0/0x60E1=1000` and retain `20000 counts/s`.
 
