@@ -27,12 +27,11 @@ The physical `spur_gear_joint` remains at its CAD origin
 `[0.13916, 0, 0.0179] m`, 30.84 mm behind the TCP along lowerarm +X.
 Therefore gripper opening/closing does not move the planning TCP.
 
-The project applies a global XY translation from a physical calibration point:
-model XY `[0.12, 0.12] m` coincided with measured XY `[0.16, 0.16] m`.
-Accordingly, the complete arm model is shifted by `[+0.040, +0.040, 0] m`
-relative to the preceding calibration, giving the current shoulder origin
-`[0.040, 0.020, 0.057441] m` in `base_link`. This is a fixed base-frame
-translation, not a rotating TCP offset; Z is unchanged.
+The shoulder axis uses the uncompensated CAD alignment
+`[0, 0, 0.057441] m` in `base_link`. The former single-point XY correction
+that shifted the complete arm by `[+0.040, +0.040, 0] m` was removed because
+it displaced the shoulder from the base instead of correcting physical
+geometry.
 
 Calibration convention for real hardware:
 
@@ -46,7 +45,7 @@ The joint-coordinate convention from `3588dc98` is preserved:
 calibrated TCP definition, its nominal TCP is:
 
 ```text
-base_link TCP = [0.36840, 0.01823, 0.043001] m
+base_link TCP = [0.32840, -0.00177, 0.043001] m
 ```
 
 The reference-switch pose is physically different. With nominal
@@ -54,14 +53,13 @@ The reference-switch pose is physically different. With nominal
 `q=[0,+pi/2,+pi/2,0]`, whose model TCP is:
 
 ```text
-base_link auto-home TCP = [0.27840, 0.01823, 0.293001] m
+base_link auto-home TCP = [0.23840, -0.00177, 0.293001] m
 ```
 
 The earlier single-pose gear-surface and grasp-center offsets are not applied
 to the current TCP. Calibration measurements must refer to the externally
 measured ideal TCP represented by `tcp_link`, not the physical spur-gear axis.
-The separate global base-frame calibration above contains the current XY
-correction.
+No global XY correction is currently applied between the base and shoulder.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

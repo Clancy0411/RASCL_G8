@@ -81,10 +81,10 @@ def test_urdf_and_python_use_separate_tcp_and_spur_origins():
     )
 
 
-def test_urdf_and_python_use_the_same_base_calibration():
+def test_urdf_and_python_use_the_same_base_cad_alignment():
     _assert_vector_close(
         BASE_TO_SHOULDER_ORIGIN,
-        (0.040, 0.020, 0.057441),
+        (0.0, 0.0, 0.057441),
     )
     root = ET.parse(_find_urdf()).getroot()
     shoulder_joint = next(
@@ -129,11 +129,11 @@ def test_spur_gear_limits_match_urdf_and_ros2_control():
 def test_reference_tcp_positions_match_calibrated_geometry():
     _assert_vector_close(
         forward_tcp((0.0, 0.0, 0.0)),
-        (0.36840, 0.01823, 0.043001),
+        (0.32840, -0.00177, 0.043001),
     )
     _assert_vector_close(
         forward_tcp((0.0, math.pi / 2.0, math.pi / 2.0)),
-        (0.27840, 0.01823, 0.293001),
+        (0.23840, -0.00177, 0.293001),
     )
 
 
@@ -141,7 +141,7 @@ def test_measured_ideal_tcp_at_measured_joint_pose():
     measured_joint_pose = (0.777575714851, 0.646147976068, 2.120655279445)
     _assert_vector_close(
         forward_tcp(measured_joint_pose),
-        (0.17318807787920434, -0.11360430025228199, -0.007724634849867798),
+        (0.13318807787920435, -0.133604300252282, -0.007724634849867798),
     )
 
 

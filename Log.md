@@ -503,3 +503,16 @@ regression tests and calibration documents now use the same ideal TCP.
 Nominal model values are `[0.36840,0.01823,0.043001] m` at `q=[0,0,0]` and
 `[0.27840,0.01823,0.293001] m` at
 `q=[0,+pi/2,+pi/2]`.
+
+## 2026-07-27 remove base-to-shoulder linear displacement
+
+The single-point XY correction had moved `base_link -> shoulder_joint` to
+`[0.040,0.020,0.057441] m`, visibly displacing the shoulder rotation axis from
+the base. It has been removed and the uncompensated CAD alignment
+`[0,0,0.057441] m` restored in both URDF and Python kinematics.
+
+The measured ideal TCP remains `[0.170,0,0.0179] m` in `lowerarm`; Homing, CSP,
+Drive 3 and encoder mappings are unchanged. Removing the base XY translation
+changes the nominal TCP to `[0.32840,-0.00177,0.043001] m` at `q=[0,0,0]` and
+`[0.23840,-0.00177,0.293001] m` at
+`q=[0,+pi/2,+pi/2]`.

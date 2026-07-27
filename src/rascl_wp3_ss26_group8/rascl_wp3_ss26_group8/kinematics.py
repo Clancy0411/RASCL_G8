@@ -26,11 +26,10 @@ ARM_LIMITS = [
 ]
 SPUR_GEAR_LIMIT = (-6.283185307, 6.283185307)
 
-# Global XY calibration. A joint pose reported at model XY [0.12, 0.12] was
-# measured at physical XY [0.16, 0.16]. Relative to the previous base origin,
-# the complete arm model is therefore translated +40 mm in both base_link X
-# and Y. The Z origin and all rotating/local geometry remain unchanged.
-BASE_TO_SHOULDER_ORIGIN = (0.040, 0.020, 0.057441)
+# Uncompensated CAD alignment.  The shoulder rotation axis is centered on
+# base_link; position calibration must not be implemented as a visual/kinematic
+# XY displacement between the base and shoulder.
+BASE_TO_SHOULDER_ORIGIN = (0.0, 0.0, 0.057441)
 
 # The physical spur-gear axis remains at its CAD origin.  It is intentionally
 # separate from the measured ideal TCP so changing the planning reference does
@@ -45,7 +44,7 @@ TCP_ORIGIN_IN_LOWERARM = (0.170, 0.0, 0.0179)
 # calibrating the real robot: at the physical URDF zero pose, the hardware
 # count offsets must make FK([0,0,0]) describe the real TCP pose. Automatic
 # reference-switch Homing itself finishes at a different, non-zero model pose.
-NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.36840, 0.01823, 0.043001)
+NOMINAL_ZERO_TCP_IN_BASE_LINK = (0.32840, -0.00177, 0.043001)
 
 
 @dataclass
