@@ -1,3 +1,4 @@
+
 rascl-container:~/ws$ cd /root/ws
 bash ./rascl_debug.sh 6
 waiting for service to become available...
@@ -13,8 +14,11 @@ requester: making request: std_srvs.srv.Trigger_Request()
 response:
 std_srvs.srv.Trigger_Response(success=False, message='Home failed: Drive 1: Homing Method 37 completed but actual position is 26, expected 0 (tolerance 10)')
 ERROR: home_all 或 Drive 3 参考运动/置零失败；禁止进入 CSP
-rascl-container:~/ws$ 
 
+
+
+
+rascl-container:~/ws$ bash ./rascl_debug.sh 4
 Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。
 Drive 0-2 自动寻找参考输入区间两端，以 200 的低速正弦曲线回到 (entry+exit)/2 并置零；D0/D1/D2 第二边沿最大搜索距离分别为 100000/300000/300000 counts，穿越/回中点超时 120.0 s。
 三轴到位后 Drive 3 相对运动 50000 counts，并以 Method 37 把到达位置设为 0 counts。
@@ -90,4 +94,3 @@ Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足
 [rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x000F
 [rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x000F
 [rascl_faulhaber_bridge.py-1] [Drive 1] Controlword <- 0x001F
-
