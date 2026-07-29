@@ -2685,8 +2685,8 @@ class FaulhaberBus:
                     )
                     # Across all live mailbox work, perform at most one SDO per
                     # process-data cycle. Torque switching has highest priority
-                    # because group 15 waits for its verified readback before
-                    # publishing a close/open trajectory.
+                    # because group 15 waits for the normal-torque restore
+                    # readback before publishing an exact relative trajectory.
                     if not self._advance_spur_torque_request_locked():
                         if not self._advance_spur_contact_snapshot_locked():
                             self._advance_live_stall_diagnostics_locked()

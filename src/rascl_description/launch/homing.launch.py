@@ -77,7 +77,7 @@ def generate_launch_description():
         "spur_close_torque_limit_per_mille",
         default_value="300",
         description=(
-            "Drive 3 approach torque used by group 15 close; "
+            "Optional Drive 3 close-guard approach torque; "
             "300 is 30% of rated torque."
         ),
     )
@@ -85,7 +85,7 @@ def generate_launch_description():
         "spur_hold_torque_limit_per_mille",
         default_value="100",
         description=(
-            "Drive 3 torque retained after close contact; "
+            "Optional Drive 3 close-guard hold torque; "
             "100 is 10% of rated torque."
         ),
     )

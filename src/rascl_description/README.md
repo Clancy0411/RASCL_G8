@@ -186,22 +186,15 @@ The values correspond to:
 ```
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
-command. Entering ASCII `close` (or `c`) requests at most `-500000` counts and
-stops early at object contact. Entering `open` (or `o`) requests an exact
-`+200000`-count relative move. Only `close` enables the Drive 3
-`0x60E0/0x60E1=300` (30%-rated) approach guard and uses `20000 counts/s`. Contact is
-declared at `300 counts` of directional lag with at most `50 counts` of encoder
-progress for `0.06 s`; torque is immediately reduced to `100` (10%-rated) and
-the hold adds only `100 counts` of closing preload.
-`open` and signed non-zero integer commands restore `0x60E0/0x60E1=1000`,
-use `20000 counts/s`, and request exact relative
-increments and do not use contact termination. Every command starts from the
-current spur joint state, then
+command. Entering ASCII `close` (or `c`) requests an exact `-200000`-count
+relative move, while `open` (or `o`) requests an exact `+200000`-count relative
+move. Both presets and signed non-zero integer commands restore
+`0x60E0/0x60E1=1000`, use `20000 counts/s`, and do not monitor command/feedback
+lag or terminate early on contact. Every command starts from the current spur
+joint state, then
 publishes a 50 Hz minimum-jerk four-joint CSP trajectory that preserves the
 measured arm pose. Duration is derived automatically from the requested
-increment. A completed close also requests a staged Drive 3 torque/current
-snapshot without stopping the PDO loop. Direct integer input keeps raw encoder
-semantics: a positive value
+increment. Direct integer input keeps raw encoder semantics: a positive value
 increases Drive 3 `absolute_counts`; the ROS encoder-to-joint direction is
 `-1`. It requires the session reference to have completed, but the command
 itself remains relative. Repeating commands accumulates another move, subject
@@ -212,9 +205,8 @@ ros2_control owns the CSP connection.
 
 Group `17` reads the exact Drive 3 `absolute_counts` in the current Method-37
 coordinate without commanding motion. Use it before and after group `15`
-increments to determine suitable absolute open and closed positions. If the
-default 300-per-mille approach limit cannot overcome unloaded friction, raise
-only the approach limit and keep the 100-per-mille hold limit unchanged.
+increments to verify that close changed the count by `-200000` and open changed
+it by `+200000` (subject to encoder/readback tolerance).
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

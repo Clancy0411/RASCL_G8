@@ -252,14 +252,14 @@ The correction is applied only after Homing, so the validated reference-search
 behavior is unchanged. Any readback mismatch rejects CSP.
 The limit is exposed as `csp_torque_limit_per_mille` (valid range 1--6000),
 but the default stops at rated torque and no parameter-store request is issued.
-For group `15` close only, the Trigger service `enable_spur_close_guard`
+The optional Trigger service `enable_spur_close_guard`
 stages the `0x60E0/0x60E1=300` approach limit on Drive 3 at one mailbox
-operation per PDO cycle. When contact is detected,
-`enable_spur_hold_guard` immediately stages the lower `100` hold limit.
+operation per PDO cycle. A diagnostic caller can separately request
+`enable_spur_hold_guard` to stage the lower `100` hold limit.
 This keeps the 50 Hz process-data stream alive while separating the torque
 needed to overcome slide friction from the 10%-rated holding torque.
-`restore_spur_torque` verifies the normal `1000` limit before open or a custom
-relative-count move. The two values are exposed as
+`restore_spur_torque` verifies the normal `1000` limit before an exact group
+`15` close, open, or custom relative-count move. The two optional guard values are exposed as
 `spur_close_torque_limit_per_mille` and
 `spur_hold_torque_limit_per_mille`; none of these services stores parameters.
 
@@ -315,32 +315,25 @@ ros2 service call /rascl_faulhaber_bridge/read_spur_gear_counts \
 ```
 
 `rascl_debug.sh` group `17` wraps that read-only service. Group `15` retains
-relative Drive 3 commands: it accepts one
-ASCII gripper action: `close` (or `c`) requests up to `-500000` counts, while
-`open` (or `o`) requests an exact `+200000`-count relative move. Only `close`
-monitors command/feedback lag. It uses `20000 counts/s` and a 300-per-mille
-approach torque. Object contact requires the lag to reach `300 counts` while
-encoder progress remains at or below `50 counts` for `0.06 s`; the held target
-adds only 100 counts of closing preload and torque is reduced to 100 per-mille.
-`SPUR_CONTACT`/`SPUR_RESULT` are
-logged, followed by a staged `SPUR_CONTACT_SNAPSHOT` containing Drive 3
-torque, current, position error and status. `open` and a signed non-zero
-integer request exact relative Drive 3 increments and do not use contact
-termination. Each command starts
+relative Drive 3 commands: `close` (or `c`) requests exactly `-200000` counts,
+while `open` (or `o`) requests exactly `+200000` counts. Neither preset monitors
+command/feedback lag or stops early on contact. A signed non-zero integer also
+requests that exact relative Drive 3 increment. Each command starts
 from the current joint state, uses the configured direction and counts per
 revolution, then publishes a 50 Hz minimum-jerk CSP trajectory through the
 active position controller while holding the three arm joints at their current
-positions. Open/custom commands use the normal 20000 counts/s and restore
-1000-per-mille torque first. Group `15` derives the duration from the requested
+positions. Group `15` no longer calls the optional close/hold guard services.
+Close, open and custom commands all use the normal `20000 counts/s`, restore
+1000-per-mille torque first, require the exact requested relative endpoint, and
+do not use contact termination. Group `15` derives the duration from the requested
 increment and records `SPUR_TRACE` feedback
 in the ROS log. Direct signed integer input remains a raw encoder-count
 increment: positive input increases the group `17` `absolute_counts` value even
 though the encoder-to-URDF direction is now `-1`. The Drive 3 project-side position limit is
 `[-2*pi,+2*pi]` rad in the physical URDF, ros2_control parameters, kinematics,
 and script precheck. This does not overwrite drive-side `0x607B/0x607D`.
-If 300 per-mille still cannot overcome unloaded gripper friction, raise only
-`spur_close_torque_limit_per_mille` on a complete session restart; keep
-`spur_hold_torque_limit_per_mille=100`.
+The bridge retains the close/hold guard services for explicit diagnostic use,
+but the group `15` presets do not call them.
 
 The drive-level `homing_offsets` (`0x607C`) remain `[0,0,0,0]`, preserving the
 validated reference search for Drives 0--2. Drive 3 writes its zero Homing
