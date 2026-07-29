@@ -59,7 +59,22 @@ base_link auto-home TCP = [0.23840, -0.00177, 0.293001] m
 The earlier single-pose gear-surface and grasp-center offsets are not applied
 to the current TCP. Calibration measurements must refer to the externally
 measured ideal TCP represented by `tcp_link`, not the physical spur-gear axis.
-No global XY correction is currently applied between the base and shoulder.
+No global XY correction is applied between the base and shoulder.
+
+For the repeatably mounted cube board only, `wp3_tsk1` provides an optional
+task-layer affine correction before IK. It does not modify Home, joint angles,
+or URDF geometry. `rascl_debug.sh` groups `9` and `10` enable it; generic node
+and launch users remain uncompensated by default. With metres as the unit:
+
+```text
+x_corrected = 1.0098577586*x - 0.0114794948*y + 0.0006327808
+y_corrected = 0.0041074758*x + 1.0252229617*y - 0.0033871656
+z_corrected = z
+```
+
+The fit is based on board measurements inside `x=[-0.230,+0.250] m` and
+`y=[+0.030,+0.250] m`; targets outside that rectangle produce an extrapolation
+warning. Set `apply_board_xy_compensation:=true` to enable it explicitly.
 
 The drive-level `0x607C homing_offsets` stay zero. Final real-hardware
 calibration should replace the nominal count offsets with raw `0x6064` counts

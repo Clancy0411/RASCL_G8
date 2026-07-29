@@ -543,6 +543,7 @@ group_real_plan() {
   rm -f /tmp/rascl_wp3_tsk1_last_trajectory.csv
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
+    -p apply_board_xy_compensation:=true \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=false; then
     echo "规划命令失败；未解锁组 10。CSP/controller 正常时可重新选择组 14、9。" >&2
     return 0
@@ -558,7 +559,7 @@ group_real_plan() {
   head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
   tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
   save_plan_state
-  echo "规划已通过；当前目标可由组 10 执行：[$TARGET_X, $TARGET_Y, $TARGET_Z] m"
+  echo "规划已通过（固定板 XY 补偿已启用）；当前目标可由组 10 执行：[$TARGET_X, $TARGET_Y, $TARGET_Z] m"
 }
 
 group_real_execute() {
@@ -576,6 +577,7 @@ group_real_execute() {
   echo "该命令会运动实机；Drive 3 也处于 CSP，Task 1 会保持 spur gear 当前角度。"
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
+    -p apply_board_xy_compensation:=true \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true; then
     clear_plan_state
     echo "运动未到达规划终点；读取 bridge 自动保存的 CSP 停滞快照：" >&2
@@ -1089,8 +1091,8 @@ print_menu() {
     "  6  home_all（执行 Drive 0-2）                         [T2]" \
     "  7  启动实机 CSP ros2_control（Drive 3 也参与）        [T2]" \
     "  8  Controller/joint state 保持检查 10 秒             [T3]" \
-    "  9  只规划实机 minimum-jerk 轨迹                      [T3]" \
-    " 10  执行实机 minimum-jerk 轨迹                        [T3，会运动]" \
+    "  9  只规划实机 minimum-jerk 轨迹（固定板 XY 补偿）     [T3]" \
+    " 10  执行实机 minimum-jerk 轨迹（固定板 XY 补偿）       [T3，会运动]" \
     " 11  检查残留进程和 TCP 端口                           [T3]" \
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
     " 13  查看当前模型 TCP 坐标                              [T3]" \

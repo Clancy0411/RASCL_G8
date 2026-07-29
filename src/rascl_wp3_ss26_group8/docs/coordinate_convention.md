@@ -46,8 +46,41 @@ TCP in base_link = [0.32840, -0.00177, 0.043001] m
 
 The earlier single-pose gear-surface and grasp-center offsets are no longer
 applied. Current calibration measurements refer to the measured ideal
-`tcp_link`, not the physical spur-gear axis. No base-frame XY correction is
-currently active.
+`tcp_link`, not the physical spur-gear axis. No base-to-shoulder XY displacement
+is active.
+
+An optional fixed-board task correction is applied only when
+`apply_board_xy_compensation:=true`. It transforms the requested board-plane
+XY target before IK and leaves Z, Home, encoder offsets, and URDF geometry
+unchanged. `rascl_debug.sh` groups `9` and `10` enable this correction with the
+same fitted coefficients; direct `wp3_tsk1` and launch calls default to off.
+
+The 2026-07-29 fit used the following measured command corrections in the board
+plane. Coordinates and corrections in this table are millimetres:
+
+| Board X | Board Y | Delta X | Delta Y | Note |
+| ---: | ---: | ---: | ---: | --- |
+| -30 | 170 | 0 | 0 | Three independent Home cycles |
+| -90 | 210 | -2 | +2 | |
+| +140 | 210 | +2 | +2 | |
+| -160 | 40 | -2 | -2 | Repeatable closed-loop check |
+| -160 | 160 | -6 | +2 | Repeatable closed-loop check |
+| -230 | 50 | 0 | -5 | |
+| +250 | 30 | +2 | -2 | |
+| -20 | 250 | -4 | +2 | |
+| +230 | 100 | 0 to +2 | 0 to +2 | Fit uses midpoint (+1,+1) |
+
+The fitted correction, with metres as the unit, is:
+
+```text
+x_corrected = 1.0098577586*x - 0.0114794948*y + 0.0006327808
+y_corrected = 0.0041074758*x + 1.0252229617*y - 0.0033871656
+z_corrected = z
+```
+
+Its measured component-wise RMS residual is approximately 1.5 mm. It is a
+continuous board-workspace correction, not a lookup table for only the listed
+points. Do not reinterpret its rotation component as a shoulder Home offset.
 
 The bridge's drive-level `0x607C homing_offsets` remain zero. The hardware
 interface applies nominal `direction=[+1,+1,+1,-1]` and

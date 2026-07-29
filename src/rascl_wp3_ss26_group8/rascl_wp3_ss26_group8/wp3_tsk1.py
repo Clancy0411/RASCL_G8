@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
@@ -26,6 +26,12 @@ from .kinematics import (
     inverse_tcp,
 )
 from .trajectory import generate_joint_trajectory, write_csv
+from .workspace_calibration import (
+    DEFAULT_BOARD_XY_MATRIX,
+    DEFAULT_BOARD_XY_OFFSET_M,
+    board_xy_is_within_measured_bounds,
+    compensate_board_xy,
+)
 
 
 class WP3Task1SingleTarget(Node):
@@ -38,6 +44,19 @@ class WP3Task1SingleTarget(Node):
         self.declare_parameter("target_x", NOMINAL_ZERO_TCP_IN_BASE_LINK[0])
         self.declare_parameter("target_y", NOMINAL_ZERO_TCP_IN_BASE_LINK[1])
         self.declare_parameter("target_z", NOMINAL_ZERO_TCP_IN_BASE_LINK[2])
+
+        # Optional task-layer correction fitted across the fixed cube board.
+        # It is kept independent of Home offsets and URDF geometry.  Generic
+        # base_link users remain uncompensated unless they explicitly enable it.
+        self.declare_parameter("apply_board_xy_compensation", False)
+        self.declare_parameter(
+            "board_xy_compensation_matrix",
+            list(DEFAULT_BOARD_XY_MATRIX),
+        )
+        self.declare_parameter(
+            "board_xy_compensation_offset_m",
+            list(DEFAULT_BOARD_XY_OFFSET_M),
+        )
 
         # Match the default 20 ms ros2_control/CSP cycle so each offline sample
         # can become one cyclic position target without Profile Position motion
@@ -61,6 +80,8 @@ class WP3Task1SingleTarget(Node):
 
         self._latest_joint_state: Optional[JointState] = None
         self._latest_joint_state_received_at: Optional[float] = None
+        self._planned_requested_target: Optional[Tuple[float, float, float]] = None
+        self._planned_ik_target: Optional[Tuple[float, float, float]] = None
         joint_state_topic = self.get_parameter("joint_state_topic").value
         command_topic = self.get_parameter("command_topic").value
 
@@ -109,14 +130,41 @@ class WP3Task1SingleTarget(Node):
             raise RuntimeError(f"/joint_states is missing required joint(s): {missing}")
         return [positions_by_name[name] for name in JOINT_NAMES]
 
+    def _apply_board_xy_compensation(
+        self,
+        requested_target: Tuple[float, float, float],
+    ) -> Tuple[float, float, float]:
+        if not bool(self.get_parameter("apply_board_xy_compensation").value):
+            return requested_target
+
+        matrix = self.get_parameter("board_xy_compensation_matrix").value
+        offset_m = self.get_parameter("board_xy_compensation_offset_m").value
+        corrected_target = compensate_board_xy(requested_target, matrix, offset_m)
+        if not board_xy_is_within_measured_bounds(requested_target):
+            self.get_logger().warn(
+                "BOARD_XY_COMPENSATION_EXTRAPOLATION: requested target lies outside "
+                "the measured XY bounds x=[-0.230,+0.250] m, y=[+0.030,+0.250] m."
+            )
+        self.get_logger().info(
+            "BOARD_XY_COMPENSATION enabled; "
+            f"requested=({requested_target[0]:.4f}, {requested_target[1]:.4f}) m, "
+            f"corrected=({corrected_target[0]:.4f}, {corrected_target[1]:.4f}) m, "
+            f"delta=({corrected_target[0] - requested_target[0]:+.4f}, "
+            f"{corrected_target[1] - requested_target[1]:+.4f}) m"
+        )
+        return corrected_target
+
     def plan(self) -> List[Float64MultiArray]:
         """Create trajectory commands from current joint state to Cartesian target."""
 
-        target = (
+        requested_target = (
             float(self.get_parameter("target_x").value),
             float(self.get_parameter("target_y").value),
             float(self.get_parameter("target_z").value),
         )
+        target = self._apply_board_xy_compensation(requested_target)
+        self._planned_requested_target = requested_target
+        self._planned_ik_target = target
         duration = float(self.get_parameter("duration").value)
         rate_hz = float(self.get_parameter("rate_hz").value)
         tolerance = float(self.get_parameter("position_tolerance").value)
@@ -136,8 +184,14 @@ class WP3Task1SingleTarget(Node):
             f"({tcp_current[0]:.4f}, {tcp_current[1]:.4f}, {tcp_current[2]:.4f}) m"
         )
         self.get_logger().info(
-            f"Requested target TCP in base_link = ({target[0]:.4f}, {target[1]:.4f}, {target[2]:.4f}) m"
+            "Requested target TCP in base_link = "
+            f"({requested_target[0]:.4f}, {requested_target[1]:.4f}, {requested_target[2]:.4f}) m"
         )
+        if target != requested_target:
+            self.get_logger().info(
+                "IK target after board XY compensation = "
+                f"({target[0]:.4f}, {target[1]:.4f}, {target[2]:.4f}) m"
+            )
 
         ik_result = inverse_tcp(target, seed=q_arm_current, tolerance=tolerance)
         self.get_logger().info(
@@ -227,11 +281,10 @@ class WP3Task1SingleTarget(Node):
         # endpoint. Require feedback newer than the final command and compare
         # both joint space and Cartesian TCP before reporting success.
         goal = [float(value) for value in commands[-1].data]
-        target_tcp = (
-            float(self.get_parameter("target_x").value),
-            float(self.get_parameter("target_y").value),
-            float(self.get_parameter("target_z").value),
-        )
+        if self._planned_ik_target is None or self._planned_requested_target is None:
+            raise RuntimeError("Cannot verify motion before a target has been planned")
+        target_tcp = self._planned_ik_target
+        requested_tcp = self._planned_requested_target
         fresh_after = time.monotonic()
         self._command_publisher.publish(commands[-1])
         feedback_deadline = fresh_after + final_feedback_timeout
@@ -279,6 +332,7 @@ class WP3Task1SingleTarget(Node):
             f"goal_q={[round(value, 6) for value in goal]}; "
             f"actual_q={[round(value, 6) for value in actual]}; "
             f"joint_error_rad={[round(value, 6) for value in joint_errors]}; "
+            f"requested_tcp={[round(value, 6) for value in requested_tcp]}; "
             f"target_tcp={[round(value, 6) for value in target_tcp]}; "
             f"actual_tcp={[round(value, 6) for value in actual_tcp]}; "
             f"tcp_error_m={tcp_error:.6f}; "

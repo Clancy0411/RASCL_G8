@@ -32,6 +32,7 @@ def generate_launch_description():
     target_x = LaunchConfiguration("target_x")
     target_y = LaunchConfiguration("target_y")
     target_z = LaunchConfiguration("target_z")
+    apply_board_xy_compensation = LaunchConfiguration("apply_board_xy_compensation")
     duration = LaunchConfiguration("duration")
     rate_hz = LaunchConfiguration("rate_hz")
     execute = LaunchConfiguration("execute")
@@ -72,6 +73,7 @@ def generate_launch_description():
                 "target_x": target_x,
                 "target_y": target_y,
                 "target_z": target_z,
+                "apply_board_xy_compensation": apply_board_xy_compensation,
                 "duration": duration,
                 "rate_hz": rate_hz,
                 "execute": execute,
@@ -129,6 +131,11 @@ def generate_launch_description():
         DeclareLaunchArgument("target_x", default_value="0.25", description="TCP target x in base_link [m]."),
         DeclareLaunchArgument("target_y", default_value="0.00", description="TCP target y in base_link [m]."),
         DeclareLaunchArgument("target_z", default_value="0.08", description="TCP target z in base_link [m]."),
+        DeclareLaunchArgument(
+            "apply_board_xy_compensation",
+            default_value="false",
+            description="Apply the measured fixed-board affine XY correction before IK.",
+        ),
         DeclareLaunchArgument("duration", default_value="4.0", description="Minimum-jerk duration [s]."),
         DeclareLaunchArgument("rate_hz", default_value="50.0", description="Command sample rate [Hz]."),
         DeclareLaunchArgument(
