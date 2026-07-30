@@ -996,6 +996,25 @@ group_task1_all_stages() {
   echo "Task 1 完整序列完成。"
 }
 
+group_task2_pick_and_place() {
+  local x y
+  read -r -p "Task 2 起点 x [m]: " x
+  read -r -p "Task 2 起点 y [m]: " y
+  is_number "$x" || die "Task 2 的 x 不是合法数字：$x"
+  is_number "$y" || die "Task 2 的 y 不是合法数字：$y"
+
+  echo "Task 2：从 [$x, $y] 取料，放至 [0.18128633, -0.03369372]。所有动作 5 s，之间不插入等待。"
+  task1_move_to "Task2/1" "$x" "$y" 0.10 5
+  task1_move_to "Task2/2" "$x" "$y" 0.045 5
+  task1_gripper_preset close 5
+  task1_move_to "Task2/3" "$x" "$y" 0.10 5
+  task1_move_to "Task2/4" 0.18128633 -0.03369372 0.10 5
+  task1_move_to "Task2/5" 0.18128633 -0.03369372 0.045 5
+  task1_gripper_preset open 5
+  task1_move_to "Task2/6" 0.18128633 -0.03369372 0.10 5
+  echo "Task 2 完成。"
+}
+
 print_menu() {
   printf '%s\n' \
     "" \
@@ -1033,6 +1052,7 @@ print_menu() {
     " 26  Task 1 阶段 3：方格 3 → 方格 1                      [T3，会运动]" \
     " 27  Task 1 阶段 4：方格 2 → 方格 3                      [T3，会运动]" \
     " 28  Task 1 完整序列：阶段 1 → 2 → 3 → 4                 [T3，会运动]" \
+    " 29  Task 2：输入起点 XY 后完成取放                       [T3，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
@@ -1069,6 +1089,7 @@ run_group() {
     26) group_task1_stage_3 ;;
     27) group_task1_stage_4 ;;
     28) group_task1_all_stages ;;
+    29) group_task2_pick_and_place ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac
