@@ -935,89 +935,65 @@ task1_gripper_preset() {
   group_gripper_action "$action" "$duration"
 }
 
-task1_wait_between_actions() {
-  echo "等待 1 秒后执行下一动作。"
-  sleep 1
-}
-
 group_task1_stage_1() {
-  echo "Task 1 阶段 1：移动 1。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  echo "Task 1 阶段 1：移动 1。坐标动作均为 5 s，标注下降动作为 10 s。"
   task1_move_to "阶段1/1" 0.16 0.16 0.10 5
-  task1_wait_between_actions
   task1_move_to "阶段1/2" 0.16 0.16 0.05 5
-  task1_wait_between_actions
   task1_gripper_preset close 5
-  task1_wait_between_actions
   task1_move_to "阶段1/3" 0.16 0.16 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段1/4" 0.0929 -0.1327 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段1/5" 0.0929 -0.1327 0.05 10
-  task1_wait_between_actions
   task1_move_to "阶段1/6" 0.07 -0.10 0.05 5
-  task1_wait_between_actions
   task1_gripper_preset open 5
-  task1_wait_between_actions
   task1_move_to "阶段1/7" 0.07 -0.10 0.15 5
   echo "Task 1 阶段 1 完成。"
 }
 
 group_task1_stage_2() {
-  echo "Task 1 阶段 2：移动 2 到临时方格。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  echo "Task 1 阶段 2：移动 2 到临时方格。坐标动作均为 5 s，标注下降动作为 10 s。"
   task1_move_to "阶段2/1" 0.17 0.03 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段2/2" 0.17 0.03 0.085 5
-  task1_wait_between_actions
   task1_gripper_preset close 5
-  task1_wait_between_actions
   task1_move_to "阶段2/3" 0.17 0.03 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段2/4" 0.18 -0.04 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段2/5" 0.18 -0.04 0.05 10
-  task1_wait_between_actions
   task1_gripper_preset open 5
-  task1_wait_between_actions
   task1_move_to "阶段2/6" 0.18 -0.04 0.15 5
   echo "Task 1 阶段 2 完成。"
 }
 
 group_task1_stage_3() {
-  echo "Task 1 阶段 3：方格 3 到方格 1。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  echo "Task 1 阶段 3：方格 3 到方格 1。坐标动作均为 5 s，标注下降动作为 10 s。"
   task1_move_to "阶段3/1" 0.17 0.03 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段3/2" 0.17 0.03 0.045 5
-  task1_wait_between_actions
   task1_gripper_preset close 5
-  task1_wait_between_actions
   task1_move_to "阶段3/3" 0.17 0.03 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段3/4" 0.0642 -0.0918 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段3/5" 0.0642 -0.0918 0.085 10
-  task1_wait_between_actions
   task1_gripper_preset open 5
-  task1_wait_between_actions
   task1_move_to "阶段3/6" 0.0642 -0.0918 0.15 5
   echo "Task 1 阶段 3 完成。"
 }
 
 group_task1_stage_4() {
-  echo "Task 1 阶段 4：方格 2 到方格 3。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  echo "Task 1 阶段 4：方格 2 到方格 3。坐标动作均为 5 s，标注下降动作为 10 s。"
   task1_move_to "阶段4/1" 0.18 -0.04 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段4/2" 0.18 -0.04 0.045 5
-  task1_wait_between_actions
   task1_gripper_preset close 5
-  task1_wait_between_actions
   task1_move_to "阶段4/3" 0.18 -0.04 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段4/4" 0.0642 -0.0918 0.15 5
-  task1_wait_between_actions
   task1_move_to "阶段4/5" 0.0642 -0.0918 0.125 10
-  task1_wait_between_actions
   task1_gripper_preset open 5
   echo "Task 1 阶段 4 完成。"
+}
+
+group_task1_all_stages() {
+  echo "Task 1 完整序列：阶段 1 → 2 → 3 → 4。动作之间不插入等待。"
+  group_task1_stage_1
+  group_task1_stage_2
+  group_task1_stage_3
+  group_task1_stage_4
+  echo "Task 1 完整序列完成。"
 }
 
 print_menu() {
@@ -1056,6 +1032,7 @@ print_menu() {
     " 25  Task 1 阶段 2：移动 2 → 临时方格                    [T3，会运动]" \
     " 26  Task 1 阶段 3：方格 3 → 方格 1                      [T3，会运动]" \
     " 27  Task 1 阶段 4：方格 2 → 方格 3                      [T3，会运动]" \
+    " 28  Task 1 完整序列：阶段 1 → 2 → 3 → 4                 [T3，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
@@ -1091,6 +1068,7 @@ run_group() {
     25) group_task1_stage_2 ;;
     26) group_task1_stage_3 ;;
     27) group_task1_stage_4 ;;
+    28) group_task1_all_stages ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

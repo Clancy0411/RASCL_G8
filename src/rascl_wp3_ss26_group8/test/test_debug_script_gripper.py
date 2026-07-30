@@ -104,4 +104,21 @@ def test_task1_stage_groups_preserve_all_fixed_actions_and_timing():
         )
         assert moves == list(waypoints)
         assert re.findall(r"task1_gripper_preset (close|open) 5", stage_source) == ["close", "open"]
-        assert stage_source.count("task1_wait_between_actions") == len(waypoints) + 1
+        assert "task1_wait_between_actions" not in stage_source
+
+
+def test_task1_group_28_runs_all_stages_without_added_waits():
+    script = _find_debug_script().read_text(encoding="utf-8")
+    start = script.index("group_task1_all_stages() {")
+    end = script.index("\n}\n", start) + 2
+    group_28 = script[start:end]
+
+    assert "28) group_task1_all_stages ;;" in script
+    assert [line.strip() for line in group_28.splitlines() if line.strip().startswith("group_task1_stage_")] == [
+        "group_task1_stage_1",
+        "group_task1_stage_2",
+        "group_task1_stage_3",
+        "group_task1_stage_4",
+    ]
+    assert "sleep " not in group_28
+    assert "task1_wait_between_actions" not in script
