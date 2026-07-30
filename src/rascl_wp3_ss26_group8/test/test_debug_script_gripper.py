@@ -124,7 +124,7 @@ def test_task1_group_28_runs_all_stages_without_added_waits():
     assert "task1_wait_between_actions" not in script
 
 
-def test_task2_group_29_uses_entered_xy_and_fixed_pick_place_sequence():
+def test_task2_group_29_selects_the_required_route_from_polar_radius():
     script = _find_debug_script().read_text(encoding="utf-8")
     start = script.index("group_task2_pick_and_place() {")
     end = script.index("\n}\n", start) + 2
@@ -133,15 +133,25 @@ def test_task2_group_29_uses_entered_xy_and_fixed_pick_place_sequence():
     assert "29) group_task2_pick_and_place ;;" in script
     assert 'read -r -p "Task 2 起点 x [m]: " x' in group_29
     assert 'read -r -p "Task 2 起点 y [m]: " y' in group_29
+    assert "r = math.hypot(x, y)" in group_29
+    assert 'if r < 0.17:\n    route = "inner"' in group_29
+    assert 'elif r <= 0.20:\n    route = "middle"' in group_29
+    assert 'else:\n    route = "outer"' in group_29
     assert re.findall(
         r'^\s*task1_move_to "Task2/\d+" (.+)$', group_29, flags=re.MULTILINE
     ) == [
         '"$x" "$y" 0.10 5',
         '"$x" "$y" 0.045 5',
         '"$x" "$y" 0.10 5',
-        "0.18128633 -0.03369372 0.10 5",
-        "0.18128633 -0.03369372 0.045 5",
-        "0.18128633 -0.03369372 0.10 5",
     ]
+    assert 'task1_move_to "Task2/middle/1" 0.18128633 -0.03369372 0.10 5' in group_29
+    assert 'task1_move_to "Task2/middle/2" 0.18128633 -0.03369372 0.045 5' in group_29
+    assert 'task1_move_to "Task2/inner/1" 0.15179144 -0.02821182 0.10 5' in group_29
+    assert 'task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.45 5' in group_29
+    assert 'task1_move_to "Task2/inner/3" 0.18128633 -0.03369372 0.045 5' in group_29
+    assert 'task1_move_to "Task2/outer/1" 0.21078122 -0.03917562 0.10 5' in group_29
+    assert 'task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.45 5' in group_29
+    assert 'task1_move_to "Task2/outer/3" 0.18128633 -0.03369372 0.045 5' in group_29
+    assert 'task1_move_to "Task2/final" 0.18128633 -0.03369372 0.10 5' in group_29
     assert re.findall(r"task1_gripper_preset (close|open) 5", group_29) == ["close", "open"]
     assert "sleep " not in group_29

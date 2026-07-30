@@ -997,21 +997,55 @@ group_task1_all_stages() {
 }
 
 group_task2_pick_and_place() {
-  local x y
+  local x y r route polar_result
   read -r -p "Task 2 起点 x [m]: " x
   read -r -p "Task 2 起点 y [m]: " y
   is_number "$x" || die "Task 2 的 x 不是合法数字：$x"
   is_number "$y" || die "Task 2 的 y 不是合法数字：$y"
 
-  echo "Task 2：从 [$x, $y] 取料，放至 [0.18128633, -0.03369372]。所有动作 5 s，之间不插入等待。"
+  polar_result="$(python3 - "$x" "$y" <<'PY'
+import math
+import sys
+
+x, y = map(float, sys.argv[1:])
+r = math.hypot(x, y)
+if r < 0.17:
+    route = "inner"
+elif r <= 0.20:
+    route = "middle"
+else:
+    route = "outer"
+print(f"{r:.9f} {route}")
+PY
+)" || die "无法计算 Task 2 起点的极坐标半径"
+  read -r r route <<<"$polar_result"
+
+  echo "Task 2：起点 [$x, $y] 的 r=$r m，路径=$route。所有动作 5 s，之间不插入等待。"
   task1_move_to "Task2/1" "$x" "$y" 0.10 5
   task1_move_to "Task2/2" "$x" "$y" 0.045 5
   task1_gripper_preset close 5
   task1_move_to "Task2/3" "$x" "$y" 0.10 5
-  task1_move_to "Task2/4" 0.18128633 -0.03369372 0.10 5
-  task1_move_to "Task2/5" 0.18128633 -0.03369372 0.045 5
+
+  case "$route" in
+    middle)
+      task1_move_to "Task2/middle/1" 0.18128633 -0.03369372 0.10 5
+      task1_move_to "Task2/middle/2" 0.18128633 -0.03369372 0.045 5
+      ;;
+    inner)
+      task1_move_to "Task2/inner/1" 0.15179144 -0.02821182 0.10 5
+      task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.45 5
+      task1_move_to "Task2/inner/3" 0.18128633 -0.03369372 0.045 5
+      ;;
+    outer)
+      task1_move_to "Task2/outer/1" 0.21078122 -0.03917562 0.10 5
+      task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.45 5
+      task1_move_to "Task2/outer/3" 0.18128633 -0.03369372 0.045 5
+      ;;
+    *) die "Task 2 未识别的路径：$route" ;;
+  esac
+
   task1_gripper_preset open 5
-  task1_move_to "Task2/6" 0.18128633 -0.03369372 0.10 5
+  task1_move_to "Task2/final" 0.18128633 -0.03369372 0.10 5
   echo "Task 2 完成。"
 }
 
