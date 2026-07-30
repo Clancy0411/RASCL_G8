@@ -1,6 +1,7 @@
 """Source-level regression checks for debug group 15 gripper presets."""
 
 from pathlib import Path
+import re
 
 
 def _find_debug_script() -> Path:
@@ -51,3 +52,56 @@ def test_group_23_reuses_target_plan_execute_without_changing_manual_groups():
     assert "9) group_real_plan ;;" in script
     assert "10) group_real_execute ;;" in script
     assert "14) group_set_target ;;" in script
+
+
+def test_task1_stage_groups_preserve_all_fixed_actions_and_timing():
+    script = _find_debug_script().read_text(encoding="utf-8")
+
+    expected_stages = {
+        "1": (
+            ("0.16", "0.16", "0.10", "5"),
+            ("0.16", "0.16", "0.05", "5"),
+            ("0.16", "0.16", "0.15", "5"),
+            ("0.0929", "-0.1327", "0.15", "5"),
+            ("0.0929", "-0.1327", "0.05", "10"),
+            ("0.07", "-0.10", "0.05", "5"),
+            ("0.07", "-0.10", "0.15", "5"),
+        ),
+        "2": (
+            ("0.17", "0.03", "0.15", "5"),
+            ("0.17", "0.03", "0.085", "5"),
+            ("0.17", "0.03", "0.15", "5"),
+            ("0.18", "-0.04", "0.15", "5"),
+            ("0.18", "-0.04", "0.05", "10"),
+            ("0.18", "-0.04", "0.15", "5"),
+        ),
+        "3": (
+            ("0.17", "0.03", "0.15", "5"),
+            ("0.17", "0.03", "0.045", "5"),
+            ("0.17", "0.03", "0.15", "5"),
+            ("0.0642", "-0.0918", "0.15", "5"),
+            ("0.0642", "-0.0918", "0.085", "10"),
+            ("0.0642", "-0.0918", "0.15", "5"),
+        ),
+        "4": (
+            ("0.18", "-0.04", "0.15", "5"),
+            ("0.18", "-0.04", "0.045", "5"),
+            ("0.18", "-0.04", "0.15", "5"),
+            ("0.0642", "-0.0918", "0.15", "5"),
+            ("0.0642", "-0.0918", "0.125", "10"),
+        ),
+    }
+
+    for stage, waypoints in expected_stages.items():
+        start = script.index(f"group_task1_stage_{stage}() {{")
+        end = script.index("\n}\n", start) + 2
+        stage_source = script[start:end]
+        assert f"{24 + int(stage) - 1}) group_task1_stage_{stage} ;;" in script
+        moves = re.findall(
+            r'^\s*task1_move_to "[^"]+" ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+)$',
+            stage_source,
+            flags=re.MULTILINE,
+        )
+        assert moves == list(waypoints)
+        assert re.findall(r"task1_gripper_preset (close|open) 5", stage_source) == ["close", "open"]
+        assert stage_source.count("task1_wait_between_actions") == len(waypoints) + 1

@@ -655,14 +655,22 @@ group_gripper_action() {
     die "Drive 3 URDF 限位必须是数字"
 
   local snapshot shoulder upperarm lowerarm spur gripper_action action_label
-  local delta_counts target_rad minimum_duration motion_duration
+  local delta_counts target_rad minimum_duration motion_duration duration_override="${2:-}"
   local motion_speed torque_service torque_response
+  if [[ -n "$duration_override" ]]; then
+    is_positive_number "$duration_override" ||
+      die "Drive 3 指定轨迹时间必须是大于 0 的普通十进制数字"
+  fi
   if ! snapshot="$(read_csp_joint_snapshot)"; then
     die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
   echo "Drive 3 当前 joint position = $spur rad；相对动作以当前位置为基准，绝对 counts 以本次 Method 37 零位为基准。"
-  read -r -p "Gripper action [close/open] (c/o) 或相对 counts（正/负整数）: " gripper_action
+  if [[ $# -gt 0 ]]; then
+    gripper_action="$1"
+  else
+    read -r -p "Gripper action [close/open] (c/o) 或相对 counts（正/负整数）: " gripper_action
+  fi
   gripper_action="${gripper_action,,}"
   case "$gripper_action" in
     close | c)
@@ -711,7 +719,7 @@ PY
     die "抓夹 $action_label 指令被 Drive 3 URDF 软件限位拒绝"
   fi
 
-  motion_duration="$minimum_duration"
+  motion_duration="${duration_override:-$minimum_duration}"
 
   torque_response="$(
     timeout 5s ros2 service call "$torque_service" std_srvs/srv/Trigger "{}"
@@ -900,6 +908,118 @@ group_target_plan_execute() {
   group_real_execute
 }
 
+task1_move_to() {
+  local label="$1"
+  local x="$2"
+  local y="$3"
+  local z="$4"
+  local duration="$5"
+
+  TARGET_X="$x"
+  TARGET_Y="$y"
+  TARGET_Z="$z"
+  TRAJECTORY_DURATION="$duration"
+  save_target_state
+  clear_plan_state
+  echo "Task 1 $label：移动至 [$TARGET_X, $TARGET_Y, $TARGET_Z] m，$TRAJECTORY_DURATION s。"
+  group_real_plan
+  [[ -s "$PLAN_STATE_FILE" ]] ||
+    die "Task 1 $label 规划失败；本阶段已停止，未继续后续动作"
+  group_real_execute
+}
+
+task1_gripper_preset() {
+  local action="$1"
+  local duration="$2"
+  echo "Task 1：夹爪 $action，$duration s。"
+  group_gripper_action "$action" "$duration"
+}
+
+task1_wait_between_actions() {
+  echo "等待 1 秒后执行下一动作。"
+  sleep 1
+}
+
+group_task1_stage_1() {
+  echo "Task 1 阶段 1：移动 1。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  task1_move_to "阶段1/1" 0.16 0.16 0.10 5
+  task1_wait_between_actions
+  task1_move_to "阶段1/2" 0.16 0.16 0.05 5
+  task1_wait_between_actions
+  task1_gripper_preset close 5
+  task1_wait_between_actions
+  task1_move_to "阶段1/3" 0.16 0.16 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段1/4" 0.0929 -0.1327 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段1/5" 0.0929 -0.1327 0.05 10
+  task1_wait_between_actions
+  task1_move_to "阶段1/6" 0.07 -0.10 0.05 5
+  task1_wait_between_actions
+  task1_gripper_preset open 5
+  task1_wait_between_actions
+  task1_move_to "阶段1/7" 0.07 -0.10 0.15 5
+  echo "Task 1 阶段 1 完成。"
+}
+
+group_task1_stage_2() {
+  echo "Task 1 阶段 2：移动 2 到临时方格。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  task1_move_to "阶段2/1" 0.17 0.03 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段2/2" 0.17 0.03 0.085 5
+  task1_wait_between_actions
+  task1_gripper_preset close 5
+  task1_wait_between_actions
+  task1_move_to "阶段2/3" 0.17 0.03 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段2/4" 0.18 -0.04 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段2/5" 0.18 -0.04 0.05 10
+  task1_wait_between_actions
+  task1_gripper_preset open 5
+  task1_wait_between_actions
+  task1_move_to "阶段2/6" 0.18 -0.04 0.15 5
+  echo "Task 1 阶段 2 完成。"
+}
+
+group_task1_stage_3() {
+  echo "Task 1 阶段 3：方格 3 到方格 1。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  task1_move_to "阶段3/1" 0.17 0.03 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段3/2" 0.17 0.03 0.045 5
+  task1_wait_between_actions
+  task1_gripper_preset close 5
+  task1_wait_between_actions
+  task1_move_to "阶段3/3" 0.17 0.03 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段3/4" 0.0642 -0.0918 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段3/5" 0.0642 -0.0918 0.085 10
+  task1_wait_between_actions
+  task1_gripper_preset open 5
+  task1_wait_between_actions
+  task1_move_to "阶段3/6" 0.0642 -0.0918 0.15 5
+  echo "Task 1 阶段 3 完成。"
+}
+
+group_task1_stage_4() {
+  echo "Task 1 阶段 4：方格 2 到方格 3。坐标动作均为 5 s，标注下降动作为 10 s；动作间等待 1 s。"
+  task1_move_to "阶段4/1" 0.18 -0.04 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段4/2" 0.18 -0.04 0.045 5
+  task1_wait_between_actions
+  task1_gripper_preset close 5
+  task1_wait_between_actions
+  task1_move_to "阶段4/3" 0.18 -0.04 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段4/4" 0.0642 -0.0918 0.15 5
+  task1_wait_between_actions
+  task1_move_to "阶段4/5" 0.0642 -0.0918 0.125 10
+  task1_wait_between_actions
+  task1_gripper_preset open 5
+  echo "Task 1 阶段 4 完成。"
+}
+
 print_menu() {
   printf '%s\n' \
     "" \
@@ -932,6 +1052,10 @@ print_menu() {
     " 21  Homing 后微调 Drive 2（相对 counts）               [T2，会运动]" \
     " 22  将 Drive 0-2 当前姿态设为本次 Home                 [T2，不运动]" \
     " 23  输入目标 → 规划 → 立即执行（固定板 XY 补偿）       [T3，会运动]" \
+    " 24  Task 1 阶段 1：移动 1                               [T3，会运动]" \
+    " 25  Task 1 阶段 2：移动 2 → 临时方格                    [T3，会运动]" \
+    " 26  Task 1 阶段 3：方格 3 → 方格 1                      [T3，会运动]" \
+    " 27  Task 1 阶段 4：方格 2 → 方格 3                      [T3，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
@@ -963,6 +1087,10 @@ run_group() {
     21) group_adjust_home_counts 2 ;;
     22) group_set_current_arm_home ;;
     23) group_target_plan_execute ;;
+    24) group_task1_stage_1 ;;
+    25) group_task1_stage_2 ;;
+    26) group_task1_stage_3 ;;
+    27) group_task1_stage_4 ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac
