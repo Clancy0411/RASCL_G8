@@ -1033,12 +1033,12 @@ PY
       ;;
     inner)
       task1_move_to "Task2/inner/1" 0.15179144 -0.02821182 0.10 5
-      task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.45 5
+      task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.045 5
       task1_move_to "Task2/inner/3" 0.18128633 -0.03369372 0.045 5
       ;;
     outer)
       task1_move_to "Task2/outer/1" 0.21078122 -0.03917562 0.10 5
-      task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.45 5
+      task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.045 5
       task1_move_to "Task2/outer/3" 0.18128633 -0.03369372 0.045 5
       ;;
     *) die "Task 2 未识别的路径：$route" ;;
