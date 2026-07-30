@@ -315,8 +315,8 @@ ros2 service call /rascl_faulhaber_bridge/read_spur_gear_counts \
 ```
 
 `rascl_debug.sh` group `17` wraps that read-only service. Group `15` retains
-relative Drive 3 commands: `close` (or `c`) requests exactly `-200000` counts,
-while `open` (or `o`) requests exactly `+200000` counts. Neither preset monitors
+relative Drive 3 commands: `close` (or `c`) requests exactly `-150000` counts,
+while `open` (or `o`) requests exactly `+150000` counts. Neither preset monitors
 command/feedback lag or stops early on contact. A signed non-zero integer also
 requests that exact relative Drive 3 increment. Each command starts
 from the current joint state, uses the configured direction and counts per

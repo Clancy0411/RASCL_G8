@@ -41,8 +41,8 @@ SPUR_GEAR_MIN_POSITION_RAD="${RASCL_SPUR_GEAR_MIN_POSITION_RAD:--6.283185307}"
 SPUR_GEAR_MAX_POSITION_RAD="${RASCL_SPUR_GEAR_MAX_POSITION_RAD:-6.283185307}"
 # Group 15 uses tested exact relative Drive 3 increments. Neither preset uses
 # command/feedback-lag contact detection or an early-stop target.
-GRIPPER_GRIP_DELTA_COUNTS=-200000
-GRIPPER_RELEASE_DELTA_COUNTS=200000
+GRIPPER_GRIP_DELTA_COUNTS=-150000
+GRIPPER_RELEASE_DELTA_COUNTS=150000
 SPUR_GEAR_SPEED_COUNTS_PER_S="${RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S:-20000}"
 SPUR_GEAR_MIN_MOTION_DURATION_S="${RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S:-0.5}"
 SPUR_GEAR_SETTLE_DURATION_S="${RASCL_SPUR_GEAR_SETTLE_DURATION_S:-1.0}"
@@ -346,7 +346,7 @@ group_homing_bridge() {
   echo "CSP 交接会清零并回读验证 Drive 0-3 的 0x2310:01/:02 正/负限位输入映射；Homing 参考输入、极性与软件位置限位保持不变。"
   echo "CSP 停滞诊断：误差 >= $CSP_STALL_ERROR_COUNTS counts 且 $CSP_STALL_TIMEOUT_MS ms 内进展 < $CSP_STALL_PROGRESS_COUNTS counts 时自动抓取驱动快照。"
   echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
-  echo "组 15 close/open 分别执行精确 -200000/+200000 counts 相对运动；两者与自定义 counts 均使用 $CSP_TORQUE_LIMIT_PER_MILLE‰ 正常 CSP 转矩，不启用接触差值提前停止。"
+  echo "组 15 close/open 分别执行精确 -150000/+150000 counts 相对运动；两者与自定义 counts 均使用 $CSP_TORQUE_LIMIT_PER_MILLE‰ 正常 CSP 转矩，不启用接触差值提前停止。"
   echo "Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1 电流参数不改。"
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
@@ -888,6 +888,18 @@ group_set_target() {
   echo "下一步必须执行组 9，只规划成功后才能执行组 10。"
 }
 
+group_target_plan_execute() {
+  echo "组 23：输入目标后只要规划成功就立即执行。固定板 XY 补偿保持启用。"
+  group_set_target
+  group_real_plan
+  if [[ ! -s "$PLAN_STATE_FILE" ]]; then
+    echo "规划未通过；本次不会执行实机运动。修正目标后可重试组 23。" >&2
+    return 0
+  fi
+  echo "规划已通过；立即执行同一目标。"
+  group_real_execute
+}
+
 print_menu() {
   printf '%s\n' \
     "" \
@@ -911,7 +923,7 @@ print_menu() {
     " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
     " 13  查看当前模型 TCP 坐标                              [T3]" \
     " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
-    " 15  抓夹 close(-200000)/open(+200000) 或自定义 counts  [T3，会运动]" \
+    " 15  抓夹 close(-150000)/open(+150000) 或自定义 counts  [T3，会运动]" \
     " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
     " 17  查看 Drive 3 当前绝对 counts（Method 37 零位）     [T2/T3，只读]" \
     " 18  查看输入映射和 Drive 2 保护参数                    [T2，CSP 前只读]" \
@@ -919,10 +931,11 @@ print_menu() {
     " 20  Homing 后微调 Drive 1（相对 counts）               [T2，会运动]" \
     " 21  Homing 后微调 Drive 2（相对 counts）               [T2，会运动]" \
     " 22  将 Drive 0-2 当前姿态设为本次 Home                 [T2，不运动]" \
+    " 23  输入目标 → 规划 → 立即执行（固定板 XY 补偿）       [T3，会运动]" \
     "  0  退出" \
     "" \
     "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→（标定时 19/20/21→22）→7；T3=8→13→14→9→10。Drive 3：T3=15 运动，17 读 counts。"
+    "CSP 顺序：T1=4；T2=6→（标定时 19/20/21→22）→7；T3=8→13→23（或 14→9→10）。Drive 3：T3=15 运动，17 读 counts。"
 }
 
 run_group() {
@@ -949,6 +962,7 @@ run_group() {
     20) group_adjust_home_counts 1 ;;
     21) group_adjust_home_counts 2 ;;
     22) group_set_current_arm_home ;;
+    23) group_target_plan_execute ;;
     0) exit 0 ;;
     *) die "未知组号: $1" ;;
   esac

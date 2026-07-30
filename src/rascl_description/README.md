@@ -186,8 +186,8 @@ The values correspond to:
 ```
 
 For the CSP session, `rascl_debug.sh` group `15` is the supported gripper
-command. Entering ASCII `close` (or `c`) requests an exact `-200000`-count
-relative move, while `open` (or `o`) requests an exact `+200000`-count relative
+command. Entering ASCII `close` (or `c`) requests an exact `-150000`-count
+relative move, while `open` (or `o`) requests an exact `+150000`-count relative
 move. Both presets and signed non-zero integer commands restore
 `0x60E0/0x60E1=1000`, use `20000 counts/s`, and do not monitor command/feedback
 lag or terminate early on contact. Every command starts from the current spur
@@ -205,8 +205,8 @@ ros2_control owns the CSP connection.
 
 Group `17` reads the exact Drive 3 `absolute_counts` in the current Method-37
 coordinate without commanding motion. Use it before and after group `15`
-increments to verify that close changed the count by `-200000` and open changed
-it by `+200000` (subject to encoder/readback tolerance).
+increments to verify that close changed the count by `-150000` and open changed
+it by `+150000` (subject to encoder/readback tolerance).
 
 For Cartesian Task 1 moves, group `10` now reports success only after fresh
 joint feedback satisfies the endpoint joint/TCP tolerances. If a drive remains

@@ -22,8 +22,8 @@ def _group_15_source() -> str:
 def test_group_15_close_and_open_use_tested_exact_counts():
     script = _find_debug_script().read_text(encoding="utf-8")
 
-    assert "GRIPPER_GRIP_DELTA_COUNTS=-200000" in script
-    assert "GRIPPER_RELEASE_DELTA_COUNTS=200000" in script
+    assert "GRIPPER_GRIP_DELTA_COUNTS=-150000" in script
+    assert "GRIPPER_RELEASE_DELTA_COUNTS=150000" in script
 
 
 def test_group_15_has_no_contact_lag_early_stop_path():
@@ -35,3 +35,19 @@ def test_group_15_has_no_contact_lag_early_stop_path():
     assert "enable_spur_hold_guard" not in group_15
     assert "capture_spur_contact_snapshot" not in group_15
     assert "/rascl_faulhaber_bridge/restore_spur_torque" in group_15
+
+
+def test_group_23_reuses_target_plan_execute_without_changing_manual_groups():
+    script = _find_debug_script().read_text(encoding="utf-8")
+    start = script.index("group_target_plan_execute() {")
+    end = script.index("\nprint_menu() {", start)
+    group_23 = script[start:end]
+
+    assert "group_set_target" in group_23
+    assert "group_real_plan" in group_23
+    assert "group_real_execute" in group_23
+    assert '[[ ! -s "$PLAN_STATE_FILE" ]]' in group_23
+    assert "23) group_target_plan_execute ;;" in script
+    assert "9) group_real_plan ;;" in script
+    assert "10) group_real_execute ;;" in script
+    assert "14) group_set_target ;;" in script
