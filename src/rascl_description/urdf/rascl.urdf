@@ -18,11 +18,11 @@
   <xacro:arg name="gripper_direction" default="-1"/>
   <!--
     Software calibration between the reference-switch position and the URDF
-    joint-zero convention.  The proven automatic homing procedure keeps the
-    drive-level 0x607C offsets at zero.  At its switch pose Drive 1/2 report
-    approximately zero counts while the URDF angles are both +pi/2.  Drive 2
-    uses the opposite encoder sign, so its paired offset is positive while
-    Drive 1's remains negative.
+    joint-zero convention. The proven automatic homing procedure keeps the
+    drive-level 0x607C offsets at zero. At its switch pose Drive 1/2 report
+    approximately zero counts while the URDF angles are both +pi/2. Both axes
+    use the positive encoder-to-URDF sign and therefore use the same negative
+    software offset.
   -->
   <xacro:arg name="shoulder_home_offset_counts" default="0"/>
   <xacro:arg name="upperarm_home_offset_counts" default="-802816"/>
@@ -149,6 +149,7 @@
     </collision>
   </link>
 
+  <!-- Jaw motion is visualized from Drive 3; only spur_gear_joint is commanded. -->
   <joint name="left_jaw_joint" type="prismatic">
     <parent link="lowerarm"/>
     <child link="left_jaw"/>

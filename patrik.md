@@ -1,16 +1,16 @@
 T1
 rascl-container:~/ws$ bash ./rascl_debug.sh 4
-Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。
-Drive 0-2 自动寻找参考输入区间两端，以 200 的低速正弦曲线回到 (entry+exit)/2 并置零；D0/D1/D2 第二边沿最大搜索距离分别为 100000/300000/300000 counts，穿越/回中点超时 120.0 s。
-Homing 中点到位和 Method 37 置零回读共用 500 counts 容差；不再使用会误拦截动作的 10-count 严格检查。
-三轴到位后 Drive 3 相对运动 50000 counts，并以 Method 37 把到达位置设为 0 counts。
-Drive 3 参考运动：速度 3000 counts/s，加/减速度 1000/1000，following-error 持续 0.30 s 才中断。
-Drive 2 CSP following-error：窗口 25000 counts，超时 250 ms；0x607B/0x607D 软件位置限位只读取、不改写。
-CSP 交接会清零并回读验证 Drive 0-3 的 0x2310:01/:02 正/负限位输入映射；Homing 参考输入、极性与软件位置限位保持不变。
-CSP 停滞诊断：误差 >= 25000 counts 且 500 ms 内进展 < 100 counts 时自动抓取驱动快照。
-Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 1000（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。
-组 15 close 用 Drive 3 300‰ 转矩克服滑槽摩擦，检测接触后立即降到 100‰ 保持；open/自定义 counts 恢复 1000‰。
-Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 1000；Drive 0/1 电流参数不改。
+The Homing bridge remains active in T1 until the entire CSP session ends.
+Drives 0-2 automatically find both edges of their reference-input intervals, return to (entry+exit)/2 with a low-speed sinusoidal profile at 200, and set zero. The D0/D1/D2 second-edge travel limits are 100000/300000/300000 counts, and the traverse/return timeout is 120.0 s.
+Homing midpoint arrival and Method 37 zero readback share a 500-count tolerance; the overly strict 10-count check that could reject valid motion is no longer used.
+After all three axes arrive, Drive 3 moves by 50000 counts and uses Method 37 to set the reached position to 0 counts.
+Drive 3 reference motion: velocity 3000 counts/s, acceleration/deceleration 1000/1000, and abort only after following error persists for 0.30 s.
+Drive 2 CSP following error: window 25000 counts, timeout 250 ms; 0x607B/0x607D software position limits are read only and are not modified.
+The CSP handoff clears and verifies the Drive 0-3 positive/negative limit-input mappings at 0x2310:01/:02; the Homing reference input, polarity, and software position limits remain unchanged.
+CSP stall diagnostics automatically capture a drive snapshot when error >= 25000 counts and progress < 100 counts over 500 ms.
+Before Drives 0-3 enter CSP, writable 0x60E0/0x60E1 are set to 1000 (1000=rated torque) and read back; read-only 0x6072 is logged only and is not written to persistent storage.
+Group 15 close uses 300 per mille Drive 3 torque to overcome slide friction, then drops immediately to 100 per mille holding torque after contact detection; open/custom-count moves restore 1000 per mille.
+At CSP handoff, Drives 2/3 raise an insufficient 0x2329:03 peak-current setting to the value required by the target torque (observed hardware values: 220->1100 mA and 81->540 mA); read-only 0x6072 must read back at least 1000. Drive 0/1 current parameters are unchanged.
 [INFO] [launch]: All log files can be found below /root/.ros/log/2026-07-27-19-55-47-730900-irs-rascl06-2827
 [INFO] [launch]: Default logging verbosity is set to INFO
 [INFO] [rascl_faulhaber_bridge.py-1]: process started with pid [2830]
@@ -53,13 +53,13 @@ requester: making request: std_srvs.srv.Trigger_Request()
 response:
 std_srvs.srv.Trigger_Response(success=True, message='Drive 0: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07; 0x2310 lower/upper/option/reference=0x00/0x00/1/2; 0x2324.01=0x00001013 [none] | Drive 1: physical=0x03/00000011, logical=0x04/00000100, polarity=0x07; 0x2310 lower/upper/option/reference=0x00/0x00/1/2; 0x2324.01=0x04001113 [software_limit_positive] | Drive 2: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07; 0x2310 lower/upper/option/reference=0x00/0x00/1/2; 0x2324.01=0x00001013 [none] | Drive 3: physical=0x01/00000001, logical=0x00/00000000, polarity=0x01; 0x2310 lower/upper/option/reference=0x00/0x00/1/1; 0x2324.01=0x00001003 [none]')
 
-home_all 先让 Drive 0-2 穿过各自参考输入区间并回到中点置零；成功后 Drive 3 自动相对运动 50000 counts，再把到达位置设为 0 counts。
+home_all first moves Drives 0-2 through their reference-input intervals, returns each to its midpoint, and sets zero; after success, Drive 3 automatically moves by 50000 counts and sets the reached position to 0 counts.
 waiting for service to become available...
 requester: making request: std_srvs.srv.Trigger_Request()
 
 response:
 std_srvs.srv.Trigger_Response(success=False, message='Home failed: Drive 0: homing error; statusword=0x2427')
-ERROR: home_all 或 Drive 3 参考运动/置零失败；禁止进入 CSP
+ERROR: home_all or the Drive 3 reference move/zeroing failed; CSP entry is blocked
 rascl-container:~/ws$ bash ./rascl_debug.sh 6
 waiting for service to become available...
 requester: making request: std_srvs.srv.Trigger_Request()
@@ -67,10 +67,10 @@ requester: making request: std_srvs.srv.Trigger_Request()
 response:
 std_srvs.srv.Trigger_Response(success=True, message='Drive 0: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07; 0x2310 lower/upper/option/reference=0x00/0x00/1/2; 0x2324.01=0x00000003 [none] | Drive 1: physical=0x03/00000011, logical=0x04/00000100, polarity=0x07; 0x2310 lower/upper/option/reference=0x00/0x00/1/2; 0x2324.01=0x04001113 [software_limit_positive] | Drive 2: physical=0x07/00000111, logical=0x00/00000000, polarity=0x07; 0x2310 lower/upper/option/reference=0x00/0x00/1/2; 0x2324.01=0x00001013 [none] | Drive 3: physical=0x01/00000001, logical=0x00/00000000, polarity=0x01; 0x2310 lower/upper/option/reference=0x00/0x00/1/1; 0x2324.01=0x00001003 [none]')
 
-home_all 先让 Drive 0-2 穿过各自参考输入区间并回到中点置零；成功后 Drive 3 自动相对运动 50000 counts，再把到达位置设为 0 counts。
+home_all first moves Drives 0-2 through their reference-input intervals, returns each to its midpoint, and sets zero; after success, Drive 3 automatically moves by 50000 counts and sets the reached position to 0 counts.
 waiting for service to become available...
 requester: making request: std_srvs.srv.Trigger_Request()
 
 response:
 std_srvs.srv.Trigger_Response(success=False, message='Home failed: Drive 0: homing error; statusword=0x2427')
-ERROR: home_all 或 Drive 3 参考运动/置零失败；禁止进入 CSP
+ERROR: home_all or the Drive 3 reference move/zeroing failed; CSP entry is blocked

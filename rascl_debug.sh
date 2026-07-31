@@ -51,6 +51,7 @@ TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
+# These files bind a target and its plan to one live CSP process.
 STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
 TARGET_STATE_FILE="$STATE_DIR/target.state"
 CSP_SESSION_FILE="$STATE_DIR/csp_session.state"
@@ -81,10 +82,10 @@ load_ros() {
 
 require_wp3_package() {
   if ! ros2 pkg prefix rascl_wp3_ss26_group8 >/dev/null 2>&1; then
-    die "找不到 ROS 包 rascl_wp3_ss26_group8；请停止实机流程，先在 T1 成功执行组 1"
+    die "ROS package rascl_wp3_ss26_group8 was not found; stop the hardware workflow and complete group 1 in T1 first"
   fi
   if ! ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk1'; then
-    die "包已找到，但未安装 wp3_tsk1 可执行入口；请重新执行组 1 并检查编译输出"
+    die "The package was found, but the wp3_tsk1 executable is not installed; run group 1 again and inspect the build output"
   fi
 }
 
@@ -92,10 +93,10 @@ require_real_packages() {
   local package
   for package in rascl_description rascl_hardware_interface rascl_wp3_ss26_group8 tf2_ros; do
     ros2 pkg prefix "$package" >/dev/null 2>&1 ||
-      die "找不到 ROS 包 $package；请在没有实机进程时先成功执行组 1"
+      die "ROS package $package was not found; complete group 1 while no hardware process is running"
   done
   require_wp3_package
-  command -v timeout >/dev/null 2>&1 || die "容器缺少 timeout 命令，无法执行受限时检查"
+  command -v timeout >/dev/null 2>&1 || die "The container has no timeout command; timed checks cannot run"
 }
 
 require_active_controllers() {
@@ -104,10 +105,10 @@ require_active_controllers() {
   printf '%s\n' "$controllers"
   grep -Eq '^[[:space:]]*joint_state_broadcaster[[:space:]].*[[:space:]]active([[:space:]]|$)' \
     <<<"$controllers" ||
-    die "joint_state_broadcaster 不是 active，禁止继续"
+    die "joint_state_broadcaster is not active; stopping"
   grep -Eq '^[[:space:]]*rascl_position_controller[[:space:]].*[[:space:]]active([[:space:]]|$)' \
     <<<"$controllers" ||
-    die "rascl_position_controller 不是 active，禁止继续"
+    die "rascl_position_controller is not active; stopping"
 }
 
 is_number() {
@@ -159,7 +160,7 @@ load_target_state() {
     ! is_number "${values[2]}" ||
     ! is_positive_number "${values[3]}"; then
     rm -f "$TARGET_STATE_FILE" "$PLAN_STATE_FILE"
-    die "目标状态文件无效，已清除；请重新执行组 14"
+    die "The target state file was invalid and has been cleared; run group 14 again"
   fi
   TARGET_X="${values[0]}"
   TARGET_Y="${values[1]}"
@@ -173,18 +174,18 @@ clear_plan_state() {
 
 require_csp_session() {
   [[ -f "$CSP_SESSION_FILE" ]] ||
-    die "没有有效的组 7 CSP 会话；请按 T1:4 → T2:6→7 启动"
+    die "No valid group 7 CSP session exists; start it with T1:4 -> T2:6->7"
   local session_pid
   IFS= read -r session_pid <"$CSP_SESSION_FILE"
   [[ "$session_pid" =~ ^[0-9]+$ ]] && kill -0 "$session_pid" 2>/dev/null ||
-    die "组 7 CSP 会话已结束；禁止复用旧状态，请完整重启"
+    die "The group 7 CSP session has ended; do not reuse stale state, and restart the complete workflow"
 }
 
 require_no_active_wp3_motion() {
   local nodes
   nodes="$(ros2 node list 2>/dev/null || true)"
   if grep -Eq '^/wp3_tsk1(_[0-9]+)?$' <<<"$nodes"; then
-    die "wp3_tsk1 轨迹节点仍在发布命令；等待组 10 完全结束后才能单独控制 Drive 3。"
+    die "The wp3_tsk1 trajectory node is still publishing commands; wait for group 10 to finish before controlling Drive 3 independently"
   fi
 }
 
@@ -228,6 +229,7 @@ PY
 }
 
 save_plan_state() {
+  # Store both the CSP process ID and target signature to reject stale plans.
   ensure_state_dir
   local session_pid
   IFS= read -r session_pid <"$CSP_SESSION_FILE"
@@ -235,17 +237,18 @@ save_plan_state() {
 }
 
 require_matching_plan() {
+  # Execution is valid only for the exact target planned in the current CSP session.
   require_csp_session
-  [[ -f "$PLAN_STATE_FILE" ]] || die "当前 CSP 会话没有通过组 9 的规划；禁止执行"
+  [[ -f "$PLAN_STATE_FILE" ]] || die "The current CSP session has no successful group 9 plan; execution is blocked"
   local planned=()
   mapfile -t planned <"$PLAN_STATE_FILE"
-  [[ "${#planned[@]}" -eq 2 ]] || die "规划授权文件无效；请重新执行组 9"
+  [[ "${#planned[@]}" -eq 2 ]] || die "The planning authorization file is invalid; run group 9 again"
   local session_pid
   IFS= read -r session_pid <"$CSP_SESSION_FILE"
   [[ "${planned[0]}" == "$session_pid" ]] ||
-    die "规划属于旧 CSP 会话；请在当前会话重新执行组 9"
+    die "The plan belongs to an old CSP session; run group 9 again in the current session"
   [[ "${planned[1]}" == "$(target_signature)" ]] ||
-    die "当前目标与组 9 规划目标不同；请重新执行组 9"
+    die "The current target differs from the group 9 planned target; run group 9 again"
 }
 
 group_build_test() {
@@ -270,7 +273,7 @@ group_build_test() {
 
 group_fake_launch() {
   load_ros
-  echo "Fake ros2_control 将持续占用当前终端；按 Ctrl-C 停止。"
+  echo "Fake ros2_control will keep this terminal occupied; press Ctrl-C to stop it."
   ros2 launch rascl_description ros2_control.launch.py use_fake_hardware:=true
 }
 
@@ -294,60 +297,60 @@ group_homing_bridge() {
   require_real_packages
   is_integer "$SPUR_GEAR_REFERENCE_DELTA_COUNTS" &&
     [[ "$SPUR_GEAR_REFERENCE_DELTA_COUNTS" =~ [1-9] ]] ||
-    die "RASCL_SPUR_GEAR_REFERENCE_DELTA_COUNTS 必须是非零整数"
+    die "RASCL_SPUR_GEAR_REFERENCE_DELTA_COUNTS must be a nonzero integer"
   is_positive_number "$SPUR_GEAR_REFERENCE_TIMEOUT_S" ||
-    die "RASCL_SPUR_GEAR_REFERENCE_TIMEOUT_S 必须是正数"
+    die "RASCL_SPUR_GEAR_REFERENCE_TIMEOUT_S must be positive"
   is_integer "$SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS" &&
     (( SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS >= 0 )) ||
-    die "RASCL_SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS 必须是非负整数"
+    die "RASCL_SPUR_GEAR_REFERENCE_TOLERANCE_COUNTS must be a nonnegative integer"
   is_integer "$SPUR_GEAR_REFERENCE_PROFILE_VELOCITY" &&
     (( SPUR_GEAR_REFERENCE_PROFILE_VELOCITY > 0 )) ||
-    die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_VELOCITY 必须是正整数"
+    die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_VELOCITY must be a positive integer"
   is_integer "$SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION" &&
     (( SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION > 0 )) ||
-    die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION 必须是正整数"
+    die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION must be a positive integer"
   is_integer "$SPUR_GEAR_REFERENCE_PROFILE_DECELERATION" &&
     (( SPUR_GEAR_REFERENCE_PROFILE_DECELERATION > 0 )) ||
-    die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_DECELERATION 必须是正整数"
+    die "RASCL_SPUR_GEAR_REFERENCE_PROFILE_DECELERATION must be a positive integer"
   is_positive_number "$SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S" ||
-    die "RASCL_SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S 必须是正数"
+    die "RASCL_SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S must be positive"
   local interval_guard
   for interval_guard in \
     "$HOMING_INTERVAL_MAX_TRAVEL_DRIVE0_COUNTS" \
     "$HOMING_INTERVAL_MAX_TRAVEL_DRIVE1_COUNTS" \
     "$HOMING_INTERVAL_MAX_TRAVEL_DRIVE2_COUNTS"; do
     is_integer "$interval_guard" && (( interval_guard > 0 )) ||
-      die "Drive 0-2 的 Homing 区间最大搜索距离必须是正整数"
+      die "The maximum Homing-interval search travel for Drives 0-2 must be a positive integer"
   done
   is_positive_number "$HOMING_INTERVAL_TIMEOUT_S" ||
-    die "RASCL_HOMING_INTERVAL_TIMEOUT_S 必须是正数"
+    die "RASCL_HOMING_INTERVAL_TIMEOUT_S must be positive"
   is_integer "$CSP_TORQUE_LIMIT_PER_MILLE" &&
     (( CSP_TORQUE_LIMIT_PER_MILLE > 0 && CSP_TORQUE_LIMIT_PER_MILLE <= 6000 )) ||
-    die "RASCL_CSP_TORQUE_LIMIT_PER_MILLE 必须是 1..6000"
+    die "RASCL_CSP_TORQUE_LIMIT_PER_MILLE must be in 1..6000"
   is_integer "$SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE" &&
     (( SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE > 0 &&
        SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE <= CSP_TORQUE_LIMIT_PER_MILLE )) ||
-    die "RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE 必须是 1..$CSP_TORQUE_LIMIT_PER_MILLE"
+    die "RASCL_SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE must be in 1..$CSP_TORQUE_LIMIT_PER_MILLE"
   is_integer "$SPUR_HOLD_TORQUE_LIMIT_PER_MILLE" &&
     (( SPUR_HOLD_TORQUE_LIMIT_PER_MILLE > 0 &&
        SPUR_HOLD_TORQUE_LIMIT_PER_MILLE <= SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE )) ||
-    die "RASCL_SPUR_HOLD_TORQUE_LIMIT_PER_MILLE 必须是 1..$SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE"
+    die "RASCL_SPUR_HOLD_TORQUE_LIMIT_PER_MILLE must be in 1..$SPUR_CLOSE_TORQUE_LIMIT_PER_MILLE"
   [[ "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "true" ||
     "$CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP" == "false" ]] ||
-    die "RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP 只能是 true 或 false"
+    die "RASCL_CLEAR_LIMIT_SWITCH_MAPPINGS_FOR_CSP must be true or false"
   ensure_state_dir
   rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
-  echo "Homing bridge 将在 T1 持续运行，直到整个 CSP 会话结束。"
-  echo "Drive 0-2 自动寻找参考输入区间两端，以 200 的低速正弦曲线回到 (entry+exit)/2 并置零；D0/D1/D2 第二边沿最大搜索距离分别为 $HOMING_INTERVAL_MAX_TRAVEL_DRIVE0_COUNTS/$HOMING_INTERVAL_MAX_TRAVEL_DRIVE1_COUNTS/$HOMING_INTERVAL_MAX_TRAVEL_DRIVE2_COUNTS counts，穿越/回中点超时 $HOMING_INTERVAL_TIMEOUT_S s。"
-  echo "Homing 中点到位和 Method 37 置零回读共用 500 counts 容差；不再使用会误拦截动作的 10-count 严格检查。"
-  echo "三轴到位后 Drive 3 相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，并以 Method 37 把到达位置设为 0 counts。"
-  echo "Drive 3 参考运动：速度 $SPUR_GEAR_REFERENCE_PROFILE_VELOCITY counts/s，加/减速度 $SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION/$SPUR_GEAR_REFERENCE_PROFILE_DECELERATION，following-error 持续 $SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S s 才中断。"
-  echo "Drive 2 CSP following-error：窗口 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts，超时 $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms；0x607B/0x607D 软件位置限位只读取、不改写。"
-  echo "CSP 交接会清零并回读验证 Drive 0-3 的 0x2310:01/:02 正/负限位输入映射；Homing 参考输入、极性与软件位置限位保持不变。"
-  echo "CSP 停滞诊断：误差 >= $CSP_STALL_ERROR_COUNTS counts 且 $CSP_STALL_TIMEOUT_MS ms 内进展 < $CSP_STALL_PROGRESS_COUNTS counts 时自动抓取驱动快照。"
-  echo "Drive 0-3 进入 CSP 前会把可写的 0x60E0/0x60E1 设为 $CSP_TORQUE_LIMIT_PER_MILLE（1000=额定转矩）并回读；只读 0x6072 仅记录，不写入永久存储。"
-  echo "组 15 close/open 分别执行精确 -150000/+150000 counts 相对运动；两者与自定义 counts 均使用 $CSP_TORQUE_LIMIT_PER_MILLE‰ 正常 CSP 转矩，不启用接触差值提前停止。"
-  echo "Drive 2/3 在 CSP 交接时会把过低的 0x2329:03 峰值电流提高到满足目标转矩所需值（实机曾分别为 220→1100 mA、81→540 mA），并要求只读 0x6072 回读不低于 $CSP_TORQUE_LIMIT_PER_MILLE；Drive 0/1 电流参数不改。"
+  echo "The Homing bridge will keep running in T1 until the entire CSP session ends."
+  echo "Drives 0-2 automatically find both edges of their reference-input intervals, return to (entry+exit)/2 with a low-speed sinusoidal profile at 200, and set zero; the D0/D1/D2 second-edge travel limits are $HOMING_INTERVAL_MAX_TRAVEL_DRIVE0_COUNTS/$HOMING_INTERVAL_MAX_TRAVEL_DRIVE1_COUNTS/$HOMING_INTERVAL_MAX_TRAVEL_DRIVE2_COUNTS counts, and the traverse/return timeout is $HOMING_INTERVAL_TIMEOUT_S s."
+  echo "Homing midpoint arrival and Method 37 zero readback share a 500-count tolerance; the overly strict 10-count check that could reject valid motion is no longer used."
+  echo "After all three axes arrive, Drive 3 moves by $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts and uses Method 37 to set the reached position to 0 counts."
+  echo "Drive 3 reference motion: velocity $SPUR_GEAR_REFERENCE_PROFILE_VELOCITY counts/s, acceleration/deceleration $SPUR_GEAR_REFERENCE_PROFILE_ACCELERATION/$SPUR_GEAR_REFERENCE_PROFILE_DECELERATION, and abort only after following error persists for $SPUR_GEAR_REFERENCE_FOLLOWING_ERROR_CONFIRM_S s."
+  echo "Drive 2 CSP following error: window $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts, timeout $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms; 0x607B/0x607D software position limits are read only and are not modified."
+  echo "The CSP handoff clears and verifies the Drive 0-3 positive/negative limit-input mappings at 0x2310:01/:02; the Homing reference input, polarity, and software position limits remain unchanged."
+  echo "CSP stall diagnostics automatically capture a drive snapshot when error >= $CSP_STALL_ERROR_COUNTS counts and progress < $CSP_STALL_PROGRESS_COUNTS counts over $CSP_STALL_TIMEOUT_MS ms."
+  echo "Before Drives 0-3 enter CSP, writable 0x60E0/0x60E1 are set to $CSP_TORQUE_LIMIT_PER_MILLE (1000=rated torque) and read back; read-only 0x6072 is logged only and is never stored persistently."
+  echo "Group 15 close/open perform exact -150000/+150000-count relative moves; both and custom-count moves use normal CSP torque of $CSP_TORQUE_LIMIT_PER_MILLE per mille, with no contact-delta early stop."
+  echo "At CSP handoff, Drives 2/3 raise an insufficient 0x2329:03 peak-current setting to the value required by the target torque (observed hardware values: 220->1100 mA and 81->540 mA); read-only 0x6072 must read back at least $CSP_TORQUE_LIMIT_PER_MILLE. Drive 0/1 current parameters are unchanged."
   ros2 launch rascl_description homing.launch.py \
     interface:="$INTERFACE" \
     homing_interval_max_travel_drive0_counts:="$HOMING_INTERVAL_MAX_TRAVEL_DRIVE0_COUNTS" \
@@ -394,12 +397,12 @@ home_one() {
   ros2 param set /rascl_faulhaber_bridge test_drive_index "$drive"
   response="$(
     ros2 service call /rascl_faulhaber_bridge/home_one std_srvs/srv/Trigger "{}"
-  )" || die "Drive $drive Homing 服务调用失败"
+  )" || die "Drive $drive Homing service call failed"
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
-    die "Drive $drive Homing 未成功；停止后续流程"
+    die "Drive $drive Homing did not succeed; stopping the workflow"
   grep -q "drive${drive}_interval(" <<<"$response" ||
-    die "Drive $drive 未返回 Homing 区间两边沿和中点记录；停止后续流程"
+    die "Drive $drive did not return both Homing-interval edges and the midpoint record; stopping the workflow"
 }
 
 group_home_individual() {
@@ -408,23 +411,23 @@ group_home_individual() {
   home_one 0
   home_one 1
   home_one 2
-  echo "Drive 0-2 Homing 已结束；最后一轴完成后 Drive 3 会自动执行 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts 参考运动并置零。"
+  echo "Drive 0-2 Homing is complete; after the last axis, Drive 3 automatically performs the $SPUR_GEAR_REFERENCE_DELTA_COUNTS-count reference move and sets zero."
 }
 
 group_home_all() {
   local response
   load_ros
   read_inputs
-  echo "home_all 先让 Drive 0-2 穿过各自参考输入区间并回到中点置零；成功后 Drive 3 自动相对运动 $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts，再把到达位置设为 0 counts。"
+  echo "home_all first moves Drives 0-2 through their reference-input intervals, returns each to its midpoint, and sets zero; after success, Drive 3 automatically moves by $SPUR_GEAR_REFERENCE_DELTA_COUNTS counts and sets the reached position to 0 counts."
   response="$(
     ros2 service call /rascl_faulhaber_bridge/home_all std_srvs/srv/Trigger "{}"
-  )" || die "home_all 服务调用失败"
+  )" || die "home_all service call failed"
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
-    die "home_all 或 Drive 3 参考运动/置零失败；禁止进入 CSP"
+    die "home_all or the Drive 3 reference move/zeroing failed; CSP entry is blocked"
   for drive in 0 1 2; do
     grep -q "drive${drive}_interval(" <<<"$response" ||
-      die "home_all 缺少 Drive $drive 的 Homing 区间记录；禁止进入 CSP"
+      die "home_all has no Homing-interval record for Drive $drive; CSP entry is blocked"
   done
   group_spur_gear_counts
   read_drive2_diagnostics
@@ -434,25 +437,25 @@ group_adjust_home_counts() {
   local drive="$1"
   local delta response
   load_ros
-  read -r -p "Drive $drive 相对微调 counts（正/负整数，不能为 0）：" delta
+  read -r -p "Drive $drive relative trim in counts (positive/negative integer, not 0): " delta
   delta="${delta//$'\r'/}"
   [[ "$delta" =~ ^[+-]?[0-9]+$ ]] ||
-    die "counts 必须是有符号整数，例如 500、-1200"
-  (( delta != 0 )) || die "counts 不能为 0"
+    die "counts must be a signed integer, for example 500 or -1200"
+  (( delta != 0 )) || die "counts cannot be 0"
   ros2 param set /rascl_faulhaber_bridge test_drive_index "$drive" >/dev/null ||
-    die "无法设置 Drive $drive；确认 T1 组 4 仍在运行"
+    die "Drive $drive cannot be configured; confirm that group 4 is still running in T1"
   ros2 param set /rascl_faulhaber_bridge test_relative_counts "$delta" >/dev/null ||
-    die "无法设置相对 counts；确认代码已重新编译并重启 T1 组 4"
+    die "Relative counts cannot be set; confirm that the code was rebuilt and group 4 was restarted in T1"
   response="$(
     ros2 service call \
       /rascl_faulhaber_bridge/adjust_home_counts \
       std_srvs/srv/Trigger "{}"
-  )" || die "Drive $drive Home 微调服务调用失败"
+  )" || die "Drive $drive Home-trim service call failed"
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
-    die "Drive $drive Home 微调失败；不要进入 CSP"
-  echo "可重复执行本组；correction_from_homed_zero 是当前相对本次 Homing 零点的实际累计 counts。"
-  echo "确认三轴物理 Home 后记录各轴该值；若要让当前姿态成为本次会话 Home，先执行组 22，再执行组 7。"
+    die "Drive $drive Home trim failed; do not enter CSP"
+  echo "This group may be repeated; correction_from_homed_zero is the actual cumulative count offset from the current Homing zero."
+  echo "After confirming the physical Home of all three axes, record each value; to make the current pose the session Home, run group 22 and then group 7."
 }
 
 group_set_current_arm_home() {
@@ -462,20 +465,20 @@ group_set_current_arm_home() {
     ros2 service call \
       /rascl_faulhaber_bridge/set_current_arm_home \
       std_srvs/srv/Trigger "{}"
-  )" || die "当前姿态设为 Home 的服务调用失败"
+  )" || die "The service call that sets the current pose as Home failed"
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
-    die "当前姿态未能完整设为 Home；不要进入 CSP"
+    die "The current pose was not fully set as Home; do not enter CSP"
   for drive in 0 1 2; do
     grep -q "drive${drive}_before=" <<<"$response" ||
-      die "缺少 Drive $drive 置零前 counts；不要进入 CSP"
+      die "The pre-zero counts for Drive $drive are missing; do not enter CSP"
     grep -q "drive${drive}_after=" <<<"$response" ||
-      die "缺少 Drive $drive Method 37 回读；不要进入 CSP"
+      die "The Method 37 readback for Drive $drive is missing; do not enter CSP"
   done
   grep -q "Drive 3 unchanged" <<<"$response" ||
-    die "服务未确认 Drive 3 保持不变；不要进入 CSP"
-  echo "Drive 0-2 当前姿态已成为本次会话 Home；Drive 3 零位未改变。现在可执行组 7。"
-  echo "请保存 drive0/1/2_before；下次重新执行组 6 时，本次手动 Home 会被覆盖。"
+    die "The service did not confirm that Drive 3 remained unchanged; do not enter CSP"
+  echo "The current Drive 0-2 pose is now the session Home; the Drive 3 zero is unchanged. Group 7 may now be run."
+  echo "Save drive0/1/2_before; running group 6 again will overwrite this manual Home."
 }
 
 group_csp_launch() {
@@ -487,10 +490,10 @@ group_csp_launch() {
     rm -f "$CSP_SESSION_FILE" "$PLAN_STATE_FILE"
   }
   trap cleanup_csp_state EXIT
-  echo "保持 T1 的 Homing bridge 运行；ros2_control 将持续占用当前终端。"
-  echo "Drive 2 映射：direction=$LOWERARM_DIRECTION，home_offset_counts=$LOWERARM_HOME_OFFSET_COUNTS"
-  echo "Drive 3 CSP 映射：direction=$SPUR_GEAR_DIRECTION，counts_per_revolution=$SPUR_GEAR_COUNTS_PER_REVOLUTION，Method 37 会话零位=0 counts"
-  echo "进入 CSP 后，Home 的 lowerarm_joint 必须仍接近 +1.5708 rad；否则禁止发送目标。"
+  echo "Keep the Homing bridge running in T1; ros2_control will keep this terminal occupied."
+  echo "Drive 2 mapping: direction=$LOWERARM_DIRECTION, home_offset_counts=$LOWERARM_HOME_OFFSET_COUNTS"
+  echo "Drive 3 CSP mapping: direction=$SPUR_GEAR_DIRECTION, counts_per_revolution=$SPUR_GEAR_COUNTS_PER_REVOLUTION, Method 37 session zero=0 counts"
+  echo "After entering CSP, lowerarm_joint at Home must remain near +1.5708 rad; otherwise, target transmission is blocked."
   set +e
   ros2 launch rascl_description ros2_control.launch.py \
     interface:="$INTERFACE" \
@@ -515,7 +518,7 @@ group_csp_check() {
   require_active_controllers
   ros2 control list_hardware_interfaces
   timeout 10s ros2 topic echo --once /joint_states
-  echo "测量 /joint_states 频率 10 秒……"
+  echo "Measuring /joint_states frequency for 10 seconds..."
   timeout 10s ros2 topic hz /joint_states || [[ "$?" -eq 124 ]]
 }
 
@@ -530,26 +533,27 @@ group_real_plan() {
   ros_y="$(ros_double_literal "$TARGET_Y")"
   ros_z="$(ros_double_literal "$TARGET_Z")"
   ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
+  # A plan authorizes no motion until its finite CSV has been checked and recorded.
   rm -f /tmp/rascl_wp3_tsk1_last_trajectory.csv
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p apply_board_xy_compensation:=true \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=false; then
-    echo "规划命令失败；未解锁组 10。CSP/controller 正常时可重新选择组 14、9。" >&2
+    echo "The planning command failed; group 10 remains locked. When CSP/controller operation is normal, run groups 14 and 9 again." >&2
     return 0
   fi
   if [[ ! -s /tmp/rascl_wp3_tsk1_last_trajectory.csv ]]; then
-    echo "规划未生成轨迹 CSV；未解锁组 10。" >&2
+    echo "Planning did not generate a trajectory CSV; group 10 remains locked." >&2
     return 0
   fi
   if grep -Eiq '(^|,)(nan|[-+]?inf)(,|$)' /tmp/rascl_wp3_tsk1_last_trajectory.csv; then
-    echo "轨迹 CSV 包含 nan/inf；未解锁组 10。" >&2
+    echo "The trajectory CSV contains nan/inf; group 10 remains locked." >&2
     return 0
   fi
   head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
   tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
   save_plan_state
-  echo "规划已通过（固定板 XY 补偿已启用）；当前目标可由组 10 执行：[$TARGET_X, $TARGET_Y, $TARGET_Z] m"
+  echo "Planning passed (fixed-board XY compensation is enabled); group 10 may execute the current target: [$TARGET_X, $TARGET_Y, $TARGET_Z] m"
 }
 
 group_real_execute() {
@@ -562,23 +566,24 @@ group_real_execute() {
   ros_y="$(ros_double_literal "$TARGET_Y")"
   ros_z="$(ros_double_literal "$TARGET_Z")"
   ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
+  # Recheck live feedback immediately before publishing the authorized trajectory.
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
-    die "3 秒内没有 /joint_states，禁止执行"
-  echo "该命令会运动实机；Drive 3 也处于 CSP，Task 1 会保持 spur gear 当前角度。"
+    die "No /joint_states data arrived within 3 seconds; execution is blocked"
+  echo "This command moves the physical robot; Drive 3 is also in CSP, and Task 1 will hold the current spur-gear angle."
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p apply_board_xy_compensation:=true \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true; then
     clear_plan_state
-    echo "运动未到达规划终点；读取 bridge 自动保存的 CSP 停滞快照：" >&2
+    echo "Motion did not reach the planned endpoint; reading the CSP stall snapshot saved automatically by the bridge:" >&2
     read_csp_stall_snapshot || true
-    die "停止发送目标；立即执行组 12 打包日志，再重启完整 EtherCAT 会话"
+    die "Target transmission stopped; run group 12 immediately to package logs, then restart the complete EtherCAT session"
   fi
   clear_plan_state
   require_active_controllers
   timeout 3s ros2 topic echo --once /joint_states >/dev/null ||
-    die "运动后 /joint_states 丢失；按指南执行完整 EtherCAT 会话重启"
-  echo "运动命令结束；下一个目标必须重新执行组 14、9、10。"
+    die "/joint_states was lost after motion; restart the complete EtherCAT session as described in the guide"
+  echo "The motion command has ended; run groups 14, 9, and 10 again for the next target."
 }
 
 group_stall_snapshot() {
@@ -594,27 +599,27 @@ group_spur_gear_counts() {
       /rascl_faulhaber_bridge/read_spur_gear_counts \
       std_srvs/srv/Trigger "{}"
   )" ||
-    die "5 秒内没有读到 Drive 3 counts；确认 T1 组 4 仍在运行"
+    die "Drive 3 counts were not read within 5 seconds; confirm that group 4 is still running in T1"
   printf '%s\n' "$response"
   grep -q "success=True" <<<"$response" ||
-    die "Drive 3 counts 已读取，但本次零位参考尚未成功；禁止进入 CSP"
+    die "Drive 3 counts were read, but the current zero reference is incomplete; CSP entry is blocked"
 }
 
 group_input_limit_diagnostics() {
   load_ros
-  echo "读取 Drive 0-3 输入状态及 0x2310 映射（仅限 CSP 启动前）："
+  echo "Reading Drive 0-3 input states and 0x2310 mappings (before CSP startup only):"
   read_inputs
-  echo "读取 Drive 2 的 0x607B/0x607D 与 following-error 参数："
+  echo "Reading Drive 2 0x607B/0x607D and following-error parameters:"
   read_drive2_diagnostics
-  echo "注意：组 18 是 CSP 前只读快照；Homing 后 0x6065/0x6066 可能被驱动恢复。"
-  echo "组 7 交接时必须出现 CSP_FOLLOWING_ERROR_CONFIGURATION，并最终回读 $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts / $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms。"
+  echo "Note: group 18 is a read-only pre-CSP snapshot; the drive may restore 0x6065/0x6066 after Homing."
+  echo "The group 7 handoff must report CSP_FOLLOWING_ERROR_CONFIGURATION and finally read back $DRIVE2_FOLLOWING_ERROR_WINDOW_COUNTS counts / $DRIVE2_FOLLOWING_ERROR_TIMEOUT_MS ms."
 }
 
 group_process_check() {
   cd "$WORKSPACE"
-  echo "仍在运行的 RASCL 进程："
+  echo "RASCL processes still running:"
   ps -ef | grep -E "ros2_control_node|rascl_faulhaber_bridge|wp3_tsk1" | grep -v grep || true
-  echo "TCP 端口 15001："
+  echo "TCP port 15001:"
   ss -ltnp | grep 15001 || true
 }
 
@@ -623,14 +628,14 @@ group_pack_logs() {
   local output="$WORKSPACE/ros_logs_$(date +%Y%m%d_%H%M%S).tar.gz"
   [[ -d /root/.ros/log ]] || die "/root/.ros/log not found"
   tar -czf "$output" -C /root/.ros log
-  echo "日志压缩包已生成：$output"
-  echo "可直接从共享工作区拖出该 tar.gz 文件，无需手动复制日志文本。"
+  echo "Log archive created: $output"
+  echo "The tar.gz file can be dragged directly from the shared workspace; manual log-text copying is unnecessary."
 }
 
 group_tcp_pose() {
   load_ros
-  echo "当前模型 TCP：base_link -> tcp_link（读取实时 /joint_states）"
-  echo "Translation 的 x/y/z 单位为米；以下显示约 3 秒。"
+  echo "Current model TCP: base_link -> tcp_link (using live /joint_states)"
+  echo "Translation x/y/z are in metres; output is displayed for approximately 3 seconds."
   timeout 3s ros2 run tf2_ros tf2_echo base_link tcp_link || [[ "$?" -eq 124 ]]
 }
 
@@ -640,57 +645,59 @@ group_gripper_action() {
   require_active_controllers
   require_no_active_wp3_motion
   is_number "$SPUR_GEAR_DIRECTION" && [[ "$SPUR_GEAR_DIRECTION" != "0" ]] ||
-    die "RASCL_SPUR_GEAR_DIRECTION 必须是非零数字"
+    die "RASCL_SPUR_GEAR_DIRECTION must be a nonzero number"
   is_positive_number "$SPUR_GEAR_COUNTS_PER_REVOLUTION" ||
-    die "RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION 必须是正数"
+    die "RASCL_SPUR_GEAR_COUNTS_PER_REVOLUTION must be positive"
   is_positive_number "$SPUR_GEAR_SPEED_COUNTS_PER_S" ||
-    die "RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S 必须是正数"
+    die "RASCL_SPUR_GEAR_SPEED_COUNTS_PER_S must be positive"
   is_positive_number "$SPUR_GEAR_MIN_MOTION_DURATION_S" ||
-    die "RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S 必须是正数"
+    die "RASCL_SPUR_GEAR_MIN_MOTION_DURATION_S must be positive"
   is_positive_number "$SPUR_GEAR_SETTLE_DURATION_S" ||
-    die "RASCL_SPUR_GEAR_SETTLE_DURATION_S 必须是正数"
+    die "RASCL_SPUR_GEAR_SETTLE_DURATION_S must be positive"
   is_positive_number "$SPUR_GEAR_FEEDBACK_TIMEOUT_S" ||
-    die "RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S 必须是正数"
+    die "RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S must be positive"
   is_number "$SPUR_GEAR_MIN_POSITION_RAD" && is_number "$SPUR_GEAR_MAX_POSITION_RAD" ||
-    die "Drive 3 URDF 限位必须是数字"
+    die "Drive 3 URDF limits must be numeric"
 
   local snapshot shoulder upperarm lowerarm spur gripper_action action_label
   local delta_counts target_rad minimum_duration motion_duration duration_override="${2:-}"
   local motion_speed torque_service torque_response
   if [[ -n "$duration_override" ]]; then
     is_positive_number "$duration_override" ||
-      die "Drive 3 指定轨迹时间必须是大于 0 的普通十进制数字"
+      die "The specified Drive 3 trajectory duration must be an ordinary decimal number greater than 0"
   fi
   if ! snapshot="$(read_csp_joint_snapshot)"; then
-    die "$SPUR_GEAR_FEEDBACK_TIMEOUT_S 秒内未收到完整 /joint_states；禁止控制 Drive 3"
+    die "A complete /joint_states message was not received within $SPUR_GEAR_FEEDBACK_TIMEOUT_S seconds; Drive 3 control is blocked"
   fi
   read -r shoulder upperarm lowerarm spur <<<"$snapshot"
-  echo "Drive 3 当前 joint position = $spur rad；相对动作以当前位置为基准，绝对 counts 以本次 Method 37 零位为基准。"
+  echo "Current Drive 3 joint position = $spur rad; relative motion uses the current position, and absolute counts use the current Method 37 zero."
   if [[ $# -gt 0 ]]; then
     gripper_action="$1"
   else
-    read -r -p "Gripper action [close/open] (c/o) 或相对 counts（正/负整数）: " gripper_action
+    read -r -p "Gripper action [close/open] (c/o) or relative counts (positive/negative integer): " gripper_action
   fi
   gripper_action="${gripper_action,,}"
   case "$gripper_action" in
     close | c)
-      action_label="收紧夹持"
+      action_label="close grip"
       delta_counts="$GRIPPER_GRIP_DELTA_COUNTS"
       ;;
     open | o)
-      action_label="松开放下"
+      action_label="open release"
       delta_counts="$GRIPPER_RELEASE_DELTA_COUNTS"
       ;;
     *)
       is_integer "$gripper_action" ||
-        die "未执行 Drive 3 动作：请输入 close/c、open/o 或非零整数 counts"
-      [[ "$gripper_action" =~ [1-9] ]] || die "相对 counts 不能为 0"
-      action_label="自定义相对 counts"
+        die "Drive 3 motion was not executed: enter close/c, open/o, or a nonzero integer count value"
+      [[ "$gripper_action" =~ [1-9] ]] || die "Relative counts cannot be 0"
+      action_label="custom relative counts"
       delta_counts="$gripper_action"
       ;;
   esac
   motion_speed="$SPUR_GEAR_SPEED_COUNTS_PER_S"
   torque_service="/rascl_faulhaber_bridge/restore_spur_torque"
+  # Convert the relative count request with the configured Drive 3 sign, then
+  # reject it before publishing if the resulting joint angle exceeds the URDF limit.
   if ! read -r target_rad minimum_duration < <(python3 - "$spur" "$delta_counts" "$SPUR_GEAR_DIRECTION" "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_MIN_POSITION_RAD" "$SPUR_GEAR_MAX_POSITION_RAD" "$motion_speed" "$SPUR_GEAR_MIN_MOTION_DURATION_S" <<'PY'
 import math
 import sys
@@ -716,23 +723,23 @@ minimum_duration = max(abs(delta_counts) / speed_counts_per_s, minimum_duration)
 print(f"{target_rad:.17g} {minimum_duration:.17g}")
 PY
 ); then
-    die "抓夹 $action_label 指令被 Drive 3 URDF 软件限位拒绝"
+    die "The gripper '$action_label' command was rejected by the Drive 3 URDF software limit"
   fi
 
   motion_duration="${duration_override:-$minimum_duration}"
 
   torque_response="$(
     timeout 5s ros2 service call "$torque_service" std_srvs/srv/Trigger "{}"
-  )" || die "Drive 3 转矩保护服务无响应；未执行夹爪动作"
+  )" || die "The Drive 3 torque-protection service did not respond; gripper motion was not executed"
   printf '%s\n' "$torque_response"
   grep -q "success=True" <<<"$torque_response" ||
-    die "Drive 3 转矩限制没有成功写入并回读；未执行夹爪动作"
+    die "The Drive 3 torque limit was not written and read back successfully; gripper motion was not executed"
 
   clear_plan_state
-  echo "抓夹将执行“$action_label”：Drive 3 相对运动 $delta_counts counts。"
-  echo "使用 50 Hz minimum-jerk CSP 轨迹，自动时长 $motion_duration s。"
-  echo "本动作使用 $motion_speed counts/s 和正常 CSP 转矩，要求精确运动 $delta_counts counts，不启用接触提前终止。"
-  echo "前三轴保持当前 joint_state；此操作已清除旧组 9 规划授权。"
+  echo "Gripper action '$action_label': Drive 3 relative motion $delta_counts counts."
+  echo "Using a 50 Hz minimum-jerk CSP trajectory with automatic duration $motion_duration s."
+  echo "This action uses $motion_speed counts/s and normal CSP torque, requires an exact $delta_counts-count move, and does not enable contact-based early termination."
+  echo "The first three axes hold their current joint states; this operation cleared the previous group 9 planning authorization."
   if ! python3 - "$shoulder" "$upperarm" "$lowerarm" "$spur" "$target_rad" \
     "$delta_counts" "$motion_duration" "$SPUR_GEAR_DIRECTION" \
     "$SPUR_GEAR_COUNTS_PER_REVOLUTION" "$SPUR_GEAR_HOME_OFFSET_COUNTS" \
@@ -821,6 +828,7 @@ try:
             f"{feedback_timeout_s:g} seconds before CSP motion"
         )
 
+    # Use absolute monotonic deadlines so one late cycle does not accumulate drift.
     period_s = 0.02
     start = time.monotonic()
     next_tick = start
@@ -866,45 +874,45 @@ finally:
     rclpy.shutdown()
 PY
   then
-    die "Drive 3 CSP 轨迹中断；请立即执行组 12 并提交日志"
+    die "The Drive 3 CSP trajectory was interrupted; run group 12 immediately and submit the logs"
   fi
   require_active_controllers
-  echo "抓夹动作完成：$action_label，delta=$delta_counts counts。随后执行组 9 时，Task 1 会保持此 spur gear 角度。"
+  echo "Gripper action complete: $action_label, delta=$delta_counts counts. When group 9 runs next, Task 1 will hold this spur-gear angle."
 }
 
 group_set_target() {
   local x y z duration
-  read -r -p "目标 x [m]（当前 $TARGET_X）：" x
-  read -r -p "目标 y [m]（当前 $TARGET_Y）：" y
-  read -r -p "目标 z [m]（当前 $TARGET_Z）：" z
-  read -r -p "运动时间 [s]（当前 $TRAJECTORY_DURATION）：" duration
+  read -r -p "Target x [m] (current $TARGET_X): " x
+  read -r -p "Target y [m] (current $TARGET_Y): " y
+  read -r -p "Target z [m] (current $TARGET_Z): " z
+  read -r -p "Motion duration [s] (current $TRAJECTORY_DURATION): " duration
   x="${x:-$TARGET_X}"
   y="${y:-$TARGET_Y}"
   z="${z:-$TARGET_Z}"
   duration="${duration:-$TRAJECTORY_DURATION}"
-  is_number "$x" || die "x 不是合法数字：$x"
-  is_number "$y" || die "y 不是合法数字：$y"
-  is_number "$z" || die "z 不是合法数字：$z"
-  is_positive_number "$duration" || die "运动时间必须是大于 0 的普通十进制数字"
+  is_number "$x" || die "x is not a valid number: $x"
+  is_number "$y" || die "y is not a valid number: $y"
+  is_number "$z" || die "z is not a valid number: $z"
+  is_positive_number "$duration" || die "Motion duration must be an ordinary decimal number greater than 0"
   TARGET_X="$x"
   TARGET_Y="$y"
   TARGET_Z="$z"
   TRAJECTORY_DURATION="$duration"
   save_target_state
   clear_plan_state
-  echo "目标已设置为 [$TARGET_X, $TARGET_Y, $TARGET_Z] m，时间 $TRAJECTORY_DURATION s。"
-  echo "下一步必须执行组 9，只规划成功后才能执行组 10。"
+  echo "Target set to [$TARGET_X, $TARGET_Y, $TARGET_Z] m with duration $TRAJECTORY_DURATION s."
+  echo "Run group 9 next; group 10 is available only after planning succeeds."
 }
 
 group_target_plan_execute() {
-  echo "组 23：输入目标后只要规划成功就立即执行。固定板 XY 补偿保持启用。"
+  echo "Group 23: enter a target, then execute immediately after successful planning. Fixed-board XY compensation remains enabled."
   group_set_target
   group_real_plan
   if [[ ! -s "$PLAN_STATE_FILE" ]]; then
-    echo "规划未通过；本次不会执行实机运动。修正目标后可重试组 23。" >&2
+    echo "Planning failed; no physical motion will be executed. Correct the target and retry group 23." >&2
     return 0
   fi
-  echo "规划已通过；立即执行同一目标。"
+  echo "Planning passed; executing the same target now."
   group_real_execute
 }
 
@@ -915,94 +923,96 @@ task1_move_to() {
   local z="$4"
   local duration="$5"
 
+  # Every waypoint is independently planned and verified before the stage continues.
   TARGET_X="$x"
   TARGET_Y="$y"
   TARGET_Z="$z"
   TRAJECTORY_DURATION="$duration"
   save_target_state
   clear_plan_state
-  echo "Task 1 $label：移动至 [$TARGET_X, $TARGET_Y, $TARGET_Z] m，$TRAJECTORY_DURATION s。"
+  echo "Task 1 $label: move to [$TARGET_X, $TARGET_Y, $TARGET_Z] m in $TRAJECTORY_DURATION s."
   group_real_plan
   [[ -s "$PLAN_STATE_FILE" ]] ||
-    die "Task 1 $label 规划失败；本阶段已停止，未继续后续动作"
+    die "Task 1 $label planning failed; this stage stopped and no later action was executed"
   group_real_execute
 }
 
 task1_gripper_preset() {
   local action="$1"
   local duration="$2"
-  echo "Task 1：夹爪 $action，$duration s。"
+  echo "Task 1: gripper $action, $duration s."
   group_gripper_action "$action" "$duration"
 }
 
 group_task1_stage_1() {
-  echo "Task 1 阶段 1：移动 1。坐标动作均为 5 s，标注下降动作为 10 s。"
-  task1_move_to "阶段1/1" 0.16 0.16 0.10 5
-  task1_move_to "阶段1/2" 0.16 0.16 0.05 5
+  echo "Task 1 stage 1: move 1. Cartesian actions take 5 s; the marked descent takes 10 s."
+  task1_move_to "stage1/1" 0.16 0.16 0.10 5
+  task1_move_to "stage1/2" 0.16 0.16 0.05 5
   task1_gripper_preset close 5
-  task1_move_to "阶段1/3" 0.16 0.16 0.15 5
-  task1_move_to "阶段1/4" 0.0929 -0.1327 0.15 5
-  task1_move_to "阶段1/5" 0.0929 -0.1327 0.05 10
-  task1_move_to "阶段1/6" 0.07 -0.10 0.05 5
+  task1_move_to "stage1/3" 0.16 0.16 0.15 5
+  task1_move_to "stage1/4" 0.0929 -0.1327 0.15 5
+  task1_move_to "stage1/5" 0.0929 -0.1327 0.05 10
+  task1_move_to "stage1/6" 0.07 -0.10 0.05 5
   task1_gripper_preset open 5
-  task1_move_to "阶段1/7" 0.07 -0.10 0.15 5
-  echo "Task 1 阶段 1 完成。"
+  task1_move_to "stage1/7" 0.07 -0.10 0.15 5
+  echo "Task 1 stage 1 complete."
 }
 
 group_task1_stage_2() {
-  echo "Task 1 阶段 2：移动 2 到临时方格。坐标动作均为 5 s，标注下降动作为 10 s。"
-  task1_move_to "阶段2/1" 0.17 0.03 0.15 5
-  task1_move_to "阶段2/2" 0.17 0.03 0.085 5
+  echo "Task 1 stage 2: move 2 to the temporary square. Cartesian actions take 5 s; the marked descent takes 10 s."
+  task1_move_to "stage2/1" 0.17 0.03 0.15 5
+  task1_move_to "stage2/2" 0.17 0.03 0.085 5
   task1_gripper_preset close 5
-  task1_move_to "阶段2/3" 0.17 0.03 0.15 5
-  task1_move_to "阶段2/4" 0.18 -0.04 0.15 5
-  task1_move_to "阶段2/5" 0.18 -0.04 0.05 10
+  task1_move_to "stage2/3" 0.17 0.03 0.15 5
+  task1_move_to "stage2/4" 0.18 -0.04 0.15 5
+  task1_move_to "stage2/5" 0.18 -0.04 0.05 10
   task1_gripper_preset open 5
-  task1_move_to "阶段2/6" 0.18 -0.04 0.15 5
-  echo "Task 1 阶段 2 完成。"
+  task1_move_to "stage2/6" 0.18 -0.04 0.15 5
+  echo "Task 1 stage 2 complete."
 }
 
 group_task1_stage_3() {
-  echo "Task 1 阶段 3：方格 3 到方格 1。坐标动作均为 5 s，标注下降动作为 10 s。"
-  task1_move_to "阶段3/1" 0.17 0.03 0.15 5
-  task1_move_to "阶段3/2" 0.17 0.03 0.045 5
+  echo "Task 1 stage 3: square 3 to square 1. Cartesian actions take 5 s; the marked descent takes 10 s."
+  task1_move_to "stage3/1" 0.17 0.03 0.15 5
+  task1_move_to "stage3/2" 0.17 0.03 0.045 5
   task1_gripper_preset close 5
-  task1_move_to "阶段3/3" 0.17 0.03 0.15 5
-  task1_move_to "阶段3/4" 0.0642 -0.0918 0.15 5
-  task1_move_to "阶段3/5" 0.0642 -0.0918 0.085 10
+  task1_move_to "stage3/3" 0.17 0.03 0.15 5
+  task1_move_to "stage3/4" 0.0642 -0.0918 0.15 5
+  task1_move_to "stage3/5" 0.0642 -0.0918 0.085 10
   task1_gripper_preset open 5
-  task1_move_to "阶段3/6" 0.0642 -0.0918 0.15 5
-  echo "Task 1 阶段 3 完成。"
+  task1_move_to "stage3/6" 0.0642 -0.0918 0.15 5
+  echo "Task 1 stage 3 complete."
 }
 
 group_task1_stage_4() {
-  echo "Task 1 阶段 4：方格 2 到方格 3。坐标动作均为 5 s，标注下降动作为 10 s。"
-  task1_move_to "阶段4/1" 0.18 -0.04 0.15 5
-  task1_move_to "阶段4/2" 0.18 -0.04 0.045 5
+  echo "Task 1 stage 4: square 2 to square 3. Cartesian actions take 5 s; the marked descent takes 10 s."
+  task1_move_to "stage4/1" 0.18 -0.04 0.15 5
+  task1_move_to "stage4/2" 0.18 -0.04 0.045 5
   task1_gripper_preset close 5
-  task1_move_to "阶段4/3" 0.18 -0.04 0.15 5
-  task1_move_to "阶段4/4" 0.0642 -0.0918 0.15 5
-  task1_move_to "阶段4/5" 0.0642 -0.0918 0.125 10
+  task1_move_to "stage4/3" 0.18 -0.04 0.15 5
+  task1_move_to "stage4/4" 0.0642 -0.0918 0.15 5
+  task1_move_to "stage4/5" 0.0642 -0.0918 0.125 10
   task1_gripper_preset open 5
-  echo "Task 1 阶段 4 完成。"
+  echo "Task 1 stage 4 complete."
 }
 
 group_task1_all_stages() {
-  echo "Task 1 完整序列：阶段 1 → 2 → 3 → 4。动作之间不插入等待。"
+  echo "Task 1 full sequence: stages 1 -> 2 -> 3 -> 4, with no delay between actions."
   group_task1_stage_1
   group_task1_stage_2
   group_task1_stage_3
   group_task1_stage_4
-  echo "Task 1 完整序列完成。"
+  echo "Task 1 full sequence complete."
 }
 
 group_task2_pick_and_place() {
   local x y r route polar_result
-  read -r -p "Task 2 起点 x [m]: " x
-  read -r -p "Task 2 起点 y [m]: " y
-  is_number "$x" || die "Task 2 的 x 不是合法数字：$x"
-  is_number "$y" || die "Task 2 的 y 不是合法数字：$y"
+  read -r -p "Task 2 start x [m]: " x
+  read -r -p "Task 2 start y [m]: " y
+  is_number "$x" || die "Task 2 x is not a valid number: $x"
+  is_number "$y" || die "Task 2 y is not a valid number: $y"
 
+  # Task 2 selects only the radial route; each route reuses the same verified helpers.
   polar_result="$(python3 - "$x" "$y" <<'PY'
 import math
 import sys
@@ -1017,10 +1027,10 @@ else:
     route = "outer"
 print(f"{r:.9f} {route}")
 PY
-)" || die "无法计算 Task 2 起点的极坐标半径"
+)" || die "Could not calculate the polar radius of the Task 2 start point"
   read -r r route <<<"$polar_result"
 
-  echo "Task 2：起点 [$x, $y] 的 r=$r m，路径=$route。所有动作 5 s，之间不插入等待。"
+  echo "Task 2: start point [$x, $y], r=$r m, route=$route. All actions take 5 s, with no inserted delay."
   task1_move_to "Task2/1" "$x" "$y" 0.10 5
   task1_move_to "Task2/2" "$x" "$y" 0.045 5
   task1_gripper_preset close 5
@@ -1041,56 +1051,59 @@ PY
       task1_move_to "Task2/outer/2" 0.2107 -0.0391 0.045 5
       task1_move_to "Task2/outer/3" 0.1812 -0.0336 0.045 5
       ;;
-    *) die "Task 2 未识别的路径：$route" ;;
+    *) die "Unrecognized Task 2 route: $route" ;;
   esac
 
   task1_gripper_preset open 5
   task1_move_to "Task2/final" 0.1812 -0.0336 0.10 5
-  echo "Task 2 完成。"
+  echo "Task 2 complete."
 }
 
 print_menu() {
   printf '%s\n' \
     "" \
-    "RASCL 命令组" \
-    "工作区   : $WORKSPACE" \
-    "网卡     : $INTERFACE" \
-    "ROS 域   : $ROS_DOMAIN_ID" \
-    "目标 TCP : [$TARGET_X, $TARGET_Y, $TARGET_Z] m / $TRAJECTORY_DURATION s" \
+    "RASCL command groups" \
+    "Workspace : $WORKSPACE" \
+    "Interface : $INTERFACE" \
+    "ROS domain: $ROS_DOMAIN_ID" \
+    "Target TCP: [$TARGET_X, $TARGET_Y, $TARGET_Z] m / $TRAJECTORY_DURATION s" \
     "" \
-    "  1  编译 + 功能测试                                  [T1]" \
-    "  2  启动 fake ros2_control（前台持续运行）            [T1]" \
-    "  3  Fake 检查 + 规划 + 执行                           [T2]" \
-    "  4  启动实机 Homing bridge                             [T1]" \
-    "  5  逐轴 Homing Drive 0、1、2                          [T2]" \
-    "  6  home_all（执行 Drive 0-2）                         [T2]" \
-    "  7  启动实机 CSP ros2_control（Drive 3 也参与）        [T2]" \
-    "  8  Controller/joint state 保持检查 10 秒             [T3]" \
-    "  9  只规划实机 minimum-jerk 轨迹（固定板 XY 补偿）     [T3]" \
-    " 10  执行实机 minimum-jerk 轨迹（固定板 XY 补偿）       [T3，会运动]" \
-    " 11  检查残留进程和 TCP 端口                           [T3]" \
-    " 12  打包完整 ROS 日志到共享工作区                     [任意]" \
-    " 13  查看当前模型 TCP 坐标                              [T3]" \
-    " 14  设置下一次实机目标 TCP 和运动时间                  [T3]" \
-    " 15  抓夹 close(-150000)/open(+150000) 或自定义 counts  [T3，会运动]" \
-    " 16  查看最近一次 CSP 停滞自动诊断快照                  [T3]" \
-    " 17  查看 Drive 3 当前绝对 counts（Method 37 零位）     [T2/T3，只读]" \
-    " 18  查看输入映射和 Drive 2 保护参数                    [T2，CSP 前只读]" \
-    " 19  Homing 后微调 Drive 0（相对 counts）               [T2，会运动]" \
-    " 20  Homing 后微调 Drive 1（相对 counts）               [T2，会运动]" \
-    " 21  Homing 后微调 Drive 2（相对 counts）               [T2，会运动]" \
-    " 22  将 Drive 0-2 当前姿态设为本次 Home                 [T2，不运动]" \
-    " 23  输入目标 → 规划 → 立即执行（固定板 XY 补偿）       [T3，会运动]" \
-    " 24  Task 1 阶段 1：移动 1                               [T3，会运动]" \
-    " 25  Task 1 阶段 2：移动 2 → 临时方格                    [T3，会运动]" \
-    " 26  Task 1 阶段 3：方格 3 → 方格 1                      [T3，会运动]" \
-    " 27  Task 1 阶段 4：方格 2 → 方格 3                      [T3，会运动]" \
-    " 28  Task 1 完整序列：阶段 1 → 2 → 3 → 4                 [T3，会运动]" \
-    " 29  Task 2：输入起点 XY 后完成取放                       [T3，会运动]" \
-    "  0  退出" \
+    "  1  Build + functional tests                            [T1]" \
+    "  2  Start fake ros2_control (foreground)                [T1]" \
+    "  3  Fake checks + plan + execute                        [T2]" \
+    "  4  Start physical Homing bridge                        [T1]" \
+    "  5  Home Drives 0, 1, and 2 individually                [T2]" \
+    "  6  home_all (Drives 0-2)                               [T2]" \
+    "  7  Start physical CSP ros2_control (includes Drive 3)  [T2]" \
+    "  8  Controller/joint-state hold check for 10 seconds    [T3]" \
+    "  9  Plan physical minimum-jerk trajectory only          [T3]" \
+    "     (fixed-board XY compensation)" \
+    " 10  Execute physical minimum-jerk trajectory            [T3, moves]" \
+    "     (fixed-board XY compensation)" \
+    " 11  Check residual processes and TCP port                [T3]" \
+    " 12  Package complete ROS logs in the shared workspace    [any]" \
+    " 13  Show current model TCP coordinates                   [T3]" \
+    " 14  Set the next physical TCP target and motion duration [T3]" \
+    " 15  Gripper close(-150000)/open(+150000) or custom counts [T3, moves]" \
+    " 16  Show the latest automatic CSP stall snapshot         [T3]" \
+    " 17  Show current absolute Drive 3 counts (Method 37 zero) [T2/T3, read only]" \
+    " 18  Show input mappings and Drive 2 protection settings  [T2, pre-CSP read only]" \
+    " 19  Trim Drive 0 after Homing (relative counts)          [T2, moves]" \
+    " 20  Trim Drive 1 after Homing (relative counts)          [T2, moves]" \
+    " 21  Trim Drive 2 after Homing (relative counts)          [T2, moves]" \
+    " 22  Set current Drive 0-2 pose as session Home           [T2, no motion]" \
+    " 23  Enter target -> plan -> execute immediately          [T3, moves]" \
+    "     (fixed-board XY compensation)" \
+    " 24  Task 1 stage 1: move 1                               [T3, moves]" \
+    " 25  Task 1 stage 2: move 2 -> temporary square           [T3, moves]" \
+    " 26  Task 1 stage 3: square 3 -> square 1                 [T3, moves]" \
+    " 27  Task 1 stage 4: square 2 -> square 3                 [T3, moves]" \
+    " 28  Task 1 full sequence: stages 1 -> 2 -> 3 -> 4        [T3, moves]" \
+    " 29  Task 2: enter start XY and complete pick-and-place   [T3, moves]" \
+    "  0  Exit" \
     "" \
-    "组 2、4、7 会持续占用对应终端，直到按 Ctrl-C。" \
-    "CSP 顺序：T1=4；T2=6→（标定时 19/20/21→22）→7；T3=8→13→23（或 14→9→10）。Drive 3：T3=15 运动，17 读 counts。"
+    "Groups 2, 4, and 7 keep their terminal occupied until Ctrl-C is pressed." \
+    "CSP order: T1=4; T2=6->(19/20/21->22 during calibration)->7; T3=8->13->23 (or 14->9->10). Drive 3: T3=15 moves, 17 reads counts."
 }
 
 run_group() {
@@ -1125,7 +1138,7 @@ run_group() {
     28) group_task1_all_stages ;;
     29) group_task2_pick_and_place ;;
     0) exit 0 ;;
-    *) die "未知组号: $1" ;;
+    *) die "Unknown group number: $1" ;;
   esac
 }
 
@@ -1136,9 +1149,9 @@ else
   load_target_state
   while true; do
     print_menu
-    read -r -p "请输入组号: " selection
+    read -r -p "Enter group number: " selection
     selection="${selection//$'\r'/}"
     run_group "$selection"
-    echo "命令组 $selection 已返回菜单；是否成功以上方输出为准。"
+    echo "Command group $selection returned to the menu; use the output above to determine whether it succeeded."
   done
 fi

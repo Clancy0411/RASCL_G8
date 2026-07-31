@@ -131,8 +131,8 @@ def test_task2_group_29_selects_the_required_route_from_polar_radius():
     group_29 = script[start:end]
 
     assert "29) group_task2_pick_and_place ;;" in script
-    assert 'read -r -p "Task 2 起点 x [m]: " x' in group_29
-    assert 'read -r -p "Task 2 起点 y [m]: " y' in group_29
+    assert 'read -r -p "Task 2 start x [m]: " x' in group_29
+    assert 'read -r -p "Task 2 start y [m]: " y' in group_29
     assert "r = math.hypot(x, y)" in group_29
     assert 'if r < 0.17:\n    route = "inner"' in group_29
     assert 'elif r <= 0.20:\n    route = "middle"' in group_29

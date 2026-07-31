@@ -1,32 +1,32 @@
-## 2026-07-14 自动 Homing 与 URDF 零位标定
+## 2026-07-14 Automatic Homing and URDF Zero Calibration
 
-已实装 ROS 硬件层名义 `home_offset_counts=[0,-802816,-802816,0]`。自动 Home 的 raw 开关位置保持约 `[0,0,0,0] counts`，但 ROS/URDF 应显示约 `[0,+pi/2,+pi/2,0] rad`。原 `3588dc98` 的 URDF `q=0` 与 TCP `[0.29756,-0.00177,0.043001] m` 保持不变。名义值基于两个关节恰好 90°，仍须在原物理 URDF 零姿态读取 `0x6064` 做最终实机精标。
+The nominal ROS hardware-layer setting `home_offset_counts=[0,-802816,-802816,0]` was implemented. The raw switch positions at automatic Home remain approximately `[0,0,0,0] counts`, while ROS/URDF should report approximately `[0,+pi/2,+pi/2,0] rad`. The `3588dc98` URDF pose at `q=0` and TCP `[0.29756,-0.00177,0.043001] m` remain unchanged. These nominal values assume exactly 90 degrees at both joints; final hardware calibration still requires reading `0x6064` at the original physical URDF-zero pose.
 
-原 7.7 “初始位置调整未实装”事项至此由软件 count offset 完成；CSP/PDO 与最终 offset 数值仍需按新 Debug Guide 逐步实机验证。
+The former section 7.7 item, "initial-position adjustment not implemented," is now handled by the software count offset. CSP/PDO operation and the final offset values still require step-by-step hardware verification using the new Debug Guide.
 
-补充修正 Homing→CSP 流程：不能在 Home 后停止 bridge，否则清理过程会 Disable Operation/Voltage。现在 `homing.launch.py` 保持同一 EtherCAT master，`home_all` 成功后由 `ros2_control.launch.py start_bridge:=false` 延迟配置 PDO 并进入 CSP；交接只发送 Enable Operation，初始 target 使用当前 actual counts。
+The Homing-to-CSP workflow was also corrected: the bridge must not be stopped after Home, because cleanup would issue Disable Operation/Voltage. `homing.launch.py` now retains the same EtherCAT master; after `home_all` succeeds, `ros2_control.launch.py start_bridge:=false` performs delayed PDO configuration and enters CSP. The handoff sends only Enable Operation, and the initial target uses the current actual counts.
 
-## 2026-07-22 TCP 单姿态初步修正
+## 2026-07-22 Initial Single-Pose TCP Correction
 
-根据自动 Home 位置的实测值，将旧模型 TCP 在 `base_link` 下修正 `[-0.023,0,+0.043] m`。新增固定 `tcp_link`，其 `lowerarm` 局部坐标为 `[0.11616,0.043,0.0179] m`；TF、FK、IK 和调试组 13 均改用该 frame，`spur_gear_joint` 的实体位置及夹爪运动未改。名义自动 Home TCP 为 `[0.18456,-0.00177,0.336001] m`。该结果仅由一个姿态得到，仍需在更多姿态外部测量验证。
+Based on measurements at automatic Home, the old model TCP was corrected by `[-0.023,0,+0.043] m` in `base_link`. A fixed `tcp_link` was added at local `lowerarm` coordinates `[0.11616,0.043,0.0179] m`; TF, FK, IK, and debug group 13 now use this frame. The physical position of `spur_gear_joint` and gripper motion were unchanged. The nominal automatic-Home TCP is `[0.18456,-0.00177,0.336001] m`. This result came from only one pose and still requires external measurements at additional poses.
 
-## 2026-07-22 TCP 当前测试点二次修正（后续作为齿轮表面参考）
+## 2026-07-22 Second TCP Correction at the Current Test Point (Later Used as the Gear-Surface Reference)
 
-程序目标 `XYZ=[0.16,-0.16,0.05] m` 时，用户按实体 `Y/X/Z` 顺序测得 `[0.14,-0.16,0.05] m`。按项目实体轴约定，将对应 `base_link` 数值误差 `[-0.020,0,0] m` 转换到 `lowerarm`，得到当时的固定 TCP `[0.11478978,0.02881369,0.03193108] m`。当时的名义零姿态 TCP 为 `[0.27318978,-0.01580108,0.07181469] m`，自动 Home TCP 为 `[0.18318978,-0.01580108,0.32181469] m`。该修正后续作为齿轮表面参考点保留。
+At program target `XYZ=[0.16,-0.16,0.05] m`, the measured physical values in `Y/X/Z` order were `[0.14,-0.16,0.05] m`. Following the project's physical-axis convention, the corresponding `base_link` numerical error `[-0.020,0,0] m` was transformed into `lowerarm`, producing the fixed TCP `[0.11478978,0.02881369,0.03193108] m` used at that time. The nominal zero-pose TCP was `[0.27318978,-0.01580108,0.07181469] m`, and the automatic-Home TCP was `[0.18318978,-0.01580108,0.32181469] m`. This correction was retained later as the gear-surface reference point.
 
-## 2026-07-22 TCP 改为夹爪抓取中心
+## 2026-07-22 TCP Changed to the Gripper Center
 
-按用户确认，原移动坐标对应齿轮表面；抓取中心位于该表面沿夹爪伸出方向约 `20 mm` 处，相当于半个夹爪长度。保留既有表面校准，在 `lowerarm +X` 增加 `0.020 m`，得到当前固定 TCP `[0.13478978,0.02881369,0.03193108] m`。新的名义零姿态 TCP 为 `[0.29318978,-0.01580108,0.07181469] m`，自动 Home TCP 为 `[0.20318978,-0.01580108,0.32181469] m`。同一旧关节姿态下，抓取中心相对齿轮表面沿工具方向移动 `20 mm`；不得把该偏移固定加到 `base_link` 的某一水平坐标。
+The original motion coordinates were confirmed to represent the gear surface. The grasp center lies approximately `20 mm` from that surface along the gripper extension direction, or half the gripper length. Retaining the existing surface calibration and adding `0.020 m` along `lowerarm +X` gives the current fixed TCP `[0.13478978,0.02881369,0.03193108] m`. The new nominal zero-pose TCP is `[0.29318978,-0.01580108,0.07181469] m`, and the automatic-Home TCP is `[0.20318978,-0.01580108,0.32181469] m`. At the same old joint pose, the grasp center is displaced `20 mm` from the gear surface along the tool direction; this offset must not be added to a fixed horizontal `base_link` coordinate.
 
-新的调试说明在README_RASCL_Group8.md
-
-
+The new debugging instructions are in `README_RASCL_Group8.md`.
 
 
 
-## 6.2测试成功生成了轨迹文件。
 
-### 输出结果为：
+
+## 6.2 The Test Successfully Generated a Trajectory File
+
+### Output
 head /tmp/rascl_wp3_tsk1_last_trajectory.csv
 time_from_start,shoulder_joint,upperarm_joint,lowerarm_joint,spur_gear_joint
 0.000000,0.000000000,0.000000000,0.000000000,0.000000000
@@ -40,40 +40,40 @@ time_from_start,shoulder_joint,upperarm_joint,lowerarm_joint,spur_gear_joint
 0.800000,-0.000407019,-0.014291428,-0.047718830,0.000000000
 
 
-从输出可以看到，轨迹从 0 秒开始，初始关节角度都是 0。
-之后 shoulder_joint、upperarm_joint 和 lowerarm_joint 的数值逐渐变化，说明程序确实生成了一条连续平滑的轨迹。
+The output shows that the trajectory starts at 0 seconds with all initial joint angles at 0.
+The values of shoulder_joint, upperarm_joint, and lowerarm_joint then change gradually, confirming that the program generated a continuous, smooth trajectory.
 
-因为 execute:=false，所以这一步没有让真实机器人运动，只验证了规划、IK 和 CSV 文件生成是否正常。
-x轴是机械臂延申方向 正方向沿机械臂朝外
-y轴是水平方向 正方向是左边
-z轴是垂直方向 正方向朝上
+Because `execute:=false`, this step did not move the physical robot; it only verified planning, IK, and CSV generation.
+The x-axis follows the arm extension direction, positive outward from the robot.
+The y-axis is horizontal, positive to the left.
+The z-axis is vertical, positive upward.
 
 
-## 6.2在 RViz 中应该看到机械臂平滑运动。
+## 6.2 RViz Should Show Smooth Arm Motion
 
-今天我继续在真实 RASCL 机器人上测试 wp3_tsk1 minimum-jerk 轨迹程序。 
+Testing of the wp3_tsk1 minimum-jerk trajectory program continued on the physical RASCL robot.
 
-目前已经确认，真实硬件启动后两个 controller 都可以正常 active，/joint_states 也可以读取。通过 /rascl_position_controller/commands 发送小的 joint command 时，机器人可以执行小幅运动，说明 ROS 2 command topic 到 controller、hardware interface、EtherCAT/Faulhaber bridge、真实电机这一整条链路是通的。 
+It was confirmed that both controllers become active after physical-hardware startup and that `/joint_states` can be read. Small joint commands sent through `/rascl_position_controller/commands` produce small robot motions, confirming the complete chain from the ROS 2 command topic through the controller, hardware interface, EtherCAT/Faulhaber bridge, and physical motors.
 
-之后我测试了 WP3 程序本身。程序可以正常读取当前 joint state，计算当前 TCP 位置，完成 IK，生成 minimum-jerk trajectory，并保存 CSV 文件。对于很小的目标点，例如 IK 结果大约为： 
+The WP3 program itself was then tested. It can read the current joint state, calculate the current TCP position, solve IK, generate a minimum-jerk trajectory, and save the CSV file. For a very small target, the IK result was approximately:
 
 q_arm = [-0.00022, -0.00144, -0.01722] 
 
-这种最大关节变化只有约 1°，实机测试比较稳定。 
+The largest joint change is only about 1 degree, and the physical test was relatively stable.
 
-但是当我测试稍大的目标点，例如： 
+For a somewhat larger target, for example:
 
 target = (0.29, 0.00, 0.05) 
 
-IK 结果变成： 
+The IK result became:
 
 q_arm = [-0.00608, -0.06696, -0.19718] 
 
-其中 lowerarm_joint 需要运动约 -0.197 rad，大约是 -11.3°。执行这种较大的轨迹时，真实硬件的 ros2_control interface 会报错：  
+Here, lowerarm_joint must move approximately -0.197 rad, or about -11.3 degrees. Executing this larger trajectory caused the physical ros2_control interface to report an error:
 
-之后 /joint_states 也收不到，需要停止 launch、清理进程并重新启动硬件。 
+Afterward, `/joint_states` was also unavailable, requiring the launch process to be stopped, processes cleaned up, and the hardware restarted.
 
-因此，后续应该先在 fake hardware / RViz 中继续验证较大的目标点。如果 fake hardware 中可以正常运行，则说明 WP3 程序本身没有明显问题；真实机器人部分则应该继续使用更小的位移、更长的 duration 和更低的 rate_hz 逐步测试。 
+Therefore, larger targets should first be verified with fake hardware/RViz. If they run correctly there, the WP3 program itself has no obvious problem. Physical-robot testing should then proceed incrementally with smaller displacements, longer durations, and a lower `rate_hz`.
 
 
 
@@ -100,13 +100,13 @@ automatical homing with green light sensor
 
 ## Error ：pysoem WkcError during SDO write
 
-### 错误信息
+### Error Message
 
 ```text
 pysoem.pysoem.WkcError
 ```
 
-完整上下文：
+Full context:
 
 ```text
 [rascl_faulhaber_bridge]: Connecting EtherCAT on interface: enx3c18a0264863
@@ -127,45 +127,45 @@ Traceback (most recent call last):
 pysoem.pysoem.WkcError
 ```
 
-### 原因判断
+### Cause Assessment
 
-这不是找不到 slave。因为已经有：
+This was not a missing-slave problem, because the log already contained:
 
 ```text
 Found 4 slave(s)
 ```
 
-真正问题是：程序在配置 CSP PDO mapping 时，对 slave 执行 SDO write 失败。
+The actual problem was an SDO write failure on a slave while configuring the CSP PDO mapping.
 
-失败位置是：
+Failure location:
 
 ```python
 self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
 ```
 
-这个操作的含义是：尝试清空 RxPDO mapping 的 subindex 0，为后续重新映射做准备。
+This operation attempts to clear subindex 0 of the RxPDO mapping in preparation for remapping.
 
-可能原因：
+Possible causes:
 
-1. drive 当前状态不允许改 PDO mapping。
-2. drive 需要处于 PRE-OP 才能 remap PDO。
-3. 某些 Faulhaber drive 不支持当前 object dictionary 的写法。
-4. slave 1 状态异常，因为 log 显示 slave 0 似乎通过，slave 1 崩。
-5. CSP PDO mapping 不应该在 profile 回归测试中执行。
+1. The current drive state does not permit PDO mapping changes.
+2. The drive must be in PRE-OP before PDO remapping.
+3. Some Faulhaber drives may not support the current object-dictionary access pattern.
+4. Slave 1 may be in an abnormal state because the log suggests slave 0 passed before slave 1 failed.
+5. CSP PDO mapping should not run during the Profile regression test.
 
 ---
 
-## 8. 和 Error 3 相关的代码总结
+## 8. Code Summary Related to Error 3
 
-### 8.1 connect() 中的关键代码
+### 8.1 Key Code in connect()
 
-文件：
+File:
 
 ```text
 src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
 ```
 
-今天看到的代码：
+Code inspected at the time:
 
 ```python
 def connect(self) -> None:
@@ -191,25 +191,25 @@ def connect(self) -> None:
     print("[EtherCAT] PDO mapping configured")
 ```
 
-### 8.2 问题点
+### 8.2 Problem
 
-这里的关键判断是：
+The key condition is:
 
 ```python
 if self.configure_pdo_mapping:
 ```
 
-只要 `self.configure_pdo_mapping` 是 `True`，就会执行：
+Whenever `self.configure_pdo_mapping` is `True`, the following runs:
 
 ```python
 self.configure_csp_pdo_mapping(...)
 ```
 
-而今天的错误正是发生在 `configure_csp_pdo_mapping()` 里面。
+The observed error occurred inside `configure_csp_pdo_mapping()`.
 
-### 8.3 configure_csp_pdo_mapping() 中失败位置
+### 8.3 Failure Location in configure_csp_pdo_mapping()
 
-今天看到的代码：
+Code inspected at the time:
 
 ```python
 def configure_csp_pdo_mapping(self, slave, slave_index: int) -> None:
@@ -242,7 +242,7 @@ def configure_csp_pdo_mapping(self, slave, slave_index: int) -> None:
     self._sdo_write_int_raw(slave, PDO_TX_ASSIGNMENT, 0, 1, size=1)
 ```
 
-今天实际失败在第一行 SDO write：
+The actual failure occurred at the first SDO write:
 
 ```python
 self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
@@ -250,58 +250,58 @@ self._sdo_write_int_raw(slave, PDO_RX_MAPPING, 0, 0, size=1)
 
 ---
 
-## 9. 当前最重要结论
+## 9. Most Important Conclusions at the Time
 
-### 结论 1
+### Conclusion 1
 
-fake hardware 和 WP3 Task 1 上层 minimum-jerk node 是成功的。
+The fake hardware and the WP3 Task 1 upper-layer minimum-jerk node worked successfully.
 
-### 结论 2
+### Conclusion 2
 
-真实 EtherCAT 网卡应该使用：
+The physical EtherCAT interface should be:
 
 ```text
 enx3c18a0264863
 ```
 
-因为该网卡能找到：
+because that interface found:
 
 ```text
 Found 4 slave(s)
 ```
 
-### 结论 3
+### Conclusion 3
 
-真实硬件 Profile Position 回归测试失败，不是因为找不到 slave，而是因为 bridge 在 profile 模式启动时仍然尝试配置 CSP PDO mapping。
+The physical-hardware Profile Position regression test failed not because slaves were missing, but because the bridge still attempted to configure CSP PDO mapping when starting in profile mode.
 
-### 结论 4
+### Conclusion 4
 
-`configure_pdo_mapping:=false` 当前没有生效。因为 launch 后仍然出现：
+`configure_pdo_mapping:=false` was not taking effect because the launch output still showed:
 
 ```text
 Configuring CSP PDO mapping for slave 0
 Configuring CSP PDO mapping for slave 1
 ```
 
-这说明：
+This indicated one of the following:
 
-1. launch argument 可能没有正确传给 bridge；或
-2. bridge 里面 `configure_pdo_mapping` 默认值还是 True；或
-3. install 目录还是旧代码；或
-4. launch 文件虽然接受参数，但没有把参数写入 bridge node 的 parameters。
+1. The launch argument may not have been passed correctly to the bridge.
+2. The bridge default for `configure_pdo_mapping` may still have been True.
+3. The install directory may still have contained old code.
+4. The launch file may have accepted the argument without adding it to the bridge node parameters.
 
 ---
 
-## 10. 下次继续调试建议顺序
+## 10. Suggested Order for Continuing Debugging
 
-## Step 1：确认 configure_pdo_mapping 参数在哪里定义和传递
+## Step 1: Confirm Where configure_pdo_mapping Is Defined and Passed
 
 ```bash
 cd /root/ws
 grep -R -n "configure_pdo_mapping" src/rascl_description src/rascl_hardware_interface
 ```
 
-重点检查：
+Inspect especially:
 
 ```text
 src/rascl_description/launch/ros2_control.launch.py
@@ -310,13 +310,13 @@ src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
 
 ---
 
-## Step 2：检查 launch 文件是否声明并传参
+## Step 2: Check Whether the Launch File Declares and Passes the Argument
 
 ```bash
 nl -ba src/rascl_description/launch/ros2_control.launch.py | sed -n '1,220p'
 ```
 
-需要确认 launch 文件中有类似：
+Confirm that the launch file contains something similar to:
 
 ```python
 DeclareLaunchArgument(
@@ -325,80 +325,80 @@ DeclareLaunchArgument(
 )
 ```
 
-并且 bridge node 的 parameters 里面有：
+and that the bridge node parameters contain:
 
 ```python
 "configure_pdo_mapping": LaunchConfiguration("configure_pdo_mapping"),
 ```
 
-如果只有 DeclareLaunchArgument，但没有传给 Node，则命令行参数不会进入 bridge。
+If only `DeclareLaunchArgument` exists and the value is not passed to the Node, the command-line argument will not reach the bridge.
 
 ---
 
-## Step 3：临时粗暴修复方案
+## Step 3: Temporary Direct Workaround
 
-如果只是为了先完成 Profile Position 回归测试，可以临时把 bridge 默认值改为 False。
+To complete the Profile Position regression test first, the bridge default could temporarily be changed to False.
 
-搜索：
+Search for:
 
 ```bash
 grep -n "configure_pdo_mapping" src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
 ```
 
-找到类似：
+Find something similar to:
 
 ```python
 self.declare_parameter("configure_pdo_mapping", True)
 ```
 
-临时改成：
+Temporarily change it to:
 
 ```python
 self.declare_parameter("configure_pdo_mapping", False)
 ```
 
-或者如果是：
+Or, if it is:
 
 ```python
 self.configure_pdo_mapping = True
 ```
 
-临时改成：
+Temporarily change it to:
 
 ```python
 self.configure_pdo_mapping = False
 ```
 
-然后重新 build。
-## 2026-07-22 组 15 抓夹收放简化
+Then rebuild.
+## 2026-07-22 Simplified Group 15 Gripper Open/Close
 
-组 `15` 不再询问任意相对 counts 和运动时间。用户输入 ASCII `close`/`c` 时，Drive 3 从当前位置相对运动 `-110000 counts` 以收紧夹持；输入 `open`/`o` 时相对运动 `+110000 counts` 以松开放下。两种动作继续使用 50 Hz minimum-jerk CSP、默认 `10000 counts/s`（约 11 秒）并保持 Drive 0–2 当前位置；CSP、反馈、并发和 URDF 限位检查不变。
+Group `15` no longer asks for arbitrary relative counts and motion duration. ASCII input `close`/`c` moves Drive 3 by `-110000 counts` from the current position to tighten the grip; `open`/`o` moves it by `+110000 counts` to release. Both actions continue to use 50 Hz minimum-jerk CSP at the default `10000 counts/s` (about 11 seconds) while holding Drives 0-2 at their current positions. CSP, feedback, concurrency, and URDF-limit checks remain unchanged.
 
-## 2026-07-22 组 15 joint state 启动超时修复
+## 2026-07-22 Group 15 Joint-State Startup Timeout Fix
 
-组 `15` 原先预检查等待 `/joint_states` 3 秒，但真正运动节点只等待 1 秒。实机日志连续两次只有 `SPUR_TRACE start`、没有 `progress/complete`，且 Drive 3 始终约为 `-1536 counts`，说明轨迹发布前因 DDS 首帧反馈超时退出。现将两段等待统一为默认 5 秒，可用 `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S` 覆盖；运动节点异常同时记录 `SPUR_TRACE failed`，EtherCAT、CSP、counts、方向和转矩参数不改。
+Group `15` originally waited 3 seconds for `/joint_states` during preflight, while the actual motion node waited only 1 second. Two consecutive physical logs contained only `SPUR_TRACE start`, with no `progress/complete`, and Drive 3 remained near `-1536 counts`, showing that the node exited on a DDS first-feedback timeout before publishing the trajectory. Both waits now default to 5 seconds and can be overridden with `RASCL_SPUR_GEAR_FEEDBACK_TIMEOUT_S`; motion-node exceptions also record `SPUR_TRACE failed`. EtherCAT, CSP, counts, direction, and torque parameters are unchanged.
 
-## 2026-07-23 恢复 Drive 3 自定义相对 counts
+## 2026-07-23 Restored Custom Relative Counts for Drive 3
 
-保留组 `15` 的 `close/c=-110000` 与 `open/o=+110000` 快捷动作，同时恢复直接输入任意非零有符号整数 counts 的功能。自定义值仍以当前 Drive 3 位置为基准，共用相同的 URDF 限位、controller/并发检查、50 Hz minimum-jerk、自动时长和 `SPUR_TRACE` 反馈；不是绝对 encoder 目标。
+Group `15` retains the `close/c=-110000` and `open/o=+110000` shortcuts while restoring direct input of any nonzero signed integer count value. A custom value remains relative to the current Drive 3 position and uses the same URDF limits, controller/concurrency checks, 50 Hz minimum-jerk trajectory, automatic duration, and `SPUR_TRACE` feedback. It is not an absolute encoder target.
 
-## 2026-07-23 Drive 3 转矩上限与接触终止修复
+## 2026-07-23 Drive 3 Torque-Limit and Contact-Termination Fix
 
-实机日志确认 Drive 3 的 `0x2329:03=81 mA` 只产生 `0x6072=150`（额定转矩 15%）；虽然 `0x60E0/0x60E1` 已写成 `1000`，负方向夹持时仍会 `torque_limited`，最终以 `statusword=0x3027` following error 停止整个 CSP。现将 Drive 3 与 Drive 2 一样在 CSP 交接时做会话级峰值电流修正：Drive 3 通常为 `81→540 mA`，并强制回读 `0x6072>=1000`；不执行永久参数存储。
+Physical logs confirmed that Drive 3 `0x2329:03=81 mA` produced only `0x6072=150` (15% rated torque). Although `0x60E0/0x60E1` were set to `1000`, negative-direction gripping still became `torque_limited` and eventually stopped the entire CSP session with following error `statusword=0x3027`. Drive 3 now receives the same session-level peak-current correction as Drive 2 at CSP handoff, typically `81->540 mA`, with mandatory readback `0x6072>=1000`; no parameters are stored persistently.
 
-组 `15` 的 `close/open` 改为最大行程快捷动作。若命令/反馈持续误差达到默认 `2000 counts / 0.04 s`，脚本会在 drive following error 前记录 `SPUR_CONTACT`、把目标收回到实测位置并返回 `SPUR_RESULT outcome=contact_or_endpoint`。直接输入的有符号 counts 仍要求精确相对运动，不启用接触提前终止。
+Group `15` close/open became maximum-travel shortcuts. If command/feedback error reaches the default `2000 counts / 0.04 s`, the script records `SPUR_CONTACT`, retracts the target to the measured position before a drive following error, and returns `SPUR_RESULT outcome=contact_or_endpoint`. Directly entered signed counts still require exact relative motion and do not enable contact-based early termination.
 
-## 2026-07-23 Drive 3 抓夹快捷动作方向修正
+## 2026-07-23 Drive 3 Gripper Shortcut Direction Correction
 
-按实机方向将组 `15` 的快捷动作反向：`close/c` 改为最多相对 `+110000 counts`，继续使用 `2000 counts / 0.04 s` 跟踪误差检测，夹住后提前停止并保持实测位置；`open/o` 改为固定相对 `-200000 counts`，要求完整到位且不启用接触提前终止。直接输入的自定义有符号 counts 语义不变。
+Based on the physical direction, the group `15` shortcuts were reversed: `close/c` became a maximum relative `+110000 counts` with continued `2000 counts / 0.04 s` tracking-error detection, early stop after gripping, and hold at the measured position. `open/o` became a fixed relative `-200000 counts`, requiring full arrival without contact-based early termination. The semantics of directly entered custom signed counts were unchanged.
 
-## 2026-07-23 Drive 3 最大闭合行程扩大
+## 2026-07-23 Increased Drive 3 Maximum Closing Travel
 
-挂载 gripper 后，`close/c` 的 `+110000 counts` 最大行程不足以接触方块。现只将最大闭合行程提高为 `+500000 counts`；`2000 counts / 0.04 s` 接触停止、`open/o=-200000 counts` 以及自定义 counts 逻辑均不变。默认 `10000 counts/s` 下，未提前接触时最长约 50 秒。
+After mounting the gripper, the `close/c` maximum travel of `+110000 counts` was insufficient to contact the block. Only the maximum closing travel was increased to `+500000 counts`; the `2000 counts / 0.04 s` contact stop, `open/o=-200000 counts`, and custom-count logic were unchanged. At the default `10000 counts/s`, a move without early contact can take about 50 seconds.
 
-## 2026-07-23 Drive 3 项目侧位置限位扩大
+## 2026-07-23 Expanded Project-Side Drive 3 Position Limits
 
-日志 `ros_logs_20260723_131436.tar.gz` 表明，前一次 `open=-200000 counts` 完成后 Drive 3 约为 `374357 counts / 1.777884 rad`；随后 `close=+500000 counts` 的目标约为 `874357 counts / 4.1525 rad`，超过旧的 `+3.1415 rad`，因此在脚本预检阶段被拒绝，命令尚未发送给驱动器。现将 `spur_gear_joint` 在实体 URDF、ros2_control、Python 运动学和调试脚本中的项目侧限位统一由约 `[-pi,+pi]` 放宽为 `[-2*pi,+2*pi] = [-6.283185307,+6.283185307] rad`。Drive 0–2 限位、Drive 3 的 `close/open` 方向与行程、接触停止、Homing、CSP 以及驱动器内部 `0x607B/0x607D` 均未修改。
+Log `ros_logs_20260723_131436.tar.gz` showed Drive 3 at approximately `374357 counts / 1.777884 rad` after the previous `open=-200000 counts`. The following `close=+500000 counts` target was approximately `874357 counts / 4.1525 rad`, above the old `+3.1415 rad` limit, so script preflight rejected it before sending any drive command. Project-side `spur_gear_joint` limits in the physical URDF, ros2_control, Python kinematics, and debug script were therefore expanded consistently from about `[-pi,+pi]` to `[-2*pi,+2*pi] = [-6.283185307,+6.283185307] rad`. Drive 0-2 limits, Drive 3 close/open direction and travel, contact stop, Homing, CSP, and internal drive objects `0x607B/0x607D` were not modified.
 
 ## 2026-07-23 TCP X +20 mm from current command point
 

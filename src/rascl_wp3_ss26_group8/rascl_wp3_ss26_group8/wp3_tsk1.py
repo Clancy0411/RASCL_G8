@@ -207,6 +207,7 @@ class WP3Task1SingleTarget(Node):
                 f"Best error was {ik_result.error_norm:.4f} m."
             )
 
+        # Cartesian IK moves only the arm; preserve the current gripper angle.
         q_goal = [ik_result.q[0], ik_result.q[1], ik_result.q[2], q_spur_current]
         trajectory = generate_joint_trajectory(q_current, q_goal, duration, rate_hz)
 
@@ -261,6 +262,7 @@ class WP3Task1SingleTarget(Node):
             "Make sure fake hardware is active, or the real robot is calibrated and the area is clear."
         )
 
+        # Advance an absolute deadline so publisher delays do not accumulate as drift.
         next_time = time.monotonic()
         for command in commands:
             self._command_publisher.publish(command)
@@ -270,6 +272,7 @@ class WP3Task1SingleTarget(Node):
             if sleep_time > 0.0:
                 time.sleep(sleep_time)
 
+        # Repeat the endpoint briefly while fresh feedback catches up with the command.
         if commands and final_hold_s > 0.0:
             end_time = time.monotonic() + final_hold_s
             while time.monotonic() < end_time:

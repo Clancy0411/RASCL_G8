@@ -390,6 +390,7 @@ class FaulhaberDrive:
         if following_error_confirm_s < 0.0:
             raise ValueError("Following-error confirmation time must be non-negative")
 
+        # Base repeated trim commands on measured position, not the previous target.
         source_counts = self.read_actual_position_counts()
         target_counts = source_counts + int(delta_counts)
         self.move_absolute_counts(target_counts)
@@ -459,6 +460,7 @@ class FaulhaberDrive:
         if tolerance_counts < 0:
             raise ValueError("Zero-position tolerance must be non-negative")
 
+        # Method 37 redefines zero at the current position without a reference search.
         self.reset_fault_if_needed()
         self.sdo_write_int(
             HOMING_METHOD,
@@ -679,6 +681,7 @@ class FaulhaberDrive:
                 f"0x607C=0, got offset_counts={offset_counts}"
             )
 
+        # The midpoint of both electrical edges is more repeatable than either edge alone.
         direction = self.homing_search_direction(method)
         first_edge_stop_counts = self.home_to_reference_switch(
             method=method,
@@ -1740,6 +1743,7 @@ class FaulhaberBus:
         if len(self.target_counts) != len(self.drives):
             raise RuntimeError("CSP target cache is not initialized")
 
+        # Build one coherent four-axis output image before the single bus exchange.
         for drive, target in zip(self.drives, self.target_counts):
             drive_controlword = (
                 CMD_DISABLE_VOLTAGE
@@ -2098,6 +2102,7 @@ class FaulhaberBus:
                     "CSP handoff rejected: not all required drives were homed in this bridge session"
                 )
 
+            # Default to measured positions so CSP activation cannot command a jump.
             initial_targets = (
                 [drive.read_actual_position_counts() for drive in self.drives]
                 if target_counts is None
@@ -3885,6 +3890,7 @@ class RASCLFaulhaberBridge(Node):
                 return "ERR empty command"
             operation = parts[0].upper()
 
+            # Serialize protocol commands with PDO and SDO work on the shared master.
             with self.lock:
                 if operation == "PING":
                     return "OK"
