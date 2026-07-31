@@ -1020,32 +1020,32 @@ PY
 )" || die "无法计算 Task 2 起点的极坐标半径"
   read -r r route <<<"$polar_result"
 
-  echo "Task 2：起点 [$x, $y] 的 r=$r m，路径=$route。所有动作 3 s，之间不插入等待。"
-  task1_move_to "Task2/1" "$x" "$y" 0.10 3
-  task1_move_to "Task2/2" "$x" "$y" 0.045 3
-  task1_gripper_preset close 3
-  task1_move_to "Task2/3" "$x" "$y" 0.10 3
+  echo "Task 2：起点 [$x, $y] 的 r=$r m，路径=$route。所有动作 5 s，之间不插入等待。"
+  task1_move_to "Task2/1" "$x" "$y" 0.10 5
+  task1_move_to "Task2/2" "$x" "$y" 0.045 5
+  task1_gripper_preset close 5
+  task1_move_to "Task2/3" "$x" "$y" 0.10 5
 
   case "$route" in
     middle)
-      task1_move_to "Task2/middle/1" 0.18128633 -0.03369372 0.10 3
-      task1_move_to "Task2/middle/2" 0.18128633 -0.03369372 0.045 3
+      task1_move_to "Task2/middle/1" 0.1812 -0.0336 0.10 5
+      task1_move_to "Task2/middle/2" 0.1812 -0.0336 0.045 5
       ;;
     inner)
-      task1_move_to "Task2/inner/1" 0.15179144 -0.02821182 0.10 3
-      task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.045 3
-      task1_move_to "Task2/inner/3" 0.18128633 -0.03369372 0.045 3
+      task1_move_to "Task2/inner/1" 0.1517 -0.0282 0.10 5
+      task1_move_to "Task2/inner/2" 0.1517 -0.0282 0.045 5
+      task1_move_to "Task2/inner/3" 0.1812 -0.0336 0.045 5
       ;;
     outer)
-      task1_move_to "Task2/outer/1" 0.21078122 -0.03917562 0.10 3
-      task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.045 3
-      task1_move_to "Task2/outer/3" 0.18128633 -0.03369372 0.045 3
+      task1_move_to "Task2/outer/1" 0.2107 -0.0391 0.10 5
+      task1_move_to "Task2/outer/2" 0.2107 -0.0391 0.045 5
+      task1_move_to "Task2/outer/3" 0.1812 -0.0336 0.045 5
       ;;
     *) die "Task 2 未识别的路径：$route" ;;
   esac
 
-  task1_gripper_preset open 3
-  task1_move_to "Task2/final" 0.18128633 -0.03369372 0.10 3
+  task1_gripper_preset open 5
+  task1_move_to "Task2/final" 0.1812 -0.0336 0.10 5
   echo "Task 2 完成。"
 }
 
