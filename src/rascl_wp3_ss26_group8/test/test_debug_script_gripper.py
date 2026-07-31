@@ -140,18 +140,18 @@ def test_task2_group_29_selects_the_required_route_from_polar_radius():
     assert re.findall(
         r'^\s*task1_move_to "Task2/\d+" (.+)$', group_29, flags=re.MULTILINE
     ) == [
-        '"$x" "$y" 0.10 10',
-        '"$x" "$y" 0.045 10',
-        '"$x" "$y" 0.10 10',
+        '"$x" "$y" 0.10 3',
+        '"$x" "$y" 0.045 3',
+        '"$x" "$y" 0.10 3',
     ]
-    assert 'task1_move_to "Task2/middle/1" 0.18128633 -0.03369372 0.10 10' in group_29
-    assert 'task1_move_to "Task2/middle/2" 0.18128633 -0.03369372 0.045 10' in group_29
-    assert 'task1_move_to "Task2/inner/1" 0.15179144 -0.02821182 0.10 10' in group_29
-    assert 'task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.045 10' in group_29
-    assert 'task1_move_to "Task2/inner/3" 0.18128633 -0.03369372 0.045 10' in group_29
-    assert 'task1_move_to "Task2/outer/1" 0.21078122 -0.03917562 0.10 10' in group_29
-    assert 'task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.045 10' in group_29
-    assert 'task1_move_to "Task2/outer/3" 0.18128633 -0.03369372 0.045 10' in group_29
-    assert 'task1_move_to "Task2/final" 0.18128633 -0.03369372 0.10 10' in group_29
-    assert re.findall(r"task1_gripper_preset (close|open) 10", group_29) == ["close", "open"]
+    assert 'task1_move_to "Task2/middle/1" 0.18128633 -0.03369372 0.10 3' in group_29
+    assert 'task1_move_to "Task2/middle/2" 0.18128633 -0.03369372 0.045 3' in group_29
+    assert 'task1_move_to "Task2/inner/1" 0.15179144 -0.02821182 0.10 3' in group_29
+    assert 'task1_move_to "Task2/inner/2" 0.15179144 -0.02821182 0.045 3' in group_29
+    assert 'task1_move_to "Task2/inner/3" 0.18128633 -0.03369372 0.045 3' in group_29
+    assert 'task1_move_to "Task2/outer/1" 0.21078122 -0.03917562 0.10 3' in group_29
+    assert 'task1_move_to "Task2/outer/2" 0.21078122 -0.03917562 0.045 3' in group_29
+    assert 'task1_move_to "Task2/outer/3" 0.18128633 -0.03369372 0.045 3' in group_29
+    assert 'task1_move_to "Task2/final" 0.18128633 -0.03369372 0.10 3' in group_29
+    assert re.findall(r"task1_gripper_preset (close|open) 3", group_29) == ["close", "open"]
     assert "sleep " not in group_29
