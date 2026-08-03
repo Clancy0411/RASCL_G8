@@ -1,4 +1,4 @@
-# WP3 Task 1 Physical-Hardware Homing + CSP/PDO Debug Guide
+# WP3 Physical-Hardware Homing + CSP/PDO Debug Guide
 
 ## Shortest Physical-Hardware Workflow
 

@@ -88,7 +88,7 @@ interface applies nominal `direction=[+1,+1,+1,-1]` and
 paired mapping so positive lowerarm commands match physical motion. Final values must be replaced by raw
 counts measured in the physical URDF-zero pose after a successful Home, with
 the drives disabled and the links supported. The guarded `GET_ALL` measurement
-procedure is documented in `WP3_Task1_MinJerk_Debug_Guide.md`.
+procedure is documented in `WP3_Physical_Hardware_Debug_Guide.md`.
 Changing a homing method, reference input, direction, or either offset layer can
 invalidate the relationship between Cartesian targets and the real robot.
 

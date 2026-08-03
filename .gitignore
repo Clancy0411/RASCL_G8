@@ -3,6 +3,7 @@ logs/
 build/
 install/
 log/
+ros_logs_*.tar.gz
 bin/
 lib/
 msg_gen/
@@ -53,3 +54,11 @@ qtcreator-*
 CATKIN_IGNORE
 
 .devcontainer
+
+# Local agent and editor settings
+/.agents/
+/.codex/
+/.vscode/
+
+# Local reference documents
+/Docs/

@@ -43,12 +43,16 @@ tree without explicit authorization. Preserve intentional deletions.
 ## 2. Project Goal and Current Priority
 
 This is the RASCL Work Package 3 project. The final task is to pick up blocks with
-the arm and place them at specified positions. The course requirements are in:
+the arm and place them at specified positions. The course requirements are kept
+locally in:
 
 ```text
 Docs/RASCL_WP3_SS26_Tasksheet.pdf
 Docs/RASCL_WP3_Intro.pdf
 ```
+
+`Docs/` is intentionally excluded from Git. Copy these course and hardware
+references separately when preparing a new machine or clone.
 
 The required low-level motion mode is:
 
@@ -78,7 +82,7 @@ parameters.
 ### 3.1 Physical-Hardware Debug Guide
 
 ```text
-WP3_Task1_MinJerk_Debug_Guide.md
+WP3_Physical_Hardware_Debug_Guide.md
 ```
 
 This is the single authoritative physical-hardware guide. The obsolete quick guide
@@ -87,7 +91,7 @@ parameters, behavior, or workflow change. Keep it concise, accurate, and complet
 
 ### 3.2 Hardware and Protocol Manuals
 
-The top-level task PDFs are under `Docs/`. FAULHABER EtherCAT, commutation,
+The local top-level task PDFs are under `Docs/`. FAULHABER EtherCAT, commutation,
 hardware, drive-function, and statusword manuals are in the hardware-manual
 subdirectory under `Docs/`. This includes the ASCII-named files:
 
@@ -139,11 +143,7 @@ Supporting files:
 ```text
 rascl_debug.sh
 rosws.sh
-Log.md
 ```
-
-`Log.md` contains historical work and may contain obsolete values. Prefer the
-current code, the latest dated record, and the current debug guide.
 
 ## 4. Software Architecture
 
@@ -888,7 +888,7 @@ MOTION_RESULT
 ## 18. First Work in a New Debugging Task
 
 1. Read this file.
-2. Read `WP3_Task1_MinJerk_Debug_Guide.md`.
+2. Read `WP3_Physical_Hardware_Debug_Guide.md`.
 3. Inspect `git status` and current HEAD.
 4. Confirm the EtherCAT interface on the new machine.
 5. Complete `1 -> T1:4 -> T2:6 -> T2:7 -> T3:8 -> T3:13`.
