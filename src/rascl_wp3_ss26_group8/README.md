@@ -153,10 +153,31 @@ ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
 
 The node validates the configured feasible radius and shoulder-angle range, queues
 messages, plans every waypoint online from live `/joint_states`, and saves the
-input plus each generated trajectory under `/tmp/rascl_wp3_tsk2`. The raw fixed
-goal is `[0.18,-0.04] m`; its radius is the declared default maximum feasible
-radius. For physical hardware, start the node through `rascl_debug.sh` group `29`,
-which requires the Drive 3 torque-protection service.
+input plus each generated trajectory under `/tmp/rascl_wp3_tsk2`. The documented
+fixed target is the original `[0.18,-0.04] m`; established motion corrections are
+kept internal and applied before IK. The configured input region is
+`0.10 <= r <= 0.257099203 m`; the upper bound is the radius of the farthest labelled
+box-plate point `(0.250,0.060) m`.
+
+The maximum input radius is independent of the fixed target radius and is calculated
+only from the farthest labelled box-plate point:
+
+```text
+r_max = sqrt(0.250^2 + 0.060^2) = 0.257099203 m
+```
+
+The legacy group `29` route selection is preserved in the node:
+
+- `inner` for `r < 0.17 m`: descend 30 mm inside the goal radius, then push
+  horizontally outward at placement height;
+- `middle` for `0.17 <= r <= 0.20 m`: descend directly at the goal;
+- `outer` for `r > 0.20 m`: descend 30 mm outside the goal radius, then pull
+  horizontally inward at placement height.
+
+Board XY compensation is applied exactly once to every raw waypoint before IK. For
+all three routes, Cartesian and gripper trajectories retain the original group `29`
+duration of 5 seconds. For physical hardware, start the node through
+`rascl_debug.sh` group `29`, which requires the Drive 3 torque-protection service.
 
 ## Combined launch
 

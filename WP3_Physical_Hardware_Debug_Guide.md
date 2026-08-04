@@ -236,19 +236,36 @@ ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
   "{x: 0.16, y: 0.08, z: 0.0}"
 ```
 
-The node accepts repeated messages and queues them sequentially. For each cube it
-plans online from live `/joint_states` feedback:
+The node accepts repeated messages and queues them sequentially. It first classifies
+the cube from its radius: `inner` below `0.17 m`, `middle` through `0.20 m`, and
+`outer` above `0.20 m`. The configured maximum `0.257099203 m` is the radius of the
+farthest labelled point `(0.250,0.060) m` across the two physical box plates.
+
+For every route, pickup is planned online from live `/joint_states` feedback:
 
 ```text
 (start_x,start_y,0.10) -> (start_x,start_y,0.045) -> close
--> (start_x,start_y,0.10) -> (0.18,-0.04,0.10)
--> (0.18,-0.04,0.045) -> open -> (0.18,-0.04,0.10)
+-> (start_x,start_y,0.10)
 ```
 
-The raw fixed goal is `[0.18,-0.04] m`; the board correction is applied exactly
-once inside the node before IK. The declared default feasible region is
-`0.10 <= r <= 0.184390889 m`, and the goal radius equals that maximum. The limits
-must be replaced if final collision/reach validation establishes different radii.
+Placement then follows one of three routes relative to the original fixed goal:
+
+```text
+inner:  approach 30 mm inside the goal radius -> descend at z=0.045
+        -> push outward to the original goal -> open -> retreat
+middle: approach the original goal at z=0.10 -> descend to z=0.045
+        -> open -> retreat
+outer:  approach 30 mm outside the goal radius -> descend at z=0.045
+        -> pull inward to the original goal -> open -> retreat
+```
+
+Every Cartesian waypoint and both gripper actions retain the original group `29`
+requested duration of 5 seconds; the gripper then holds its endpoint for 1 second.
+
+The original documented target is `[0.18,-0.04] m`. Established target and board
+corrections are applied inside the node before IK; only the original task coordinate
+is documented here. The limits must be replaced if final collision/reach validation
+establishes different radii.
 Each Cartesian segment is planned and endpoint-verified independently. Task inputs
 and all generated minimum-jerk trajectories are saved under
 `/tmp/rascl_wp3_tsk2`.

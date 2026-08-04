@@ -269,10 +269,14 @@ ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
 ```
 
 The node remains active and processes any additional valid messages sequentially.
-For every cube it performs a vertical approach, descent, grasp, lift, high transfer,
-descent, release, and retreat. Every Cartesian waypoint is planned online from the
-latest `/joint_states` feedback. Input and generated minimum-jerk CSV files are
-saved under `/tmp/rascl_wp3_tsk2`.
+It restores the original group `29` radial routing: `inner` for `r < 0.17 m`,
+`middle` for `0.17 <= r <= 0.20 m`, and `outer` for `r > 0.20 m`. The inner route
+descends 30 mm inside the fixed-goal radius and pushes outward at placement height;
+the outer route descends 30 mm outside it and pulls inward. The middle route descends
+directly at the goal. Every Cartesian waypoint is planned online from the latest
+`/joint_states` feedback. Input and generated minimum-jerk CSV files are saved under
+`/tmp/rascl_wp3_tsk2`. As in the original group `29`, every Cartesian and gripper
+trajectory is requested with a duration of 5 seconds.
 
 The submission-facing files and executable are:
 
@@ -282,9 +286,28 @@ launch/wp3_tsk2.launch.py
 ros2 run rascl_wp3_ss26_group8 wp3_tsk2
 ```
 
-The currently documented feasible radial region is `0.10 <= r <= 0.184390889 m`
-with a shoulder angle between `-pi/2` and `+pi/2`. These limits must match the
-collision-free region validated for the final robot-gripper configuration.
+The configured radial region is `0.10 <= r <= 0.257099203 m`, with a shoulder angle
+between `-pi/2` and `+pi/2`. The maximum is the farthest labelled centre across the
+two physical box plates, `(0.250, 0.060) m`. Final collision-free reach still needs
+physical validation for the robot-gripper configuration.
+
+The maximum input radius is defined only by that farthest labelled box-plate point:
+
+```text
+r_max = sqrt(0.250^2 + 0.060^2) = 0.257099203 m
+```
+
+It is not derived from the fixed target radius. The maximum accepted cube radius and
+the fixed target coordinate are configured independently; the original fixed target
+remains `(0.18, -0.04) m`.
+
+The routing behaviour relative to the original fixed goal is:
+
+| Route | Input radius | Placement approach before XY compensation |
+|---|---:|---|
+| Inner | `r < 0.17 m` | Approach 30 mm inside the goal radius, descend, then push outward |
+| Middle | `0.17 <= r <= 0.20 m` | Descend directly above the original goal `(0.18, -0.04)` |
+| Outer | `0.20 < r <= 0.257099203 m` | Approach 30 mm outside the goal radius, descend, then pull inward |
 
 ### Original Task 2 Target
 
@@ -294,6 +317,9 @@ collision-free region validated for the final robot-gripper configuration.
 
 These are the original target coordinates, not the motion coordinates corrected
 through calibration.
+
+The implementation applies the established target and board corrections internally
+before IK; the coordinates documented here remain the original task coordinates.
 
 ## All Debug Groups
 

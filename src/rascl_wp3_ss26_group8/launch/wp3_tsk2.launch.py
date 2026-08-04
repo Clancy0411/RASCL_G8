@@ -13,6 +13,12 @@ def generate_launch_description():
         "goal_y",
         "min_feasible_radius",
         "max_feasible_radius",
+        "inner_route_max_radius",
+        "middle_route_max_radius",
+        "inner_route_x",
+        "inner_route_y",
+        "outer_route_x",
+        "outer_route_y",
         "travel_z",
         "pick_z",
         "place_z",
@@ -44,8 +50,8 @@ def generate_launch_description():
                 default_value="/goal_poses",
                 description="Runtime cube-centre topic (geometry_msgs/msg/Point).",
             ),
-            DeclareLaunchArgument("goal_x", default_value="0.18"),
-            DeclareLaunchArgument("goal_y", default_value="-0.04"),
+            DeclareLaunchArgument("goal_x", default_value="0.1812"),
+            DeclareLaunchArgument("goal_y", default_value="-0.0336"),
             DeclareLaunchArgument(
                 "min_feasible_radius",
                 default_value="0.10",
@@ -53,8 +59,41 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "max_feasible_radius",
-                default_value="0.18439088914585774",
-                description="Documented maximum radius; must equal the fixed goal radius [m].",
+                default_value="0.2570992026436488",
+                description="Maximum labelled box-plate radius from (0.250, 0.060) m.",
+            ),
+            DeclareLaunchArgument(
+                "inner_route_max_radius",
+                default_value="0.17",
+                description="Use the inner push-out route below this radius [m].",
+            ),
+            DeclareLaunchArgument(
+                "middle_route_max_radius",
+                default_value="0.20",
+                description=(
+                    "Use the direct route through this radius; larger inputs "
+                    "use outer pull-in [m]."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "inner_route_x",
+                default_value="0.1517",
+                description="Legacy group-29 inner placement-route X [m].",
+            ),
+            DeclareLaunchArgument(
+                "inner_route_y",
+                default_value="-0.0282",
+                description="Legacy group-29 inner placement-route Y [m].",
+            ),
+            DeclareLaunchArgument(
+                "outer_route_x",
+                default_value="0.2107",
+                description="Legacy group-29 outer placement-route X [m].",
+            ),
+            DeclareLaunchArgument(
+                "outer_route_y",
+                default_value="-0.0391",
+                description="Legacy group-29 outer placement-route Y [m].",
             ),
             DeclareLaunchArgument("travel_z", default_value="0.10"),
             DeclareLaunchArgument("pick_z", default_value="0.045"),

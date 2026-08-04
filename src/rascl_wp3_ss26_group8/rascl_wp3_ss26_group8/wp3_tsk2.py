@@ -26,12 +26,19 @@ from .kinematics import JOINT_NAMES, forward_tcp, inverse_tcp
 from .task2_sequence import (
     DEFAULT_GOAL_X_M,
     DEFAULT_GOAL_Y_M,
+    DEFAULT_INNER_ROUTE_X_M,
+    DEFAULT_INNER_ROUTE_Y_M,
+    DEFAULT_INNER_ROUTE_MAX_RADIUS_M,
     DEFAULT_MAX_FEASIBLE_RADIUS_M,
+    DEFAULT_MIDDLE_ROUTE_MAX_RADIUS_M,
     DEFAULT_MIN_FEASIBLE_RADIUS_M,
+    DEFAULT_OUTER_ROUTE_X_M,
+    DEFAULT_OUTER_ROUTE_Y_M,
     DEFAULT_SHOULDER_ANGLE_LIMIT_RAD,
     CartesianStep,
     GripperStep,
     build_pick_and_place_sequence,
+    classify_radial_route,
     validate_cube_center,
     validate_task2_configuration,
 )
@@ -45,7 +52,7 @@ from .workspace_calibration import (
 
 
 JointVector = Tuple[float, float, float, float]
-QueuedGoal = Optional[Tuple[int, float, float]]
+QueuedGoal = Optional[Tuple[int, float, float, str]]
 
 
 class WP3Task2Online(Node):
@@ -65,6 +72,16 @@ class WP3Task2Online(Node):
         self.declare_parameter(
             "shoulder_angle_limit_rad", DEFAULT_SHOULDER_ANGLE_LIMIT_RAD
         )
+        self.declare_parameter(
+            "inner_route_max_radius", DEFAULT_INNER_ROUTE_MAX_RADIUS_M
+        )
+        self.declare_parameter(
+            "middle_route_max_radius", DEFAULT_MIDDLE_ROUTE_MAX_RADIUS_M
+        )
+        self.declare_parameter("inner_route_x", DEFAULT_INNER_ROUTE_X_M)
+        self.declare_parameter("inner_route_y", DEFAULT_INNER_ROUTE_Y_M)
+        self.declare_parameter("outer_route_x", DEFAULT_OUTER_ROUTE_X_M)
+        self.declare_parameter("outer_route_y", DEFAULT_OUTER_ROUTE_Y_M)
 
         self.declare_parameter("travel_z", 0.10)
         self.declare_parameter("pick_z", 0.045)
@@ -96,6 +113,7 @@ class WP3Task2Online(Node):
         self.declare_parameter("spur_gear_max_position_rad", 2.0 * math.pi)
         self.declare_parameter("spur_gear_speed_counts_per_s", 20000.0)
         self.declare_parameter("gripper_min_motion_duration_s", 0.5)
+        self.declare_parameter("gripper_settle_duration_s", 1.0)
         self.declare_parameter("gripper_final_tolerance_counts", 5000.0)
         self.declare_parameter(
             "torque_service", "/rascl_faulhaber_bridge/restore_spur_torque"
@@ -147,11 +165,19 @@ class WP3Task2Online(Node):
         max_radius = float(self.get_parameter("max_feasible_radius").value)
         goal_x = float(self.get_parameter("goal_x").value)
         goal_y = float(self.get_parameter("goal_y").value)
+        inner_route_max = float(
+            self.get_parameter("inner_route_max_radius").value
+        )
+        middle_route_max = float(
+            self.get_parameter("middle_route_max_radius").value
+        )
         execute = bool(self.get_parameter("execute").value)
         self.get_logger().info(
             "WP3 Task 2 online node ready: "
             f"topic={goal_topic}, feasible_radius=[{min_radius:.6f}, "
             f"{max_radius:.6f}] m, fixed_goal=({goal_x:.6f}, {goal_y:.6f}) m, "
+            f"routes=(inner<{inner_route_max:.6f}, "
+            f"middle<={middle_route_max:.6f}, outer>{middle_route_max:.6f}), "
             f"execute={execute}."
         )
 
@@ -160,11 +186,27 @@ class WP3Task2Online(Node):
         goal_y = float(self.get_parameter("goal_y").value)
         min_radius = float(self.get_parameter("min_feasible_radius").value)
         max_radius = float(self.get_parameter("max_feasible_radius").value)
+        inner_route_max = float(
+            self.get_parameter("inner_route_max_radius").value
+        )
+        middle_route_max = float(
+            self.get_parameter("middle_route_max_radius").value
+        )
+        inner_route_x = float(self.get_parameter("inner_route_x").value)
+        inner_route_y = float(self.get_parameter("inner_route_y").value)
+        outer_route_x = float(self.get_parameter("outer_route_x").value)
+        outer_route_y = float(self.get_parameter("outer_route_y").value)
         validate_task2_configuration(
             goal_x=goal_x,
             goal_y=goal_y,
             min_radius=min_radius,
             max_radius=max_radius,
+            inner_route_max_radius=inner_route_max,
+            middle_route_max_radius=middle_route_max,
+            inner_route_x=inner_route_x,
+            inner_route_y=inner_route_y,
+            outer_route_x=outer_route_x,
+            outer_route_y=outer_route_y,
         )
 
         travel_z = float(self.get_parameter("travel_z").value)
@@ -182,6 +224,12 @@ class WP3Task2Online(Node):
             place_z=place_z,
             motion_duration_s=motion_duration,
             gripper_duration_s=gripper_duration,
+            inner_route_max_radius=inner_route_max,
+            middle_route_max_radius=middle_route_max,
+            inner_route_x=inner_route_x,
+            inner_route_y=inner_route_y,
+            outer_route_x=outer_route_x,
+            outer_route_y=outer_route_y,
         )
 
         positive_parameters = (
@@ -195,6 +243,7 @@ class WP3Task2Online(Node):
             "spur_gear_counts_per_revolution",
             "spur_gear_speed_counts_per_s",
             "gripper_min_motion_duration_s",
+            "gripper_settle_duration_s",
             "gripper_final_tolerance_counts",
             "torque_service_timeout_s",
         )
@@ -244,6 +293,12 @@ class WP3Task2Online(Node):
         min_radius = float(self.get_parameter("min_feasible_radius").value)
         max_radius = float(self.get_parameter("max_feasible_radius").value)
         angle_limit = float(self.get_parameter("shoulder_angle_limit_rad").value)
+        inner_route_max = float(
+            self.get_parameter("inner_route_max_radius").value
+        )
+        middle_route_max = float(
+            self.get_parameter("middle_route_max_radius").value
+        )
         try:
             radius, angle = validate_cube_center(
                 x,
@@ -252,12 +307,17 @@ class WP3Task2Online(Node):
                 max_radius=max_radius,
                 shoulder_angle_limit_rad=angle_limit,
             )
+            route = classify_radial_route(
+                radius,
+                inner_route_max_radius=inner_route_max,
+                middle_route_max_radius=middle_route_max,
+            )
         except ValueError as exc:
             self.get_logger().error(f"Rejected /goal_poses cube centre: {exc}")
             return
 
         self._goal_counter += 1
-        goal = (self._goal_counter, x, y)
+        goal = (self._goal_counter, x, y, route)
         try:
             self._goal_queue.put_nowait(goal)
         except queue.Full:
@@ -272,7 +332,7 @@ class WP3Task2Online(Node):
             )
         self.get_logger().info(
             f"Accepted cube {goal[0]}: centre=({x:.6f}, {y:.6f}) m, "
-            f"radius={radius:.6f} m, angle={angle:.6f} rad."
+            f"radius={radius:.6f} m, angle={angle:.6f} rad, route={route}."
         )
 
     def _worker_main(self) -> None:
@@ -284,8 +344,8 @@ class WP3Task2Online(Node):
             try:
                 if queued_goal is None:
                     return
-                job_id, start_x, start_y = queued_goal
-                self._process_goal(job_id, start_x, start_y)
+                job_id, start_x, start_y, route = queued_goal
+                self._process_goal(job_id, start_x, start_y, route)
             except Exception as exc:  # noqa: BLE001 - hardware failures must be logged
                 self._faulted = bool(self.get_parameter("execute").value)
                 self.get_logger().error(f"TASK2_RESULT success=false error={exc}")
@@ -297,7 +357,9 @@ class WP3Task2Online(Node):
             finally:
                 self._goal_queue.task_done()
 
-    def _process_goal(self, job_id: int, start_x: float, start_y: float) -> None:
+    def _process_goal(
+        self, job_id: int, start_x: float, start_y: float, route: str
+    ) -> None:
         goal_x = float(self.get_parameter("goal_x").value)
         goal_y = float(self.get_parameter("goal_y").value)
         sequence = build_pick_and_place_sequence(
@@ -310,10 +372,21 @@ class WP3Task2Online(Node):
             place_z=float(self.get_parameter("place_z").value),
             motion_duration_s=float(self.get_parameter("motion_duration").value),
             gripper_duration_s=float(self.get_parameter("gripper_duration").value),
+            inner_route_max_radius=float(
+                self.get_parameter("inner_route_max_radius").value
+            ),
+            middle_route_max_radius=float(
+                self.get_parameter("middle_route_max_radius").value
+            ),
+            inner_route_x=float(self.get_parameter("inner_route_x").value),
+            inner_route_y=float(self.get_parameter("inner_route_y").value),
+            outer_route_x=float(self.get_parameter("outer_route_x").value),
+            outer_route_y=float(self.get_parameter("outer_route_y").value),
         )
-        self._save_input(job_id, start_x, start_y, goal_x, goal_y)
+        self._save_input(job_id, start_x, start_y, route, goal_x, goal_y)
         self.get_logger().info(
-            f"Starting Task 2 job {job_id} with {len(sequence)} online-planned steps."
+            f"Starting Task 2 job {job_id}: route={route}, "
+            f"steps={len(sequence)}."
         )
         for step_index, step in enumerate(sequence, start=1):
             if self._stop_event.is_set():
@@ -325,7 +398,8 @@ class WP3Task2Online(Node):
             else:
                 raise TypeError(f"unsupported Task 2 step: {step!r}")
         self.get_logger().info(
-            f"TASK2_RESULT success=true job={job_id} start=({start_x:.6f}, "
+            f"TASK2_RESULT success=true job={job_id} route={route} "
+            f"start=({start_x:.6f}, "
             f"{start_y:.6f}) goal=({goal_x:.6f}, {goal_y:.6f})"
         )
 
@@ -427,11 +501,9 @@ class WP3Task2Online(Node):
                 f"outside [{spur_min:.6f}, {spur_max:.6f}] rad"
             )
 
-        speed = float(self.get_parameter("spur_gear_speed_counts_per_s").value)
-        minimum_duration = float(
-            self.get_parameter("gripper_min_motion_duration_s").value
-        )
-        duration = max(step.duration_s, abs(delta_counts) / speed, minimum_duration)
+        # Old group 29 passed an explicit 5 s duration to group 15; that
+        # override took precedence over the calculated count/s minimum.
+        duration = float(step.duration_s)
         q_goal = (q_start[0], q_start[1], q_start[2], target_spur)
         trajectory = generate_joint_trajectory(
             q_start,
@@ -458,6 +530,9 @@ class WP3Task2Online(Node):
             trajectory,
             expected_tcp=None,
             joint_tolerance_override=joint_tolerance,
+            final_hold_s_override=float(
+                self.get_parameter("gripper_settle_duration_s").value
+            ),
         )
 
     def _restore_spur_torque(self) -> None:
@@ -498,6 +573,7 @@ class WP3Task2Online(Node):
         *,
         expected_tcp: Optional[Tuple[float, float, float]],
         joint_tolerance_override: Optional[float] = None,
+        final_hold_s_override: Optional[float] = None,
     ) -> None:
         if not trajectory:
             raise RuntimeError(f"{label} generated an empty trajectory")
@@ -527,9 +603,12 @@ class WP3Task2Online(Node):
             time.sleep(max(0.0, next_tick - time.monotonic()))
 
         goal = tuple(float(value) for value in trajectory[-1].positions)
-        hold_deadline = time.monotonic() + float(
-            self.get_parameter("final_hold_s").value
+        final_hold_s = (
+            float(final_hold_s_override)
+            if final_hold_s_override is not None
+            else float(self.get_parameter("final_hold_s").value)
         )
+        hold_deadline = time.monotonic() + final_hold_s
         while time.monotonic() < hold_deadline:
             self._publish_joint_command(goal)
             time.sleep(period_s)
@@ -597,6 +676,7 @@ class WP3Task2Online(Node):
         job_id: int,
         start_x: float,
         start_y: float,
+        route: str,
         goal_x: float,
         goal_y: float,
     ) -> None:
@@ -605,8 +685,19 @@ class WP3Task2Online(Node):
         path = os.path.join(self._output_directory(), f"job_{job_id:04d}_input.csv")
         with open(path, "w", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream)
-            writer.writerow(["start_x", "start_y", "goal_x", "goal_y"])
-            writer.writerow([start_x, start_y, goal_x, goal_y])
+            writer.writerow(
+                ["start_x", "start_y", "start_radius", "route", "goal_x", "goal_y"]
+            )
+            writer.writerow(
+                [
+                    start_x,
+                    start_y,
+                    math.hypot(start_x, start_y),
+                    route,
+                    goal_x,
+                    goal_y,
+                ]
+            )
 
     def _save_trajectory(
         self,
