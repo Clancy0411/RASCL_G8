@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'wp3_tsk1 = rascl_wp3_ss26_group8.wp3_tsk1:main',
+            'wp3_tsk2 = rascl_wp3_ss26_group8.wp3_tsk2:main',
         ],
     },
 )

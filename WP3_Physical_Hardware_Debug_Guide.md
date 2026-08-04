@@ -227,29 +227,31 @@ concurrent Drive 3 and Cartesian publishers are forbidden.
 
 ### Task 2 Fixed Pick-and-Place
 
-After entering CSP, run group `29` in T3 and enter only start x/y in metres. The
-script calculates `r=sqrt(x^2+y^2)`. Every action takes `5 s`:
+After entering CSP, run group `29` in T3. It starts the required long-running
+`wp3_tsk2` ROS 2 node, so T3 remains occupied. From another container terminal,
+publish each cube centre at runtime:
 
-```text
-common start:
-  (x,y,0.10) -> (x,y,0.045) -> close -> (x,y,0.10)
-
-0.17 <= r <= 0.20:
-  -> (0.1812,-0.0336,0.10) -> (0.1812,-0.0336,0.045)
-
-r < 0.17:
-  -> (0.1517,-0.0282,0.10) -> (0.1517,-0.0282,0.045)
-  -> (0.1812,-0.0336,0.045)
-
-r > 0.20:
-  -> (0.2107,-0.0391,0.10) -> (0.2107,-0.0391,0.045)
-  -> (0.1812,-0.0336,0.045)
-
-common finish:
-  open -> (0.1812,-0.0336,0.10)
+```bash
+ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
+  "{x: 0.16, y: 0.08, z: 0.0}"
 ```
 
-Actions run continuously with no inserted wait or confirmation.
+The node accepts repeated messages and queues them sequentially. For each cube it
+plans online from live `/joint_states` feedback:
+
+```text
+(start_x,start_y,0.10) -> (start_x,start_y,0.045) -> close
+-> (start_x,start_y,0.10) -> (0.18,-0.04,0.10)
+-> (0.18,-0.04,0.045) -> open -> (0.18,-0.04,0.10)
+```
+
+The raw fixed goal is `[0.18,-0.04] m`; the board correction is applied exactly
+once inside the node before IK. The declared default feasible region is
+`0.10 <= r <= 0.184390889 m`, and the goal radius equals that maximum. The limits
+must be replaced if final collision/reach validation establishes different radii.
+Each Cartesian segment is planned and endpoint-verified independently. Task inputs
+and all generated minimum-jerk trajectories are saved under
+`/tmp/rascl_wp3_tsk2`.
 
 ### C. Repeated Targets During a Healthy CSP Session
 
@@ -425,7 +427,7 @@ occupy the terminal until `Ctrl-C`.
 | 23 | T3 | Enter, plan, and immediately execute a target |
 | 24 / 25 / 26 / 27 | T3 | One-click Task 1 stages 1 / 2 / 3 / 4 |
 | 28 | T3 | Execute all four Task 1 stages |
-| 29 | T3 | Task 2 fixed-target pick-and-place from entered XY |
+| 29 | T3 | Start the `wp3_tsk2` node; receive runtime cube centres on `/goal_poses` |
 
 Normal order is
 `T1:4 -> T2:6 -> (19/20/21->22 during calibration) -> 7 -> T3:8->13->28`.

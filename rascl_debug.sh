@@ -87,6 +87,9 @@ require_wp3_package() {
   if ! ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk1'; then
     die "The package was found, but the wp3_tsk1 executable is not installed; run group 1 again and inspect the build output"
   fi
+  if ! ros2 pkg executables rascl_wp3_ss26_group8 | grep -q 'wp3_tsk2'; then
+    die "The package was found, but the wp3_tsk2 executable is not installed; run group 1 again and inspect the build output"
+  fi
 }
 
 require_real_packages() {
@@ -184,8 +187,8 @@ require_csp_session() {
 require_no_active_wp3_motion() {
   local nodes
   nodes="$(ros2 node list 2>/dev/null || true)"
-  if grep -Eq '^/wp3_tsk1(_[0-9]+)?$' <<<"$nodes"; then
-    die "The wp3_tsk1 trajectory node is still publishing commands; wait for group 10 to finish before controlling Drive 3 independently"
+  if grep -Eq '^/wp3_tsk(1|2)(_[0-9]+)?$' <<<"$nodes"; then
+    die "A WP3 trajectory node is still active; stop it before controlling Drive 3 independently"
   fi
 }
 
@@ -618,7 +621,7 @@ group_input_limit_diagnostics() {
 group_process_check() {
   cd "$WORKSPACE"
   echo "RASCL processes still running:"
-  ps -ef | grep -E "ros2_control_node|rascl_faulhaber_bridge|wp3_tsk1" | grep -v grep || true
+  ps -ef | grep -E "ros2_control_node|rascl_faulhaber_bridge|wp3_tsk1|wp3_tsk2" | grep -v grep || true
   echo "TCP port 15001:"
   ss -ltnp | grep 15001 || true
 }
@@ -1006,57 +1009,20 @@ group_task1_all_stages() {
 }
 
 group_task2_pick_and_place() {
-  local x y r route polar_result
-  read -r -p "Task 2 start x [m]: " x
-  read -r -p "Task 2 start y [m]: " y
-  is_number "$x" || die "Task 2 x is not a valid number: $x"
-  is_number "$y" || die "Task 2 y is not a valid number: $y"
-
-  # Task 2 selects only the radial route; each route reuses the same verified helpers.
-  polar_result="$(python3 - "$x" "$y" <<'PY'
-import math
-import sys
-
-x, y = map(float, sys.argv[1:])
-r = math.hypot(x, y)
-if r < 0.17:
-    route = "inner"
-elif r <= 0.20:
-    route = "middle"
-else:
-    route = "outer"
-print(f"{r:.9f} {route}")
-PY
-)" || die "Could not calculate the polar radius of the Task 2 start point"
-  read -r r route <<<"$polar_result"
-
-  echo "Task 2: start point [$x, $y], r=$r m, route=$route. All actions take 5 s, with no inserted delay."
-  task1_move_to "Task2/1" "$x" "$y" 0.10 5
-  task1_move_to "Task2/2" "$x" "$y" 0.045 5
-  task1_gripper_preset close 5
-  task1_move_to "Task2/3" "$x" "$y" 0.10 5
-
-  case "$route" in
-    middle)
-      task1_move_to "Task2/middle/1" 0.1812 -0.0336 0.10 5
-      task1_move_to "Task2/middle/2" 0.1812 -0.0336 0.045 5
-      ;;
-    inner)
-      task1_move_to "Task2/inner/1" 0.1517 -0.0282 0.10 5
-      task1_move_to "Task2/inner/2" 0.1517 -0.0282 0.045 5
-      task1_move_to "Task2/inner/3" 0.1812 -0.0336 0.045 5
-      ;;
-    outer)
-      task1_move_to "Task2/outer/1" 0.2107 -0.0391 0.10 5
-      task1_move_to "Task2/outer/2" 0.2107 -0.0391 0.045 5
-      task1_move_to "Task2/outer/3" 0.1812 -0.0336 0.045 5
-      ;;
-    *) die "Unrecognized Task 2 route: $route" ;;
-  esac
-
-  task1_gripper_preset open 5
-  task1_move_to "Task2/final" 0.1812 -0.0336 0.10 5
-  echo "Task 2 complete."
+  load_ros
+  require_wp3_package
+  require_csp_session
+  require_active_controllers
+  require_no_active_wp3_motion
+  clear_plan_state
+  echo "Starting the required wp3_tsk2 online node in T3. Keep this terminal running."
+  echo "Publish each runtime cube centre from another container terminal, for example:"
+  echo "ros2 topic pub --once /goal_poses geometry_msgs/msg/Point '{x: 0.16, y: 0.08, z: 0.0}'"
+  echo "The node accepts repeated messages, processes them sequentially, and writes Task 2 input/trajectory CSV files under /tmp/rascl_wp3_tsk2."
+  ros2 run rascl_wp3_ss26_group8 wp3_tsk2 --ros-args \
+    -p execute:=true \
+    -p apply_board_xy_compensation:=true \
+    -p require_torque_service:=true
 }
 
 print_menu() {
@@ -1099,10 +1065,10 @@ print_menu() {
     " 26  Task 1 stage 3: square 3 -> square 1                 [T3, moves]" \
     " 27  Task 1 stage 4: square 2 -> square 3                 [T3, moves]" \
     " 28  Task 1 full sequence: stages 1 -> 2 -> 3 -> 4        [T3, moves]" \
-    " 29  Task 2: enter start XY and complete pick-and-place   [T3, moves]" \
+    " 29  Start Task 2 /goal_poses online pick-and-place node  [T3, moves]" \
     "  0  Exit" \
     "" \
-    "Groups 2, 4, and 7 keep their terminal occupied until Ctrl-C is pressed." \
+    "Groups 2, 4, 7, and 29 keep their terminal occupied until Ctrl-C is pressed." \
     "CSP order: T1=4; T2=6->(19/20/21->22 during calibration)->7; T3=8->13->23 (or 14->9->10). Drive 3: T3=15 moves, 17 reads counts."
 }
 

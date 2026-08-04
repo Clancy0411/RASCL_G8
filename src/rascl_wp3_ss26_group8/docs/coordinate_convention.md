@@ -52,8 +52,9 @@ is active.
 An optional fixed-board task correction is applied only when
 `apply_board_xy_compensation:=true`. It transforms the requested board-plane
 XY target before IK and leaves Z, Home, encoder offsets, and URDF geometry
-unchanged. `rascl_debug.sh` groups `9` and `10` enable this correction with the
-same fitted coefficients; direct `wp3_tsk1` and launch calls default to off.
+unchanged. `rascl_debug.sh` groups `9`, `10`, and `29` enable this correction with
+the same fitted coefficients. Direct `wp3_tsk1` calls default to off;
+`wp3_tsk2` defaults to on because `/goal_poses` contains raw board coordinates.
 
 The 2026-07-29 fit used the following measured command corrections in the board
 plane. Coordinates and corrections in this table are millimetres:

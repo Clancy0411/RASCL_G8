@@ -1,21 +1,16 @@
 # rascl_wp3_ss26_group8
 
-This package contains the first WP3 application code for Group 8.
+This package contains the WP3 Task 1 and Task 2 application code for Group 8.
 
-The current milestone focuses on Task 1 preparation:
+It installs two required ROS 2 executables:
 
-- one Cartesian target is given in the `base_link` coordinate frame,
-- the tool center point (TCP) is the fixed, externally measured ideal
-  `tcp_link`,
-- the node solves inverse kinematics for the three arm joints,
-- it generates a joint-space minimum-jerk trajectory,
-- it publishes the trajectory to `/rascl_position_controller/commands`,
-- after execution it requires fresh `/joint_states` feedback and verifies the
-  final four-joint and TCP errors before returning success.
+- `wp3_tsk1`: one Cartesian target, IK, and an offline minimum-jerk trajectory.
+- `wp3_tsk2`: a long-running online pick-and-place node that receives cube
+  centres on `/goal_poses` as `geometry_msgs/msg/Point`.
 
-This version does **not** yet control the gripper or constrain arbitrary
-end-effector orientation. Joint position samples are executed through the
-FAULHABER CSP mode and cyclic EtherCAT Position PDOs on real hardware.
+Both nodes publish joint position samples through FAULHABER CSP mode and cyclic
+EtherCAT Position PDOs on real hardware. Task 2 also controls Drive 3 for the
+gripper and processes repeated cube messages sequentially.
 
 ## Coordinate convention
 
@@ -61,10 +56,11 @@ to the current TCP. Calibration measurements must refer to the externally
 measured ideal TCP represented by `tcp_link`, not the physical spur-gear axis.
 No global XY correction is applied between the base and shoulder.
 
-For the repeatably mounted cube board only, `wp3_tsk1` provides an optional
+For the repeatably mounted cube board, both WP3 nodes provide an optional
 task-layer affine correction before IK. It does not modify Home, joint angles,
-or URDF geometry. `rascl_debug.sh` groups `9` and `10` enable it; generic node
-and launch users remain uncompensated by default. With metres as the unit:
+or URDF geometry. `rascl_debug.sh` groups `9`, `10`, and `29` enable it. Direct
+`wp3_tsk1` calls default to off; `wp3_tsk2` defaults to on because its inputs are
+raw board coordinates. With metres as the unit:
 
 ```text
 x_corrected = 1.0098577586*x - 0.0114794948*y + 0.0006327808
@@ -138,6 +134,30 @@ finishes while one or more drives remain short of the endpoint exits non-zero;
 `rascl_debug.sh` group `10` then retrieves the bridge's latest staged
 `CSP_STALL_SNAPSHOT`, and group `16` can display it again.
 
+## Task 2 online node
+
+Start fake `ros2_control`, then run the Task 2 launch file in a second terminal:
+
+```bash
+ros2 launch rascl_wp3_ss26_group8 wp3_tsk2.launch.py \
+  require_torque_service:=false \
+  execute:=true
+```
+
+Publish cube centres from a third terminal while the node remains active:
+
+```bash
+ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
+  "{x: 0.16, y: 0.08, z: 0.0}"
+```
+
+The node validates the configured feasible radius and shoulder-angle range, queues
+messages, plans every waypoint online from live `/joint_states`, and saves the
+input plus each generated trajectory under `/tmp/rascl_wp3_tsk2`. The raw fixed
+goal is `[0.18,-0.04] m`; its radius is the declared default maximum feasible
+radius. For physical hardware, start the node through `rascl_debug.sh` group `29`,
+which requires the Drive 3 torque-protection service.
+
 ## Combined launch
 
 The WP3 launch file can also start the existing robot stack:
@@ -163,7 +183,7 @@ Start with targets near the automatic-Home TCP.
 ## CSP/PDO execution path
 
 ```text
-wp3_tsk1 minimum-jerk samples
+wp3_tsk1 / wp3_tsk2 minimum-jerk samples
   -> ForwardCommandController position interface
   -> RASCLHardwareInterface target-count cache
   -> rascl_faulhaber_bridge fixed 20 ms loop

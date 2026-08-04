@@ -251,24 +251,40 @@ seconds.
 During operation, Task 2 receives the XY start position of an unknown block and
 moves the block to a fixed target.
 
-### Group Required for Task 2
+### Task 2 ROS 2 Node
 
 After completing groups `1 -> 4 -> 6 -> 7` and entering a healthy CSP session,
-Task 2 itself requires only group `29` in T3:
+start the required long-running `wp3_tsk2` node with group `29` in T3:
 
 ```bash
 bash ./rascl_debug.sh 29
 ```
 
-The program then requests the original coordinates of the block centre:
+Keep T3 running. From another container terminal, publish each cube centre during
+runtime with the required `geometry_msgs/msg/Point` message:
 
-```text
-Task 2 start x [m]:
-Task 2 start y [m]:
+```bash
+ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
+  "{x: 0.16, y: 0.08, z: 0.0}"
 ```
 
-It automatically performs the approach, descent, grasp, lift, transfer, release,
-and retreat sequence.
+The node remains active and processes any additional valid messages sequentially.
+For every cube it performs a vertical approach, descent, grasp, lift, high transfer,
+descent, release, and retreat. Every Cartesian waypoint is planned online from the
+latest `/joint_states` feedback. Input and generated minimum-jerk CSV files are
+saved under `/tmp/rascl_wp3_tsk2`.
+
+The submission-facing files and executable are:
+
+```text
+rascl_wp3_ss26_group8/wp3_tsk2.py
+launch/wp3_tsk2.launch.py
+ros2 run rascl_wp3_ss26_group8 wp3_tsk2
+```
+
+The currently documented feasible radial region is `0.10 <= r <= 0.184390889 m`
+with a shoulder angle between `-pi/2` and `+pi/2`. These limits must match the
+collision-free region validated for the final robot-gripper configuration.
 
 ### Original Task 2 Target
 
@@ -311,7 +327,7 @@ through calibration.
 | 26 | T3 | Yes | Task 1 stage 3: move block 2 onto block 1 |
 | 27 | T3 | Yes | Task 1 stage 4: move block 3 to the top of the tower |
 | 28 | T3 | Yes | Run Task 1 stages 1-4 continuously |
-| 29 | T3 | Yes | Enter the unknown block's start XY and complete the Task 2 pick-and-place operation |
+| 29 | T3 | Yes | Start the long-running `wp3_tsk2` node that receives cube centres on `/goal_poses` |
 
 For the complete Homing, CSP, fault-handling, and safety procedures, see
 `WP3_Physical_Hardware_Debug_Guide.md`.
