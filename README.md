@@ -50,6 +50,20 @@ the fixed assessed action list is stored in
 [`task1_input.csv`](src/rascl_wp3_ss26_group8/trajectories/task1_input.csv).
 It matches the fixed group `28` sequence; the operator does not enter Task 1
 coordinates at runtime.
+
+The starting arrangement uses the coordinate-board markings in millimetres:
+
+- Cube 1 is placed at `(-160, 160)`, on the left of the robot reference
+  switch.
+- Cubes 2 and 3 are stacked at `(30, 170)`, near the reference switch, with
+  Cube 2 below Cube 3.
+
+These positions satisfy the assessed placement and radius ordering: Cube 1
+starts at the largest radius, the Cube 2/3 stack is at an intermediate radius,
+and the fixed goal on the right is at the smallest radius. The sequence moves
+the cubes individually to new positions and produces the final order Cube 1,
+Cube 2, Cube 3 from bottom to top.
+
 For every Cartesian leg, group `9` uses live feedback and IK to generate the
 offline joint trajectory
 [`task1_output.csv`](src/rascl_wp3_ss26_group8/trajectories/task1_output.csv).
@@ -70,6 +84,14 @@ cube briefly contacts the smaller-radius board region; for an outer-to-inner
 transfer it briefly contacts the larger-radius region. This reduces cube tilt
 before release. Task 2 input and generated trajectory CSV files are written
 under the package `trajectories/` directory.
+
+During physical acceptance validation, the demonstrated minimum-to-maximum
+feasible radial range covered the complete coordinate board. The practical
+minimum and maximum feasible radii are therefore the innermost and outermost
+available radii of the assessed board. The tutor may select any board
+coordinate at random for the runtime cube position. The `0.17 m` and `0.20 m`
+values used internally select among transfer actions; they do not restrict the
+validated feasible region.
 
 ### Trajectory CSV Files
 
