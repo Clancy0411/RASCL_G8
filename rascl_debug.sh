@@ -60,6 +60,7 @@ STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
 TARGET_STATE_FILE="$STATE_DIR/target.state"
 CSP_SESSION_FILE="$STATE_DIR/csp_session.state"
 PLAN_STATE_FILE="$STATE_DIR/plan.state"
+TASK1_SEQUENCE_ACTIVE=false
 
 die() {
   echo "ERROR: $*" >&2
@@ -236,26 +237,30 @@ PY
 }
 
 save_plan_state() {
-  # Store both the CSP process ID and target signature to reject stale plans.
+  # Bind the authorized CSV segment to the current CSP process and target.
+  local segment="${1:-manual}"
   ensure_state_dir
   local session_pid
   IFS= read -r session_pid <"$CSP_SESSION_FILE"
-  printf '%s\n%s\n' "$session_pid" "$(target_signature)" >"$PLAN_STATE_FILE"
+  printf '%s\n%s\n%s\n' "$session_pid" "$(target_signature)" "$segment" >"$PLAN_STATE_FILE"
 }
 
 require_matching_plan() {
   # Execution is valid only for the exact target planned in the current CSP session.
+  local expected_segment="${1:-manual}"
   require_csp_session
   [[ -f "$PLAN_STATE_FILE" ]] || die "The current CSP session has no successful group 9 plan; execution is blocked"
   local planned=()
   mapfile -t planned <"$PLAN_STATE_FILE"
-  [[ "${#planned[@]}" -eq 2 ]] || die "The planning authorization file is invalid; run group 9 again"
+  [[ "${#planned[@]}" -eq 3 ]] || die "The planning authorization file is invalid; run group 9 again"
   local session_pid
   IFS= read -r session_pid <"$CSP_SESSION_FILE"
   [[ "${planned[0]}" == "$session_pid" ]] ||
     die "The plan belongs to an old CSP session; run group 9 again in the current session"
   [[ "${planned[1]}" == "$(target_signature)" ]] ||
     die "The current target differs from the group 9 planned target; run group 9 again"
+  [[ "${planned[2]}" == "$expected_segment" ]] ||
+    die "The authorized CSV segment differs from the requested segment; run group 9 again"
 }
 
 group_build_test() {
@@ -292,13 +297,15 @@ group_fake_check() {
   ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:=0.25 -p target_y:=0.00 -p target_z:=0.08 \
     -p duration:=4.0 -p rate_hz:=50.0 -p execute:=false \
-    -p output_csv:="$TASK1_OUTPUT_CSV"
+    -p output_csv:="$TASK1_OUTPUT_CSV" \
+    -p output_segment:=fake_check -p append_output_csv:=false
   head -n 5 "$TASK1_OUTPUT_CSV"
   tail -n 5 "$TASK1_OUTPUT_CSV"
   ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:=0.25 -p target_y:=0.00 -p target_z:=0.08 \
     -p duration:=4.0 -p rate_hz:=50.0 -p execute:=true \
-    -p save_csv:=false -p input_csv:="$TASK1_OUTPUT_CSV"
+    -p save_csv:=false -p input_csv:="$TASK1_OUTPUT_CSV" \
+    -p input_segment:=fake_check
 }
 
 group_homing_bridge() {
@@ -532,6 +539,8 @@ group_csp_check() {
 }
 
 group_real_plan() {
+  local segment="${1:-manual}"
+  local append_output_csv="${2:-false}"
   load_ros
   require_wp3_package
   require_csp_session
@@ -544,12 +553,16 @@ group_real_plan() {
   ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
   # A plan authorizes no motion until its finite package CSV has been checked.
   mkdir -p "$TRAJECTORY_DIR"
-  rm -f "$TASK1_OUTPUT_CSV"
+  if [[ "$append_output_csv" != "true" ]]; then
+    rm -f "$TASK1_OUTPUT_CSV"
+  fi
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p apply_board_xy_compensation:=true \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=false \
-    -p output_csv:="$TASK1_OUTPUT_CSV"; then
+    -p output_csv:="$TASK1_OUTPUT_CSV" \
+    -p output_segment:="$segment" \
+    -p append_output_csv:="$append_output_csv"; then
     echo "The planning command failed; group 10 remains locked. When CSP/controller operation is normal, run groups 14 and 9 again." >&2
     return 0
   fi
@@ -563,14 +576,15 @@ group_real_plan() {
   fi
   head -n 5 "$TASK1_OUTPUT_CSV"
   tail -n 5 "$TASK1_OUTPUT_CSV"
-  save_plan_state
-  echo "Planning passed (fixed-board XY compensation is enabled); group 10 may execute the current target: [$TARGET_X, $TARGET_Y, $TARGET_Z] m"
+  save_plan_state "$segment"
+  echo "Planning passed (fixed-board XY compensation is enabled); group 10 may execute CSV segment '$segment' for target: [$TARGET_X, $TARGET_Y, $TARGET_Z] m"
 }
 
 group_real_execute() {
+  local segment="${1:-manual}"
   load_ros
   require_wp3_package
-  require_matching_plan
+  require_matching_plan "$segment"
   require_active_controllers
   [[ -s "$TASK1_OUTPUT_CSV" ]] ||
     die "Offline Task 1 trajectory is missing; run group 9 again"
@@ -587,7 +601,8 @@ group_real_execute() {
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p apply_board_xy_compensation:=true \
     -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true \
-    -p save_csv:=false -p input_csv:="$TASK1_OUTPUT_CSV"; then
+    -p save_csv:=false -p input_csv:="$TASK1_OUTPUT_CSV" \
+    -p input_segment:="$segment"; then
     clear_plan_state
     echo "Motion did not reach the planned endpoint; reading the CSP stall snapshot saved automatically by the bridge:" >&2
     read_csp_stall_snapshot || true
@@ -945,10 +960,10 @@ task1_move_to() {
   save_target_state
   clear_plan_state
   echo "Task 1 $label: move to [$TARGET_X, $TARGET_Y, $TARGET_Z] m in $TRAJECTORY_DURATION s."
-  group_real_plan
+  group_real_plan "$label" true
   [[ -s "$PLAN_STATE_FILE" ]] ||
     die "Task 1 $label planning failed; this stage stopped and no later action was executed"
-  group_real_execute
+  group_real_execute "$label"
 }
 
 task1_gripper_preset() {
@@ -958,7 +973,21 @@ task1_gripper_preset() {
   group_gripper_action "$action" "$duration"
 }
 
+reset_task1_combined_csv() {
+  mkdir -p "$TRAJECTORY_DIR"
+  rm -f "$TASK1_OUTPUT_CSV"
+  clear_plan_state
+  echo "Task 1 combined trajectory CSV reset: $TASK1_OUTPUT_CSV"
+}
+
+prepare_task1_stage_csv() {
+  if [[ "$TASK1_SEQUENCE_ACTIVE" != "true" ]]; then
+    reset_task1_combined_csv
+  fi
+}
+
 group_task1_stage_1() {
+  prepare_task1_stage_csv
   echo "Task 1 stage 1: move 1. Cartesian actions take 5 s; the marked descent takes 10 s."
   task1_move_to "stage1/1" 0.16 0.16 0.10 5
   task1_move_to "stage1/2" 0.16 0.16 0.05 5
@@ -973,6 +1002,7 @@ group_task1_stage_1() {
 }
 
 group_task1_stage_2() {
+  prepare_task1_stage_csv
   echo "Task 1 stage 2: move 2 to the temporary square. Cartesian actions take 5 s; the marked descent takes 10 s."
   task1_move_to "stage2/1" 0.17 0.03 0.15 5
   task1_move_to "stage2/2" 0.17 0.03 0.085 5
@@ -986,6 +1016,7 @@ group_task1_stage_2() {
 }
 
 group_task1_stage_3() {
+  prepare_task1_stage_csv
   echo "Task 1 stage 3: square 3 to square 1. Cartesian actions take 5 s; the marked descent takes 10 s."
   task1_move_to "stage3/1" 0.17 0.03 0.15 5
   task1_move_to "stage3/2" 0.17 0.03 0.045 5
@@ -999,6 +1030,7 @@ group_task1_stage_3() {
 }
 
 group_task1_stage_4() {
+  prepare_task1_stage_csv
   echo "Task 1 stage 4: square 2 to square 3. Cartesian actions take 5 s; the marked descent takes 10 s."
   task1_move_to "stage4/1" 0.18 -0.04 0.15 5
   task1_move_to "stage4/2" 0.18 -0.04 0.045 5
@@ -1012,11 +1044,15 @@ group_task1_stage_4() {
 
 group_task1_all_stages() {
   echo "Task 1 full sequence: stages 1 -> 2 -> 3 -> 4, with no delay between actions."
+  reset_task1_combined_csv
+  TASK1_SEQUENCE_ACTIVE=true
   group_task1_stage_1
   group_task1_stage_2
   group_task1_stage_3
   group_task1_stage_4
+  TASK1_SEQUENCE_ACTIVE=false
   echo "Task 1 full sequence complete."
+  echo "All 24 Cartesian arm segments remain in one CSV: $TASK1_OUTPUT_CSV"
 }
 
 group_task2_pick_and_place() {
@@ -1077,7 +1113,7 @@ print_menu() {
     " 25  Task 1 stage 2: move 2 -> temporary square           [T3, moves]" \
     " 26  Task 1 stage 3: square 3 -> square 1                 [T3, moves]" \
     " 27  Task 1 stage 4: square 2 -> square 3                 [T3, moves]" \
-    " 28  Task 1 full sequence: stages 1 -> 2 -> 3 -> 4        [T3, moves]" \
+    " 28  Task 1 full sequence + one combined trajectory CSV  [T3, moves]" \
     " 29  Start Task 2 /goal_poses online pick-and-place node  [T3, moves]" \
     "  0  Exit" \
     "" \

@@ -38,7 +38,10 @@ def generate_launch_description():
     execute = LaunchConfiguration("execute")
     save_csv = LaunchConfiguration("save_csv")
     input_csv = LaunchConfiguration("input_csv")
+    input_segment = LaunchConfiguration("input_segment")
     output_csv = LaunchConfiguration("output_csv")
+    output_segment = LaunchConfiguration("output_segment")
+    append_output_csv = LaunchConfiguration("append_output_csv")
     start_delay_s = LaunchConfiguration("start_delay_s")
 
     robot_launch = IncludeLaunchDescription(
@@ -80,7 +83,10 @@ def generate_launch_description():
                 "execute": execute,
                 "save_csv": save_csv,
                 "input_csv": input_csv,
+                "input_segment": input_segment,
                 "output_csv": output_csv,
+                "output_segment": output_segment,
+                "append_output_csv": append_output_csv,
             }
         ],
     )
@@ -152,6 +158,11 @@ def generate_launch_description():
             description="Optional offline joint trajectory CSV to validate and execute without replanning.",
         ),
         DeclareLaunchArgument(
+            "input_segment",
+            default_value="",
+            description="Named segment to load when input_csv is a combined trajectory CSV.",
+        ),
+        DeclareLaunchArgument(
             "output_csv",
             default_value=PathJoinSubstitution([
                 FindPackageShare("rascl_wp3_ss26_group8"),
@@ -159,6 +170,16 @@ def generate_launch_description():
                 "task1_output.csv",
             ]),
             description="Path for generated trajectory CSV.",
+        ),
+        DeclareLaunchArgument(
+            "output_segment",
+            default_value="",
+            description="Named segment to write when creating a combined trajectory CSV.",
+        ),
+        DeclareLaunchArgument(
+            "append_output_csv",
+            default_value="false",
+            description="Append output_segment instead of replacing output_csv.",
         ),
         DeclareLaunchArgument(
             "start_delay_s",

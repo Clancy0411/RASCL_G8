@@ -124,6 +124,23 @@ def test_task1_group_28_runs_all_stages_without_added_waits():
     assert "task1_wait_between_actions" not in script
 
 
+def test_task1_group_28_keeps_all_arm_segments_in_one_csv():
+    script = _find_debug_script().read_text(encoding="utf-8")
+    move_start = script.index("task1_move_to() {")
+    move_end = script.index("\n}\n", move_start) + 2
+    task1_move = script[move_start:move_end]
+    all_start = script.index("group_task1_all_stages() {")
+    all_end = script.index("\n}\n", all_start) + 2
+    group_28 = script[all_start:all_end]
+
+    assert 'group_real_plan "$label" true' in task1_move
+    assert 'group_real_execute "$label"' in task1_move
+    assert "reset_task1_combined_csv" in group_28
+    assert "TASK1_SEQUENCE_ACTIVE=true" in group_28
+    assert "TASK1_SEQUENCE_ACTIVE=false" in group_28
+    assert 'rm -f "$TASK1_OUTPUT_CSV"' not in task1_move
+
+
 def test_task2_group_29_starts_the_required_online_ros_node():
     script = _find_debug_script().read_text(encoding="utf-8")
     start = script.index("group_task2_pick_and_place() {")

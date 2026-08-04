@@ -25,7 +25,13 @@ from .kinematics import (
     forward_tcp,
     inverse_tcp,
 )
-from .trajectory import generate_joint_trajectory, read_csv, write_csv
+from .trajectory import (
+    generate_joint_trajectory,
+    read_csv,
+    read_segment_csv,
+    write_csv,
+    write_segment_csv,
+)
 from .workspace_calibration import (
     DEFAULT_BOARD_XY_MATRIX,
     DEFAULT_BOARD_XY_OFFSET_M,
@@ -70,7 +76,10 @@ class WP3Task1SingleTarget(Node):
         self.declare_parameter("execute", False)
         self.declare_parameter("save_csv", True)
         self.declare_parameter("input_csv", "")
+        self.declare_parameter("input_segment", "")
         self.declare_parameter("output_csv", "trajectories/task1_output.csv")
+        self.declare_parameter("output_segment", "")
+        self.declare_parameter("append_output_csv", False)
         self.declare_parameter("input_start_tolerance_rad", 0.03)
         self.declare_parameter("final_hold_s", 0.5)
         self.declare_parameter("final_joint_tolerance_rad", 0.03)
@@ -198,7 +207,12 @@ class WP3Task1SingleTarget(Node):
 
         input_csv = str(self.get_parameter("input_csv").value).strip()
         if input_csv:
-            trajectory = read_csv(input_csv)
+            input_segment = str(self.get_parameter("input_segment").value).strip()
+            trajectory = (
+                read_segment_csv(input_csv, input_segment)
+                if input_segment
+                else read_csv(input_csv)
+            )
             start_tolerance = float(
                 self.get_parameter("input_start_tolerance_rad").value
             )
@@ -233,6 +247,7 @@ class WP3Task1SingleTarget(Node):
             self.get_logger().info(
                 f"Loaded {len(trajectory)} validated offline trajectory samples from: "
                 f"{input_csv}"
+                + (f" (segment {input_segment!r})" if input_segment else "")
             )
             self.get_logger().info(
                 f"Offline trajectory duration={self._planned_times[-1]:.2f}s; "
@@ -266,9 +281,30 @@ class WP3Task1SingleTarget(Node):
 
         if bool(self.get_parameter("save_csv").value):
             output_csv = str(self.get_parameter("output_csv").value)
+            output_segment = str(
+                self.get_parameter("output_segment").value
+            ).strip()
+            append_output_csv = bool(
+                self.get_parameter("append_output_csv").value
+            )
             os.makedirs(os.path.dirname(output_csv) or ".", exist_ok=True)
-            write_csv(output_csv, trajectory)
-            self.get_logger().info(f"Saved generated minimum-jerk trajectory to: {output_csv}")
+            if output_segment:
+                write_segment_csv(
+                    output_csv,
+                    output_segment,
+                    trajectory,
+                    append=append_output_csv,
+                )
+            else:
+                if append_output_csv:
+                    raise ValueError(
+                        "append_output_csv requires a non-empty output_segment"
+                    )
+                write_csv(output_csv, trajectory)
+            self.get_logger().info(
+                f"Saved generated minimum-jerk trajectory to: {output_csv}"
+                + (f" (segment {output_segment!r})" if output_segment else "")
+            )
 
         commands = []
         for point in trajectory:

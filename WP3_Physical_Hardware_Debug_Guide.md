@@ -113,9 +113,10 @@ bash ./rascl_debug.sh 2
 bash ./rascl_debug.sh 3
 ```
 
-Group `3` checks controllers and feedback, generates a Task 1 trajectory in
-`src/rascl_wp3_ss26_group8/trajectories/task1_output.csv`, and executes that
-same offline file on fake hardware. Stop group `2` before physical operation.
+Group `3` checks controllers and feedback, generates the `fake_check` segment
+in `src/rascl_wp3_ss26_group8/trajectories/task1_output.csv`, and executes that
+same offline segment on fake hardware. Stop group `2` before physical
+operation.
 
 ## Groups 4-8: Homing and CSP
 
@@ -228,14 +229,15 @@ bash ./rascl_debug.sh 9
 ```
 
 Group `9` verifies the current CSP session, reads live joints, runs IK, creates
-a 50 Hz minimum-jerk trajectory, and writes:
+a 50 Hz minimum-jerk trajectory, and writes the named `manual` segment to:
 
 ```text
 /root/ws/src/rascl_wp3_ss26_group8/trajectories/task1_output.csv
 ```
 
-It checks the CSV for invalid values and records an authorization tied to the
-current target and group `7` process. It publishes no motion command.
+For manual use, group `9` replaces the previous file. It checks the CSV for
+invalid values and records an authorization tied to the current target, the
+`manual` segment, and the group `7` process. It publishes no motion command.
 
 ### Group 10 - Execute Offline Trajectory
 
@@ -244,10 +246,10 @@ bash ./rascl_debug.sh 10
 ```
 
 Group `10` requires the matching group `9` authorization. It loads the exact
-package CSV, verifies its joint order, timestamps, starting joint state, and
-final target, then publishes its stored samples at their CSV timestamps. It
-does not rerun IK or regenerate the trajectory. Final joint and TCP feedback
-must pass before success is returned.
+`manual` segment from the package CSV, verifies its joint order, timestamps,
+starting joint state, and final target, then publishes its stored samples at
+their CSV timestamps. It does not rerun IK or regenerate the trajectory. Final
+joint and TCP feedback must pass before success is returned.
 
 ### Group 23 - Set, Plan, and Execute
 
@@ -336,10 +338,14 @@ The submission input record matching the fixed assessed action sequence is:
 | 26 | Move the lower cube onto cube 1 |
 | 27 | Move the temporary cube onto the tower |
 
-Each Cartesian leg calls group `9` to generate the package output CSV and
-group `10` to load and execute that same file. Gripper actions use the exact
-group `15` count increments. Task 1 takes no runtime coordinate input. A
-failure stops the stage.
+Each Cartesian leg uses the same group `9` planning and group `10` execution
+logic, but is stored under a unique segment name such as `stage1/1`. The full
+group `28` run clears `task1_output.csv` once, appends all 24 Cartesian arm
+segments, and reads the matching segment back before each execution. A segment
+keeps its own time axis starting at zero. Gripper actions use the exact group
+`15` count increments and are not stored as Cartesian arm rows. Task 1 takes no
+runtime coordinate input. A failure stops the stage and leaves the segments
+already written in the combined CSV.
 
 The normal Task 1 command is:
 
@@ -440,7 +446,7 @@ only when the workstation or validated setup requires it.
 | `RASCL_INTERFACE` | `enx3c18a0256deb` | EtherCAT interface |
 | `ROS_DOMAIN_ID` | `88` | ROS domain |
 | `RASCL_TRAJECTORY_DIR` | package `trajectories/` | Task CSV directory |
-| `RASCL_TASK1_OUTPUT_CSV` | `task1_output.csv` | Offline Task 1 joint trajectory |
+| `RASCL_TASK1_OUTPUT_CSV` | `task1_output.csv` | Combined segmented Task 1 arm trajectories |
 | `RASCL_TASK2_OUTPUT_DIR` | package `trajectories/` | Task 2 CSV directory |
 | `RASCL_LOWERARM_DIRECTION` | `1` | Drive 2 encoder-to-URDF sign |
 | `RASCL_LOWERARM_HOME_OFFSET_COUNTS` | `-802816` | Drive 2 URDF offset |
