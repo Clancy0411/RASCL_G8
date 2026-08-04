@@ -41,6 +41,21 @@ The commanded joint order is:
 Cartesian coordinates are metres in the URDF `base_link` frame. The planning
 TCP is `tcp_link`, the measured point 170 mm along the lower arm.
 
+The printed coordinate board uses millimetres and its planar axes are swapped
+and sign-adjusted relative to `base_link`. Convert a board position before
+publishing it to ROS:
+
+```text
+x_ros [m] =  y_board [mm] / 1000
+y_ros [m] = -x_board [mm] / 1000
+```
+
+For example, board point `(40, 180)` corresponds approximately to ROS
+`(0.180, -0.040) m`, while board point `(-160, 160)` corresponds to ROS
+`(0.160, 0.160) m`. ROS inputs must always use metres. The task nodes apply the
+existing calibrated board correction after this nominal conversion; do not
+apply that correction manually.
+
 ## Task Implementation
 
 ### Task 1 - Offline Trajectory Execution
@@ -55,7 +70,7 @@ The starting arrangement uses the coordinate-board markings in millimetres:
 
 - Cube 1 is placed at `(-160, 160)`, on the left of the robot reference
   switch.
-- Cubes 2 and 3 are stacked at `(30, 170)`, near the reference switch, with
+- Cubes 2 and 3 are stacked at `(-30, 170)`, near the reference switch, with
   Cube 2 below Cube 3.
 
 These positions satisfy the assessed placement and radius ordering: Cube 1
