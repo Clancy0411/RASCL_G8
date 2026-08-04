@@ -45,9 +45,11 @@ TCP is `tcp_link`, the measured point 170 mm along the lower arm.
 
 ### Task 1 - Offline Trajectory Execution
 
-Task 1 stacks three cubes in the required order. The fixed assessed action list
-is stored in
+Task 1 stacks three cubes in the required order. The submitted input record of
+the fixed assessed action list is stored in
 [`task1_input.csv`](src/rascl_wp3_ss26_group8/trajectories/task1_input.csv).
+It matches the fixed group `28` sequence; the operator does not enter Task 1
+coordinates at runtime.
 For every Cartesian leg, group `9` uses live feedback and IK to generate the
 offline joint trajectory
 [`task1_output.csv`](src/rascl_wp3_ss26_group8/trajectories/task1_output.csv).
@@ -61,14 +63,39 @@ The `wp3_tsk2` node receives each unknown cube centre at runtime from
 `/goal_poses` as `geometry_msgs/msg/Point`. It plans from current joint
 feedback and moves the cube to coordinate-board point `(40, 180)`.
 
-The fixed validated internal destination remains `(0.1812, -0.0336) m`.
-Planar radius is used only to select the validated inner, direct, or outer
-transfer action; waypoint reachability is decided by IK. For an inner-to-outer
-transfer, the cube briefly
-contacts the smaller-radius board region; for an outer-to-inner transfer it
-briefly contacts the larger-radius region. This reduces cube tilt before
-release. Task 2 input and generated trajectory CSV files are written under the
-package `trajectories/` directory.
+The fixed validated destination is board coordinate `(40, 180)`. Planar radius
+is used only to select the validated inner, direct, or outer transfer action;
+waypoint reachability is decided by IK. For an inner-to-outer transfer, the
+cube briefly contacts the smaller-radius board region; for an outer-to-inner
+transfer it briefly contacts the larger-radius region. This reduces cube tilt
+before release. Task 2 input and generated trajectory CSV files are written
+under the package `trajectories/` directory.
+
+### Trajectory CSV Files
+
+Inside the container, all submitted and generated trajectory files are stored
+in:
+
+```text
+/root/ws/src/rascl_wp3_ss26_group8/trajectories/
+```
+
+The important files are:
+
+- `task1_input.csv`: submitted record of the fixed Task 1 action sequence used
+  by group `28`; it is not a runtime coordinate input.
+- `task1_output.csv`: minimum-jerk joint trajectory generated for the current
+  Task 1 arm leg and then loaded by the executor. During group `28`, the file is
+  updated for each arm leg and therefore contains the most recently generated
+  leg after the sequence finishes.
+- `task2_job_0001_input.csv`: record of the first `/goal_poses` input and the
+  selected transfer route to board point `(40, 180)`.
+- `task2_job_0001_step_XX_<label>.csv`: generated joint trajectory for each arm
+  step of that Task 2 job. The job number increases for every accepted input
+  while group `29` remains running.
+
+These files are generated automatically by the normal examiner commands below;
+no manual CSV editing is required.
 
 ## Requirements
 

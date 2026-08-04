@@ -3,6 +3,9 @@
 This is the complete operating reference for `rascl_debug.sh`. It describes
 all command groups and their expected use. Run it inside the ROS container:
 
+Use the repository `README.md` for the examiner-facing Task 1 and Task 2
+reproduction procedure. This guide is the detailed command-group reference.
+
 ```bash
 cd /root/ws
 bash ./rascl_debug.sh
@@ -320,7 +323,7 @@ session.
 
 ## Groups 24-28: Task 1
 
-The assessed action input is stored at:
+The submission input record matching the fixed assessed action sequence is:
 
 ```text
 /root/ws/src/rascl_wp3_ss26_group8/trajectories/task1_input.csv
@@ -335,7 +338,8 @@ The assessed action input is stored at:
 
 Each Cartesian leg calls group `9` to generate the package output CSV and
 group `10` to load and execute that same file. Gripper actions use the exact
-group `15` count increments. A failure stops the stage.
+group `15` count increments. Task 1 takes no runtime coordinate input. A
+failure stops the stage.
 
 The normal Task 1 command is:
 
@@ -367,9 +371,8 @@ ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
 `Point.x` and `Point.y` are the measured board coordinates in metres.
 `Point.z` is ignored; the validated pickup height is configured in the node.
 
-The fixed internal destination is `(0.1812, -0.0336) m`, corresponding to the
-assessed board destination `(40, 180)`. The start radius only selects one of
-three validated actions:
+The fixed assessed destination is board coordinate `(40, 180)`. The start
+radius only selects one of three validated actions:
 
 - radius below `0.17 m`: inner alignment, then move outward;
 - radius from `0.17 m` through `0.20 m`: direct transfer;
