@@ -51,6 +51,11 @@ TARGET_X="${RASCL_TARGET_X:-0.2108}"
 TARGET_Y="${RASCL_TARGET_Y:--0.00177}"
 TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
+# Task deliverables stay inside the required ROS package instead of /tmp.
+TRAJECTORY_DIR="${RASCL_TRAJECTORY_DIR:-$WORKSPACE/src/rascl_wp3_ss26_group8/trajectories}"
+TASK1_INPUT_CSV="$TRAJECTORY_DIR/task1_input.csv"
+TASK1_OUTPUT_CSV="${RASCL_TASK1_OUTPUT_CSV:-$TRAJECTORY_DIR/task1_output.csv}"
+TASK2_OUTPUT_DIR="${RASCL_TASK2_OUTPUT_DIR:-$TRAJECTORY_DIR}"
 # These files bind a target and its plan to one live CSP process.
 STATE_DIR="${RASCL_STATE_DIR:-/tmp/rascl_debug}"
 TARGET_STATE_FILE="$STATE_DIR/target.state"
@@ -287,12 +292,14 @@ group_fake_check() {
   ros2 topic echo --once /joint_states
   ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:=0.25 -p target_y:=0.00 -p target_z:=0.08 \
-    -p duration:=4.0 -p rate_hz:=50.0 -p execute:=false
-  head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
-  tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
+    -p duration:=4.0 -p rate_hz:=50.0 -p execute:=false \
+    -p output_csv:="$TASK1_OUTPUT_CSV"
+  head -n 5 "$TASK1_OUTPUT_CSV"
+  tail -n 5 "$TASK1_OUTPUT_CSV"
   ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:=0.25 -p target_y:=0.00 -p target_z:=0.08 \
-    -p duration:=4.0 -p rate_hz:=50.0 -p execute:=true
+    -p duration:=4.0 -p rate_hz:=50.0 -p execute:=true \
+    -p save_csv:=false -p input_csv:="$TASK1_OUTPUT_CSV"
 }
 
 group_homing_bridge() {
@@ -536,25 +543,27 @@ group_real_plan() {
   ros_y="$(ros_double_literal "$TARGET_Y")"
   ros_z="$(ros_double_literal "$TARGET_Z")"
   ros_duration="$(ros_double_literal "$TRAJECTORY_DURATION")"
-  # A plan authorizes no motion until its finite CSV has been checked and recorded.
-  rm -f /tmp/rascl_wp3_tsk1_last_trajectory.csv
+  # A plan authorizes no motion until its finite package CSV has been checked.
+  mkdir -p "$TRAJECTORY_DIR"
+  rm -f "$TASK1_OUTPUT_CSV"
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p apply_board_xy_compensation:=true \
-    -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=false; then
+    -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=false \
+    -p output_csv:="$TASK1_OUTPUT_CSV"; then
     echo "The planning command failed; group 10 remains locked. When CSP/controller operation is normal, run groups 14 and 9 again." >&2
     return 0
   fi
-  if [[ ! -s /tmp/rascl_wp3_tsk1_last_trajectory.csv ]]; then
+  if [[ ! -s "$TASK1_OUTPUT_CSV" ]]; then
     echo "Planning did not generate a trajectory CSV; group 10 remains locked." >&2
     return 0
   fi
-  if grep -Eiq '(^|,)(nan|[-+]?inf)(,|$)' /tmp/rascl_wp3_tsk1_last_trajectory.csv; then
+  if grep -Eiq '(^|,)(nan|[-+]?inf)(,|$)' "$TASK1_OUTPUT_CSV"; then
     echo "The trajectory CSV contains nan/inf; group 10 remains locked." >&2
     return 0
   fi
-  head -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
-  tail -n 5 /tmp/rascl_wp3_tsk1_last_trajectory.csv
+  head -n 5 "$TASK1_OUTPUT_CSV"
+  tail -n 5 "$TASK1_OUTPUT_CSV"
   save_plan_state
   echo "Planning passed (fixed-board XY compensation is enabled); group 10 may execute the current target: [$TARGET_X, $TARGET_Y, $TARGET_Z] m"
 }
@@ -564,6 +573,8 @@ group_real_execute() {
   require_wp3_package
   require_matching_plan
   require_active_controllers
+  [[ -s "$TASK1_OUTPUT_CSV" ]] ||
+    die "Offline Task 1 trajectory is missing; run group 9 again"
   local ros_x ros_y ros_z ros_duration
   ros_x="$(ros_double_literal "$TARGET_X")"
   ros_y="$(ros_double_literal "$TARGET_Y")"
@@ -576,7 +587,8 @@ group_real_execute() {
   if ! ros2 run rascl_wp3_ss26_group8 wp3_tsk1 --ros-args \
     -p target_x:="$ros_x" -p target_y:="$ros_y" -p target_z:="$ros_z" \
     -p apply_board_xy_compensation:=true \
-    -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true; then
+    -p duration:="$ros_duration" -p rate_hz:=50.0 -p execute:=true \
+    -p save_csv:=false -p input_csv:="$TASK1_OUTPUT_CSV"; then
     clear_plan_state
     echo "Motion did not reach the planned endpoint; reading the CSP stall snapshot saved automatically by the bridge:" >&2
     read_csp_stall_snapshot || true
@@ -1000,6 +1012,8 @@ group_task1_stage_4() {
 }
 
 group_task1_all_stages() {
+  [[ -s "$TASK1_INPUT_CSV" ]] ||
+    die "Task 1 input file is missing: $TASK1_INPUT_CSV"
   echo "Task 1 full sequence: stages 1 -> 2 -> 3 -> 4, with no delay between actions."
   group_task1_stage_1
   group_task1_stage_2
@@ -1015,14 +1029,16 @@ group_task2_pick_and_place() {
   require_active_controllers
   require_no_active_wp3_motion
   clear_plan_state
+  mkdir -p "$TASK2_OUTPUT_DIR"
   echo "Starting the required wp3_tsk2 online node in T3. Keep this terminal running."
   echo "Publish each runtime cube centre from another container terminal, for example:"
   echo "ros2 topic pub --once /goal_poses geometry_msgs/msg/Point '{x: 0.16, y: 0.08, z: 0.0}'"
-  echo "The node accepts repeated messages, processes them sequentially, and writes Task 2 input/trajectory CSV files under /tmp/rascl_wp3_tsk2."
+  echo "The node accepts repeated messages, processes them sequentially, and writes Task 2 CSV files under $TASK2_OUTPUT_DIR."
   ros2 run rascl_wp3_ss26_group8 wp3_tsk2 --ros-args \
     -p execute:=true \
     -p apply_board_xy_compensation:=true \
-    -p require_torque_service:=true
+    -p require_torque_service:=true \
+    -p output_directory:="$TASK2_OUTPUT_DIR"
 }
 
 print_menu() {
@@ -1042,9 +1058,9 @@ print_menu() {
     "  6  home_all (Drives 0-2)                               [T2]" \
     "  7  Start physical CSP ros2_control (includes Drive 3)  [T2]" \
     "  8  Controller/joint-state hold check for 10 seconds    [T3]" \
-    "  9  Plan physical minimum-jerk trajectory only          [T3]" \
+    "  9  Generate offline minimum-jerk trajectory CSV        [T3]" \
     "     (fixed-board XY compensation)" \
-    " 10  Execute physical minimum-jerk trajectory            [T3, moves]" \
+    " 10  Load and execute the authorized offline CSV         [T3, moves]" \
     "     (fixed-board XY compensation)" \
     " 11  Check residual processes and TCP port                [T3]" \
     " 12  Package complete ROS logs in the shared workspace    [any]" \

@@ -29,9 +29,7 @@ from .task2_sequence import (
     DEFAULT_INNER_ROUTE_X_M,
     DEFAULT_INNER_ROUTE_Y_M,
     DEFAULT_INNER_ROUTE_MAX_RADIUS_M,
-    DEFAULT_MAX_FEASIBLE_RADIUS_M,
     DEFAULT_MIDDLE_ROUTE_MAX_RADIUS_M,
-    DEFAULT_MIN_FEASIBLE_RADIUS_M,
     DEFAULT_OUTER_ROUTE_X_M,
     DEFAULT_OUTER_ROUTE_Y_M,
     DEFAULT_SHOULDER_ANGLE_LIMIT_RAD,
@@ -67,8 +65,6 @@ class WP3Task2Online(Node):
 
         self.declare_parameter("goal_x", DEFAULT_GOAL_X_M)
         self.declare_parameter("goal_y", DEFAULT_GOAL_Y_M)
-        self.declare_parameter("min_feasible_radius", DEFAULT_MIN_FEASIBLE_RADIUS_M)
-        self.declare_parameter("max_feasible_radius", DEFAULT_MAX_FEASIBLE_RADIUS_M)
         self.declare_parameter(
             "shoulder_angle_limit_rad", DEFAULT_SHOULDER_ANGLE_LIMIT_RAD
         )
@@ -123,7 +119,7 @@ class WP3Task2Online(Node):
 
         self.declare_parameter("execute", True)
         self.declare_parameter("save_csv", True)
-        self.declare_parameter("output_directory", "/tmp/rascl_wp3_tsk2")
+        self.declare_parameter("output_directory", "trajectories")
         self.declare_parameter("goal_queue_size", 10)
 
         self._validate_parameters()
@@ -161,8 +157,6 @@ class WP3Task2Online(Node):
         )
         self._worker.start()
 
-        min_radius = float(self.get_parameter("min_feasible_radius").value)
-        max_radius = float(self.get_parameter("max_feasible_radius").value)
         goal_x = float(self.get_parameter("goal_x").value)
         goal_y = float(self.get_parameter("goal_y").value)
         inner_route_max = float(
@@ -174,8 +168,7 @@ class WP3Task2Online(Node):
         execute = bool(self.get_parameter("execute").value)
         self.get_logger().info(
             "WP3 Task 2 online node ready: "
-            f"topic={goal_topic}, feasible_radius=[{min_radius:.6f}, "
-            f"{max_radius:.6f}] m, fixed_goal=({goal_x:.6f}, {goal_y:.6f}) m, "
+            f"topic={goal_topic}, fixed_goal=({goal_x:.6f}, {goal_y:.6f}) m, "
             f"routes=(inner<{inner_route_max:.6f}, "
             f"middle<={middle_route_max:.6f}, outer>{middle_route_max:.6f}), "
             f"execute={execute}."
@@ -184,8 +177,6 @@ class WP3Task2Online(Node):
     def _validate_parameters(self) -> None:
         goal_x = float(self.get_parameter("goal_x").value)
         goal_y = float(self.get_parameter("goal_y").value)
-        min_radius = float(self.get_parameter("min_feasible_radius").value)
-        max_radius = float(self.get_parameter("max_feasible_radius").value)
         inner_route_max = float(
             self.get_parameter("inner_route_max_radius").value
         )
@@ -199,8 +190,6 @@ class WP3Task2Online(Node):
         validate_task2_configuration(
             goal_x=goal_x,
             goal_y=goal_y,
-            min_radius=min_radius,
-            max_radius=max_radius,
             inner_route_max_radius=inner_route_max,
             middle_route_max_radius=middle_route_max,
             inner_route_x=inner_route_x,
@@ -215,7 +204,7 @@ class WP3Task2Online(Node):
         motion_duration = float(self.get_parameter("motion_duration").value)
         gripper_duration = float(self.get_parameter("gripper_duration").value)
         build_pick_and_place_sequence(
-            max_radius,
+            goal_x,
             0.0,
             goal_x=goal_x,
             goal_y=goal_y,
@@ -290,8 +279,6 @@ class WP3Task2Online(Node):
 
         x = float(message.x)
         y = float(message.y)
-        min_radius = float(self.get_parameter("min_feasible_radius").value)
-        max_radius = float(self.get_parameter("max_feasible_radius").value)
         angle_limit = float(self.get_parameter("shoulder_angle_limit_rad").value)
         inner_route_max = float(
             self.get_parameter("inner_route_max_radius").value
@@ -303,8 +290,6 @@ class WP3Task2Online(Node):
             radius, angle = validate_cube_center(
                 x,
                 y,
-                min_radius=min_radius,
-                max_radius=max_radius,
                 shoulder_angle_limit_rad=angle_limit,
             )
             route = classify_radial_route(
@@ -682,7 +667,9 @@ class WP3Task2Online(Node):
     ) -> None:
         if not bool(self.get_parameter("save_csv").value):
             return
-        path = os.path.join(self._output_directory(), f"job_{job_id:04d}_input.csv")
+        path = os.path.join(
+            self._output_directory(), f"task2_job_{job_id:04d}_input.csv"
+        )
         with open(path, "w", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream)
             writer.writerow(
@@ -710,7 +697,7 @@ class WP3Task2Online(Node):
             return
         path = os.path.join(
             self._output_directory(),
-            f"job_{job_id:04d}_step_{step_index:02d}_{label}.csv",
+            f"task2_job_{job_id:04d}_step_{step_index:02d}_{label}.csv",
         )
         write_csv(path, trajectory)
 

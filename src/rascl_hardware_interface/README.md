@@ -28,6 +28,7 @@ rascl_hardware_interface/
 ├── scripts/
 │   └── rascl_faulhaber_bridge.py
 ├── test/
+│   ├── test_faulhaber_bridge.py
 │   └── test_generic_system.cpp
 ├── rascl_hardware_interface.xml
 ├── CMakeLists.txt
@@ -86,9 +87,10 @@ Make sure the script is executable:
 chmod +x src/rascl_hardware_interface/scripts/rascl_faulhaber_bridge.py
 ```
 
-### `test/test_generic_system.cpp`
+### `test/test_generic_system.cpp` and `test/test_faulhaber_bridge.py`
 
-Contains optional automated tests for the hardware interface.
+Contain automated tests for the C++ hardware interface and Python FAULHABER
+bridge.
 
 These tests only validate the software-side `ros2_control` behavior in fake-hardware mode. They do not connect to EtherCAT, do not start the Faulhaber bridge, do not enable any motor, and do not move the real robot.
 
@@ -354,8 +356,9 @@ counts as the corresponding `*_home_offset_counts` launch arguments. Keep the
 Homing bridge running after `home_all`, call its `disable_all` service, support
 the links while moving to the validated physical URDF-zero pose, and send
 `GET_ALL` to `127.0.0.1:15001`. Drive 3's position is instead measured from its
-session Method-37 zero; use debug group `17` for that value. See the Chinese
-Debug Guide for the guarded procedure and response layout.
+session Method-37 zero; use debug group `17` for that value. See the
+[debug script guide](../../WP3_Physical_Hardware_Debug_Guide.md) for the
+complete command sequence and response checks.
 
 Do not call homing services while the CSP ros2_control stack is active. Also do
 not publish `[0,0,0,0]` as the first command after automatic homing: that is the

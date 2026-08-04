@@ -13,9 +13,6 @@ Vector3 = Tuple[float, float, float]
 # compensation is still applied once inside wp3_tsk2 before IK.
 DEFAULT_GOAL_X_M = 0.1812
 DEFAULT_GOAL_Y_M = -0.0336
-DEFAULT_MIN_FEASIBLE_RADIUS_M = 0.10
-# Farthest labelled cube centre across the two physical box plates: (250, 60) mm.
-DEFAULT_MAX_FEASIBLE_RADIUS_M = math.hypot(0.250, 0.060)
 DEFAULT_SHOULDER_ANGLE_LIMIT_RAD = 0.5 * math.pi
 DEFAULT_INNER_ROUTE_MAX_RADIUS_M = 0.17
 DEFAULT_MIDDLE_ROUTE_MAX_RADIUS_M = 0.20
@@ -90,9 +87,6 @@ def validate_task2_configuration(
     *,
     goal_x: float,
     goal_y: float,
-    min_radius: float,
-    max_radius: float,
-    radius_tolerance: float = 1.0e-6,
     inner_route_max_radius: float = DEFAULT_INNER_ROUTE_MAX_RADIUS_M,
     middle_route_max_radius: float = DEFAULT_MIDDLE_ROUTE_MAX_RADIUS_M,
     inner_route_x: float = DEFAULT_INNER_ROUTE_X_M,
@@ -100,18 +94,13 @@ def validate_task2_configuration(
     outer_route_x: float = DEFAULT_OUTER_ROUTE_X_M,
     outer_route_y: float = DEFAULT_OUTER_ROUTE_Y_M,
 ) -> None:
-    """Validate the declared feasible annulus and fixed goal.
-
-    The configured annulus follows the labelled cube positions on the physical
-    box plates.  The fixed goal must lie inside that annulus.
-    """
+    """Validate the fixed goal and the three radial route definitions."""
 
     values = (
         goal_x,
         goal_y,
-        min_radius,
-        max_radius,
-        radius_tolerance,
+        inner_route_max_radius,
+        middle_route_max_radius,
         inner_route_x,
         inner_route_y,
         outer_route_x,
@@ -119,78 +108,34 @@ def validate_task2_configuration(
     )
     if not all(math.isfinite(float(value)) for value in values):
         raise ValueError("Task 2 configuration values must be finite")
-    if min_radius < 0.0:
-        raise ValueError("minimum feasible radius cannot be negative")
-    if max_radius <= min_radius:
-        raise ValueError("maximum feasible radius must exceed the minimum")
-    if radius_tolerance < 0.0:
-        raise ValueError("radius tolerance cannot be negative")
 
+    # Radius is only a selector for the validated inner/middle/outer routines.
+    # Reachability is determined later by IK for every requested waypoint.
     classify_radial_route(
         0.0,
         inner_route_max_radius=inner_route_max_radius,
         middle_route_max_radius=middle_route_max_radius,
     )
-    if inner_route_max_radius <= min_radius:
-        raise ValueError(
-            "inner-route maximum radius must exceed the feasible minimum"
-        )
-    if middle_route_max_radius >= max_radius:
-        raise ValueError(
-            "middle-route maximum radius must be below the feasible maximum"
-        )
-    goal_radius = radial_distance(goal_x, goal_y)
-    if (
-        goal_radius < min_radius - radius_tolerance
-        or goal_radius > max_radius + radius_tolerance
-    ):
-        raise ValueError(
-            "the Task 2 goal radius must lie inside the declared feasible region: "
-            f"goal={goal_radius:.9f} m, region=[{min_radius:.9f}, {max_radius:.9f}] m"
-        )
-    for label, route_x, route_y in (
-        (INNER_ROUTE, inner_route_x, inner_route_y),
-        (OUTER_ROUTE, outer_route_x, outer_route_y),
-    ):
-        route_radius = radial_distance(route_x, route_y)
-        if (
-            route_radius < min_radius - radius_tolerance
-            or route_radius > max_radius + radius_tolerance
-        ):
-            raise ValueError(
-                f"{label}-route waypoint radius {route_radius:.9f} m lies outside "
-                f"the feasible region [{min_radius:.9f}, {max_radius:.9f}] m"
-            )
 
 
 def validate_cube_center(
     x: float,
     y: float,
     *,
-    min_radius: float,
-    max_radius: float,
     shoulder_angle_limit_rad: float = DEFAULT_SHOULDER_ANGLE_LIMIT_RAD,
     tolerance: float = 1.0e-9,
 ) -> Tuple[float, float]:
-    """Validate one runtime cube centre against the declared feasible region."""
+    """Validate one runtime cube centre before online IK checks reachability."""
 
     x = float(x)
     y = float(y)
-    values = (x, y, min_radius, max_radius, shoulder_angle_limit_rad, tolerance)
+    values = (x, y, shoulder_angle_limit_rad, tolerance)
     if not all(math.isfinite(float(value)) for value in values):
-        raise ValueError("cube coordinates and feasible-region values must be finite")
-    if min_radius < 0.0 or max_radius <= min_radius:
-        raise ValueError("invalid feasible-radius interval")
+        raise ValueError("cube coordinates and validation values must be finite")
     if shoulder_angle_limit_rad <= 0.0 or shoulder_angle_limit_rad > math.pi:
         raise ValueError("invalid shoulder-angle limit")
 
     radius = radial_distance(x, y)
-    if radius < min_radius - tolerance or radius > max_radius + tolerance:
-        raise ValueError(
-            f"cube radius {radius:.6f} m is outside the declared feasible region "
-            f"[{min_radius:.6f}, {max_radius:.6f}] m"
-        )
-
     angle = math.atan2(y, x)
     if abs(angle) > shoulder_angle_limit_rad + tolerance:
         raise ValueError(

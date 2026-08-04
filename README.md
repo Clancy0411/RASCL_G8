@@ -1,359 +1,219 @@
-# RASCL Group 8 - WP3 Task 1 and Task 2
+# RASCL Group 8 - WP3 Motion Planning and Robot Control
 
-## Enter the Container
+This repository contains the Group 8 ROS 2 application for WP3 Task 1 and
+Task 2. It combines a calibrated URDF, `ros2_control`, a custom FAULHABER
+EtherCAT interface, Cyclic Synchronous Position (CSP) control, inverse
+kinematics, and 50 Hz minimum-jerk joint trajectories.
 
-### 1. Check Docker First
+The supported operator interface is [`rascl_debug.sh`](rascl_debug.sh). This
+README gives the shortest examiner workflow. The complete description of all
+29 command groups is in
+[`WP3_Physical_Hardware_Debug_Guide.md`](WP3_Physical_Hardware_Debug_Guide.md).
 
-Run the following on the Ubuntu host:
+## Submission Contents
 
-```bash
-docker version
-```
-
-If Docker reports that it cannot connect to the Docker daemon, start Docker and
-check again:
-
-```bash
-sudo systemctl start docker
-docker version
-```
-
-Do not continue with the physical-robot workflow if `docker version` still fails.
-Fix Docker first.
-
-### 2. Start T1
-
-Enter the project root. If the Docker image, `Dockerfile`, and dependencies have
-not changed, run:
-
-```bash
-cd ~/RASCL_G8
-bash ./rosws.sh
-```
-
-On the first run, or if the image does not exist locally, `rosws.sh` builds it
-automatically. Use the following command only if the `Dockerfile`, container
-dependencies, or image have changed and all physical-hardware processes have been
-stopped:
-
-```bash
-cd ~/RASCL_G8
-SOFT_REBUILD=true bash ./rosws.sh
-```
-
-Do not rebuild the image while group `4` or group `7` is still running. If a
-container with the same name is already running, `rosws.sh` attaches to the old
-container first; `SOFT_REBUILD=true` does not replace a running container. Before
-rebuilding, safely stop the physical workflow and exit the old container.
-
-Wait until T1 displays the following container prompt before opening the other two
-terminals:
+The submission archive contains the source repository and separate Task 1 and
+Task 2 demonstration videos. The Task 2 gripper pickup range demonstrated by
+the project covers the complete coordinate board.
 
 ```text
-rascl-container:~/ws$
+RASCL_G8/
+|-- README.md
+|-- WP3_Physical_Hardware_Debug_Guide.md
+|-- rascl_debug.sh
+|-- rosws.sh
+|-- Dockerfile
+`-- src/
+    |-- rascl_description/           URDF, meshes, controllers, launch files
+    |-- rascl_hardware_interface/    ros2_control and EtherCAT bridge
+    `-- rascl_wp3_ss26_group8/       Task nodes, IK, trajectories, tests
+        |-- launch/
+        |-- trajectories/            Task input and output CSV files
+        `-- rascl_wp3_ss26_group8/
 ```
 
-T1 is the main terminal that starts this container and must remain open throughout
-the workflow. Exiting T1 early stops the container, and T2/T3 can no longer attach.
-
-If the image build fails, the container exits early, or this prompt does not
-appear, do not proceed to T2/T3. Resolve the T1 error first.
-
-### 3. Attach T2 and T3
-
-After confirming that T1 has entered the container, open two more Ubuntu terminals
-and run the following in each one:
-
-```bash
-cd ~/RASCL_G8
-bash ./rosws.sh
-```
-
-Under normal conditions, the output should include:
+The commanded joint order is:
 
 ```text
-Attaching to running container...
+[shoulder_joint, upperarm_joint, lowerarm_joint, spur_gear_joint]
 ```
 
-If T2/T3 starts building the image again, the T1 container is not running
-correctly. If a `docker exec` or container-not-running error appears, return to T1
-and diagnose it. Do not continue to Homing or CSP.
+Cartesian coordinates are metres in the URDF `base_link` frame. The planning
+TCP is `tcp_link`, the measured point 170 mm along the lower arm.
 
-The project root is mounted inside the container at:
+## Task Implementation
 
-```text
-/root/ws
-```
+### Task 1 - Offline Trajectory Execution
 
-Run the following in all three container terminals, T1, T2, and T3:
+Task 1 stacks three cubes in the required order. The fixed assessed action list
+is stored in
+[`task1_input.csv`](src/rascl_wp3_ss26_group8/trajectories/task1_input.csv).
+For every Cartesian leg, group `9` uses live feedback and IK to generate the
+offline joint trajectory
+[`task1_output.csv`](src/rascl_wp3_ss26_group8/trajectories/task1_output.csv).
+Group `10` then loads, validates, and executes that exact CSV; it does not
+replan during execution. Group `28` performs this plan/load/execute process for
+all four assessed stages automatically.
 
-```bash
-cd /root/ws
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=88
-```
+### Task 2 - Online Pick and Place
 
-Then open the debug-group menu with:
+The `wp3_tsk2` node receives each unknown cube centre at runtime from
+`/goal_poses` as `geometry_msgs/msg/Point`. It plans from current joint
+feedback and moves the cube to coordinate-board point `(40, 180)`.
 
-```bash
-bash ./rascl_debug.sh
-```
+The fixed validated internal destination remains `(0.1812, -0.0336) m`.
+Planar radius is used only to select the validated inner, direct, or outer
+transfer action; waypoint reachability is decided by IK. For an inner-to-outer
+transfer, the cube briefly
+contacts the smaller-radius board region; for an outer-to-inner transfer it
+briefly contacts the larger-radius region. This reduces cube tilt before
+release. Task 2 input and generated trajectory CSV files are written under the
+package `trajectories/` directory.
 
-After changing code, pulling a new revision, or receiving a missing ROS package or
-installation-file error from group `4`, first confirm that no physical-hardware
-process is running, then run group `1` in T1. Do not rebuild or recompile at every
-startup when the Docker image and `install/` tree have not changed.
+## Requirements
 
-## EtherCAT Interface for Group 4
+- Ubuntu host with Docker
+- powered RASCL robot and EtherCAT connection
+- three terminals attached to the same running container; Task 2 publication
+  uses one additional short-lived terminal
+- clear robot workspace and coordinate board
 
-Group `4` connects to the robot through the Ubuntu host's wired EtherCAT network
-interface. The current default interface name in the script is:
-
-```text
-enx3c18a0256deb
-```
-
-An interface name is specific to its computer. On another workstation, using the
-old interface name causes group `4` to fail because it cannot find the interface or
-any EtherCAT slaves. Find and enable the interface on the Ubuntu host; do not rely
-on an `ip` command that may be absent inside the container:
-
-```bash
-ip -br link
-ip link show <actual-interface-name>
-sudo ip link set <actual-interface-name> up
-ip link show <actual-interface-name>
-```
-
-Select the interface physically connected to the robot's EtherCAT network, not the
-Wi-Fi interface or an interface used for normal internet access. After entering the
-container in T1, pass the interface explicitly when starting group `4`:
-
-```bash
-RASCL_INTERFACE=<actual-interface-name> bash ./rascl_debug.sh 4
-```
-
-Group `7` in T2 must use the same interface name. Because T1 and T2 are separate
-shells, set the variable in both container terminals first:
+The validated workstation interface is `enx3c18a0256deb`. On another
+workstation, set the actual EtherCAT interface in T1 and T2 before starting:
 
 ```bash
 export RASCL_INTERFACE=<actual-interface-name>
 ```
 
-Then run group `4` in T1 and groups `6 -> 7` in T2. If the actual interface is
-`enx3c18a0256deb`, the script's default value can be used directly.
+## 1. Start the Container
 
-After group `4` starts successfully, T1 must display:
-
-```text
-TCP bridge listening on 127.0.0.1:15001
-```
-
-If `No such device` appears, return to the Ubuntu host and verify the interface
-name and state. If the interface opens but reports `Found 0 slave(s)`, check robot
-power, the EtherCAT cable, and the selected interface. Do not run group `6` or group
-`7` unless slaves are detected and the TCP bridge success message appears. Do not
-try to bypass an error by repeatedly retrying motion.
-
-This document covers only the debug groups required to complete WP3 Task 1 and
-Task 2, the original block placement coordinates, and the purpose of every group in
-`rascl_debug.sh`.
-
-All coordinates are in metres. This document records the original block and target
-coordinates, not values corrected through physical calibration.
-
-## Usage
-
-Run the following from the workspace root:
+In T1 on the Ubuntu host:
 
 ```bash
-bash ./rascl_debug.sh <group-number>
+cd ~/RASCL_G8
+bash ./rosws.sh
 ```
 
-Physical-robot operation requires three terminals:
-
-- T1: build the workspace and keep the Homing/EtherCAT bridge running.
-- T2: perform Homing, then keep CSP `ros2_control` running.
-- T3: run Task 1, Task 2, and other checks.
-
-> **Safety:** Groups `7`, `10`, `15`, `19`-`21`, and `23`-`29` may move the
-> physical robot. Clear the workspace, prepare the emergency stop, and verify that
-> the arm and gripper cannot collide before running them.
-
-## Task 1
-
-Task 1 requires stacking three blocks in the order `1 -> 2 -> 3` to form a stable
-tower, with block 1 at the bottom, block 2 in the middle, and block 3 at the top.
-
-### Groups Required for Task 1
-
-Run the groups in this order:
-
-```text
-T1: 1 -> 4
-T2: 6 -> 7
-T3: 24 -> 25 -> 26 -> 27
-```
-
-Equivalent commands:
+Wait for `rascl-container:~/ws$`. Open T2 and T3 and run the same two commands;
+they must report `Attaching to running container...`. In each container
+terminal run:
 
 ```bash
-# T1: after group 1 finishes, start group 4 and keep it running
+cd /root/ws
+```
+
+The script loads ROS Jazzy, the workspace overlay, and `ROS_DOMAIN_ID=88`.
+
+## 2. Build and Test
+
+After extracting, pulling, or changing the submission, run in T1:
+
+```bash
 bash ./rascl_debug.sh 1
-bash ./rascl_debug.sh 4
-
-# T2: after group 6 succeeds, start group 7 and keep it running
-bash ./rascl_debug.sh 6
-bash ./rascl_debug.sh 7
-
-# T3: complete the four Task 1 stages in order
-bash ./rascl_debug.sh 24
-bash ./rascl_debug.sh 25
-bash ./rascl_debug.sh 26
-bash ./rascl_debug.sh 27
 ```
 
-Important requirements:
+Group `1` builds the workspace and runs the application, description, and
+hardware-interface tests. Do not rebuild while a physical bridge or controller
+is active.
 
-- Do not stop group `4` between groups `6` and `7`; CSP must reuse the same
-  EtherCAT bridge.
-- Run group `7` only after group `6` has successfully completed all Homing and the
-  Drive 3 zeroing procedure.
-- Run groups `24`-`27` in order. If any stage fails, do not continue to the next
-  stage.
+Optional fake-hardware validation:
 
-### Original Block Placement Positions
+```bash
+# T1, keep running
+bash ./rascl_debug.sh 2
 
-The following are the original XY coordinates of the blocks on the board. They do
-not include physical-calibration corrections:
+# T2
+bash ./rascl_debug.sh 3
+```
 
-| Position | X [m] | Y [m] | Description |
-|---|---:|---:|---|
-| Block 1 start | 0.16 | 0.16 | Placed separately |
-| Block 2/3 start | 0.17 | 0.03 | Block 2 at the bottom and block 3 on top |
-| Block 3 temporary position | 0.18 | -0.04 | Move the top block 3 away first so that the bottom block 2 can be moved |
-| Final tower target | 0.07 | -0.10 | Stack the blocks in the order 1, 2, 3 |
+Stop group `2` before physical operation.
 
-### Four Task 1 Stages
+## 3. Home and Enter CSP
 
-| Group | Stage | Action |
-|---:|---|---|
-| 24 | Stage 1 | Move block 1 from its start position to the final tower target |
-| 25 | Stage 2 | Move the top block 3 from the block 2/3 start position to the temporary position |
-| 26 | Stage 3 | Move the bottom block 2 onto block 1 |
-| 27 | Stage 4 | Move block 3 from the temporary position onto block 2 to complete the three-level tower |
+In T1, start the EtherCAT/Homing bridge and leave it running:
 
-After completion, the three-level tower must remain stable for at least five
-seconds.
+```bash
+bash ./rascl_debug.sh 4
+```
 
-## Task 2
+Continue after it reports four slaves and
+`TCP bridge listening on 127.0.0.1:15001`.
 
-During operation, Task 2 receives the XY start position of an unknown block and
-moves the block to a fixed target.
+In T2, run automatic Homing:
 
-### Task 2 ROS 2 Node
+```bash
+bash ./rascl_debug.sh 6
+```
 
-After completing groups `1 -> 4 -> 6 -> 7` and entering a healthy CSP session,
-start the required long-running `wp3_tsk2` node with group `29` in T3:
+Continue only after `success=True`, all three `driveN_interval(...)` records,
+and `reference_complete=true` for Drive 3. Without stopping T1 group `4`, start
+CSP in T2 and leave it running:
+
+```bash
+bash ./rascl_debug.sh 7
+```
+
+Wait until `joint_state_broadcaster` and `rascl_position_controller` are both
+active. The normal startup order is:
+
+```text
+T1: 1 -> 4       keep 4 running
+T2:      6 -> 7  keep 7 running
+T3:              run a task
+```
+
+Group `1` may be omitted when the current workspace is already built.
+
+## 4. Run Task 1
+
+Place the cubes in the demonstrated Task 1 starting arrangement. In T3 run:
+
+```bash
+bash ./rascl_debug.sh 28
+```
+
+This one command executes all four Task 1 stages. Each arm leg is planned to
+the package CSV and then executed from the same offline file. Any failed plan,
+CSV validation, or endpoint check stops the sequence. Groups `24`-`27` expose
+the same stages separately for diagnostics only.
+
+## 5. Run Task 2
+
+Task 2 can use the same healthy CSP session. In T3 start the online node and
+leave it running:
 
 ```bash
 bash ./rascl_debug.sh 29
 ```
 
-Keep T3 running. From another container terminal, publish each cube centre during
-runtime with the required `geometry_msgs/msg/Point` message:
+Open another terminal, attach to the same container, and publish the measured
+cube centre in metres:
 
 ```bash
+cd /root/ws
+source /opt/ros/jazzy/setup.bash
+source /root/ws/install/local_setup.bash
+export ROS_DOMAIN_ID=88
 ros2 topic pub --once /goal_poses geometry_msgs/msg/Point \
-  "{x: 0.16, y: 0.08, z: 0.0}"
+  '{x: 0.16, y: 0.08, z: 0.0}'
 ```
 
-The node remains active and processes any additional valid messages sequentially.
-It restores the original group `29` radial routing: `inner` for `r < 0.17 m`,
-`middle` for `0.17 <= r <= 0.20 m`, and `outer` for `r > 0.20 m`. The inner route
-descends 30 mm inside the fixed-goal radius and pushes outward at placement height;
-the outer route descends 30 mm outside it and pulls inward. The middle route descends
-directly at the goal. Every Cartesian waypoint is planned online from the latest
-`/joint_states` feedback. Input and generated minimum-jerk CSV files are saved under
-`/tmp/rascl_wp3_tsk2`. As in the original group `29`, every Cartesian and gripper
-trajectory is requested with a duration of 5 seconds.
+The node accepts repeated messages sequentially. It selects the appropriate
+radial action and completes pickup, transfer to `(40, 180)`, release, and
+retreat. Stop group `29` with `Ctrl-C` when Task 2 is complete.
 
-The submission-facing files and executable are:
+## 6. Shutdown and Failure Handling
 
-```text
-rascl_wp3_ss26_group8/wp3_tsk2.py
-launch/wp3_tsk2.launch.py
-ros2 run rascl_wp3_ss26_group8 wp3_tsk2
-```
+Support the arm before disabling drive voltage.
 
-The configured radial region is `0.10 <= r <= 0.257099203 m`, with a shoulder angle
-between `-pi/2` and `+pi/2`. The maximum is the farthest labelled centre across the
-two physical box plates, `(0.250, 0.060) m`. Final collision-free reach still needs
-physical validation for the robot-gripper configuration.
+1. Stop Task 2 group `29`, if active.
+2. Stop T2 group `7` and wait for `ros2_control` to exit.
+3. Stop T1 group `4`.
 
-The maximum input radius is defined only by that farthest labelled box-plate point:
+After a PDO, WKC, following-error, controller, or endpoint failure, do not send
+another motion. Run group `12` to package ROS logs, then restart the complete
+Homing-to-CSP session.
 
-```text
-r_max = sqrt(0.250^2 + 0.060^2) = 0.257099203 m
-```
-
-It is not derived from the fixed target radius. The maximum accepted cube radius and
-the fixed target coordinate are configured independently; the original fixed target
-remains `(0.18, -0.04) m`.
-
-The routing behaviour relative to the original fixed goal is:
-
-| Route | Input radius | Placement approach before XY compensation |
-|---|---:|---|
-| Inner | `r < 0.17 m` | Approach 30 mm inside the goal radius, descend, then push outward |
-| Middle | `0.17 <= r <= 0.20 m` | Descend directly above the original goal `(0.18, -0.04)` |
-| Outer | `0.20 < r <= 0.257099203 m` | Approach 30 mm outside the goal radius, descend, then pull inward |
-
-### Original Task 2 Target
-
-| Position | X [m] | Y [m] | Placement Z [m] | Retreat Z [m] |
-|---|---:|---:|---:|---:|
-| Fixed target | 0.18 | -0.04 | 0.045 | 0.10 |
-
-These are the original target coordinates, not the motion coordinates corrected
-through calibration.
-
-The implementation applies the established target and board corrections internally
-before IK; the coordinates documented here remain the original task coordinates.
-
-## All Debug Groups
-
-| Group | Terminal | Motion | Purpose |
-|---:|---|---|---|
-| 1 | T1 | No | Build the workspace and run functional tests |
-| 2 | T1 | Simulation | Start fake `ros2_control` and keep the terminal occupied |
-| 3 | T2 | Simulation | Check the fake controllers, then plan and execute a test trajectory |
-| 4 | T1 | Possible | Start the physical Homing/EtherCAT bridge and keep the terminal occupied |
-| 5 | T2 | Yes | Home Drives 0, 1, and 2 individually |
-| 6 | T2 | Yes | Run `home_all` for Drives 0-2, then complete the Drive 3 reference move and zeroing |
-| 7 | T2 | Yes | Start physical CSP `ros2_control` with Drive 3 participating and keep the terminal occupied |
-| 8 | T3 | No | Check that the controllers and joint states remain stable for 10 seconds |
-| 9 | T3 | No | Plan the physical minimum-jerk trajectory without executing it |
-| 10 | T3 | Yes | Execute the physical trajectory successfully planned by group 9 |
-| 11 | T3 | No | Check for residual processes and an occupied TCP port |
-| 12 | Any | No | Package the complete ROS logs |
-| 13 | T3 | No | Display the current model TCP coordinates |
-| 14 | T3 | No | Set the next target TCP coordinates and motion duration |
-| 15 | T3 | Yes | Open or close the gripper, or enter custom relative counts for Drive 3 |
-| 16 | T3 | No | Display the latest automatic CSP stall snapshot |
-| 17 | T2/T3 | No | Read the absolute Drive 3 counts relative to the Method 37 zero |
-| 18 | T2 | No | Read the input mappings and Drive 2 protection parameters before CSP |
-| 19 | T2 | Yes | Fine-trim Drive 0 with relative counts after Homing |
-| 20 | T2 | Yes | Fine-trim Drive 1 with relative counts after Homing |
-| 21 | T2 | Yes | Fine-trim Drive 2 with relative counts after Homing |
-| 22 | T2 | No | Set the current Drive 0-2 pose as the Home pose for this session |
-| 23 | T3 | Yes | Enter a target, then plan and execute it immediately |
-| 24 | T3 | Yes | Task 1 stage 1: move block 1 |
-| 25 | T3 | Yes | Task 1 stage 2: move block 3 to the temporary position |
-| 26 | T3 | Yes | Task 1 stage 3: move block 2 onto block 1 |
-| 27 | T3 | Yes | Task 1 stage 4: move block 3 to the top of the tower |
-| 28 | T3 | Yes | Run Task 1 stages 1-4 continuously |
-| 29 | T3 | Yes | Start the long-running `wp3_tsk2` node that receives cube centres on `/goal_poses` |
-
-For the complete Homing, CSP, fault-handling, and safety procedures, see
-`WP3_Physical_Hardware_Debug_Guide.md`.
+For manual targets, gripper counts, calibration, diagnostics, log collection,
+and every command group, see the
+[`WP3 Physical Hardware Debug Guide`](WP3_Physical_Hardware_Debug_Guide.md).

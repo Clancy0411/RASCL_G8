@@ -2,8 +2,9 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -11,8 +12,6 @@ def generate_launch_description():
         "goal_topic",
         "goal_x",
         "goal_y",
-        "min_feasible_radius",
-        "max_feasible_radius",
         "inner_route_max_radius",
         "middle_route_max_radius",
         "inner_route_x",
@@ -52,16 +51,6 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("goal_x", default_value="0.1812"),
             DeclareLaunchArgument("goal_y", default_value="-0.0336"),
-            DeclareLaunchArgument(
-                "min_feasible_radius",
-                default_value="0.10",
-                description="Documented minimum collision-free reachable radius [m].",
-            ),
-            DeclareLaunchArgument(
-                "max_feasible_radius",
-                default_value="0.2570992026436488",
-                description="Maximum labelled box-plate radius from (0.250, 0.060) m.",
-            ),
             DeclareLaunchArgument(
                 "inner_route_max_radius",
                 default_value="0.17",
@@ -116,7 +105,12 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("save_csv", default_value="true"),
             DeclareLaunchArgument(
-                "output_directory", default_value="/tmp/rascl_wp3_tsk2"
+                "output_directory",
+                default_value=PathJoinSubstitution([
+                    FindPackageShare("rascl_wp3_ss26_group8"),
+                    "trajectories",
+                ]),
+                description="Package directory for Task 2 input and trajectory CSV files.",
             ),
             task2_node,
         ]

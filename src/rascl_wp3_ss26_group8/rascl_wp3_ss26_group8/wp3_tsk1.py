@@ -25,7 +25,7 @@ from .kinematics import (
     forward_tcp,
     inverse_tcp,
 )
-from .trajectory import generate_joint_trajectory, write_csv
+from .trajectory import generate_joint_trajectory, read_csv, write_csv
 from .workspace_calibration import (
     DEFAULT_BOARD_XY_MATRIX,
     DEFAULT_BOARD_XY_OFFSET_M,
@@ -69,7 +69,9 @@ class WP3Task1SingleTarget(Node):
         # generation only; it does not publish robot commands.
         self.declare_parameter("execute", False)
         self.declare_parameter("save_csv", True)
-        self.declare_parameter("output_csv", "/tmp/rascl_wp3_tsk1_last_trajectory.csv")
+        self.declare_parameter("input_csv", "")
+        self.declare_parameter("output_csv", "trajectories/task1_output.csv")
+        self.declare_parameter("input_start_tolerance_rad", 0.03)
         self.declare_parameter("final_hold_s", 0.5)
         self.declare_parameter("final_joint_tolerance_rad", 0.03)
         self.declare_parameter("final_tcp_tolerance_m", 0.01)
@@ -82,6 +84,7 @@ class WP3Task1SingleTarget(Node):
         self._latest_joint_state_received_at: Optional[float] = None
         self._planned_requested_target: Optional[Tuple[float, float, float]] = None
         self._planned_ik_target: Optional[Tuple[float, float, float]] = None
+        self._planned_times: List[float] = []
         joint_state_topic = self.get_parameter("joint_state_topic").value
         command_topic = self.get_parameter("command_topic").value
 
@@ -193,6 +196,55 @@ class WP3Task1SingleTarget(Node):
                 f"({target[0]:.4f}, {target[1]:.4f}, {target[2]:.4f}) m"
             )
 
+        input_csv = str(self.get_parameter("input_csv").value).strip()
+        if input_csv:
+            trajectory = read_csv(input_csv)
+            start_tolerance = float(
+                self.get_parameter("input_start_tolerance_rad").value
+            )
+            if start_tolerance <= 0.0:
+                raise ValueError("input_start_tolerance_rad must be positive")
+
+            start_errors = [
+                planned - actual
+                for planned, actual in zip(trajectory[0].positions, q_current)
+            ]
+            if any(abs(error) > start_tolerance for error in start_errors):
+                raise RuntimeError(
+                    "Offline trajectory start does not match the current robot state; "
+                    f"joint_error_rad={[round(value, 6) for value in start_errors]}, "
+                    f"limit={start_tolerance:.6f}. Re-run the planning step before execution."
+                )
+
+            final_tcp = forward_tcp(trajectory[-1].positions[:3])
+            final_tcp_error = sum(
+                (target_value - actual_value) ** 2
+                for target_value, actual_value in zip(target, final_tcp)
+            ) ** 0.5
+            if final_tcp_error > tolerance:
+                raise RuntimeError(
+                    "Offline trajectory endpoint does not match the requested target; "
+                    f"target={tuple(round(value, 6) for value in target)}, "
+                    f"csv_tcp={tuple(round(value, 6) for value in final_tcp)}, "
+                    f"error={final_tcp_error:.6f} m, limit={tolerance:.6f} m"
+                )
+
+            self._planned_times = [point.time_from_start for point in trajectory]
+            self.get_logger().info(
+                f"Loaded {len(trajectory)} validated offline trajectory samples from: "
+                f"{input_csv}"
+            )
+            self.get_logger().info(
+                f"Offline trajectory duration={self._planned_times[-1]:.2f}s; "
+                f"final TCP error={final_tcp_error:.6f} m."
+            )
+            commands = []
+            for point in trajectory:
+                msg = Float64MultiArray()
+                msg.data = point.positions
+                commands.append(msg)
+            return commands
+
         ik_result = inverse_tcp(target, seed=q_arm_current, tolerance=tolerance)
         self.get_logger().info(
             "IK result: "
@@ -210,6 +262,7 @@ class WP3Task1SingleTarget(Node):
         # Cartesian IK moves only the arm; preserve the current gripper angle.
         q_goal = [ik_result.q[0], ik_result.q[1], ik_result.q[2], q_spur_current]
         trajectory = generate_joint_trajectory(q_current, q_goal, duration, rate_hz)
+        self._planned_times = [point.time_from_start for point in trajectory]
 
         if bool(self.get_parameter("save_csv").value):
             output_csv = str(self.get_parameter("output_csv").value)
@@ -251,6 +304,8 @@ class WP3Task1SingleTarget(Node):
         )
         if not commands:
             raise RuntimeError("Generated trajectory contains no commands")
+        if len(self._planned_times) != len(commands):
+            raise RuntimeError("Trajectory command and timestamp counts do not match")
         if final_joint_tolerance <= 0.0 or final_tcp_tolerance <= 0.0:
             raise ValueError("Final joint/TCP tolerances must be positive")
         if final_feedback_timeout <= 0.0:
@@ -262,15 +317,15 @@ class WP3Task1SingleTarget(Node):
             "Make sure fake hardware is active, or the real robot is calibrated and the area is clear."
         )
 
-        # Advance an absolute deadline so publisher delays do not accumulate as drift.
-        next_time = time.monotonic()
-        for command in commands:
-            self._command_publisher.publish(command)
-            rclpy.spin_once(self, timeout_sec=0.0)
-            next_time += dt
-            sleep_time = next_time - time.monotonic()
+        # Follow the timestamps stored in the generated or offline CSV. Using
+        # one absolute clock prevents publisher delays from accumulating.
+        start_time = time.monotonic()
+        for command, time_from_start in zip(commands, self._planned_times):
+            sleep_time = start_time + time_from_start - time.monotonic()
             if sleep_time > 0.0:
                 time.sleep(sleep_time)
+            self._command_publisher.publish(command)
+            rclpy.spin_once(self, timeout_sec=0.0)
 
         # Repeat the endpoint briefly while fresh feedback catches up with the command.
         if commands and final_hold_s > 0.0:

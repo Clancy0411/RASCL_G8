@@ -37,6 +37,7 @@ def generate_launch_description():
     rate_hz = LaunchConfiguration("rate_hz")
     execute = LaunchConfiguration("execute")
     save_csv = LaunchConfiguration("save_csv")
+    input_csv = LaunchConfiguration("input_csv")
     output_csv = LaunchConfiguration("output_csv")
     start_delay_s = LaunchConfiguration("start_delay_s")
 
@@ -78,6 +79,7 @@ def generate_launch_description():
                 "rate_hz": rate_hz,
                 "execute": execute,
                 "save_csv": save_csv,
+                "input_csv": input_csv,
                 "output_csv": output_csv,
             }
         ],
@@ -145,8 +147,17 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("save_csv", default_value="true", description="Save generated trajectory CSV."),
         DeclareLaunchArgument(
+            "input_csv",
+            default_value="",
+            description="Optional offline joint trajectory CSV to validate and execute without replanning.",
+        ),
+        DeclareLaunchArgument(
             "output_csv",
-            default_value="/tmp/rascl_wp3_tsk1_last_trajectory.csv",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("rascl_wp3_ss26_group8"),
+                "trajectories",
+                "task1_output.csv",
+            ]),
             description="Path for generated trajectory CSV.",
         ),
         DeclareLaunchArgument(

@@ -19,9 +19,11 @@ It includes:
 ```text
 rascl_description/
 ├── config/
-│   └── controllers.yaml
+│   ├── controllers.yaml
+│   └── controllers_csp.yaml
 ├── launch/
 │   ├── display.launch.py
+│   ├── homing.launch.py
 │   └── ros2_control.launch.py
 ├── meshes/
 ├── rviz/
@@ -84,6 +86,16 @@ Defines the controllers used by the system:
 * `rascl_position_controller`
 
 The `rascl_position_controller` is a forward command controller that accepts a `std_msgs/msg/Float64MultiArray` command.
+
+`config/controllers_csp.yaml` is the controller configuration used by the
+physical CSP workflow.
+
+### `launch/homing.launch.py`
+
+Starts the dedicated FAULHABER bridge for interval-centre Homing and the later
+in-session CSP startup. Keep it running after `home_all`;
+`ros2_control.launch.py` reconnects to the same bridge with
+`start_bridge:=false`.
 
 ### `launch/ros2_control.launch.py`
 

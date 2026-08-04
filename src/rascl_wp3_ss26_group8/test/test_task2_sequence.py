@@ -11,7 +11,6 @@ from rascl_wp3_ss26_group8.task2_sequence import (
     DEFAULT_INNER_ROUTE_X_M,
     DEFAULT_INNER_ROUTE_Y_M,
     DEFAULT_INNER_ROUTE_MAX_RADIUS_M,
-    DEFAULT_MAX_FEASIBLE_RADIUS_M,
     DEFAULT_MIDDLE_ROUTE_MAX_RADIUS_M,
     DEFAULT_OUTER_ROUTE_X_M,
     DEFAULT_OUTER_ROUTE_Y_M,
@@ -31,35 +30,18 @@ def _package_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def test_default_maximum_radius_uses_the_farthest_labelled_box_plate_point():
+def test_configuration_preserves_the_fixed_goal_and_accepts_finite_coordinates():
     validate_task2_configuration(
         goal_x=DEFAULT_GOAL_X_M,
         goal_y=DEFAULT_GOAL_Y_M,
-        min_radius=0.10,
-        max_radius=DEFAULT_MAX_FEASIBLE_RADIUS_M,
     )
-    assert DEFAULT_MAX_FEASIBLE_RADIUS_M == pytest.approx(
-        math.hypot(0.250, 0.060)
-    )
-    assert math.hypot(
-        DEFAULT_GOAL_X_M, DEFAULT_GOAL_Y_M
-    ) < DEFAULT_MAX_FEASIBLE_RADIUS_M
+    validate_task2_configuration(goal_x=0.30, goal_y=0.0)
 
 
 def test_default_internal_goal_preserves_the_group_29_target_correction():
     assert (DEFAULT_GOAL_X_M, DEFAULT_GOAL_Y_M) == pytest.approx(
         (0.1812, -0.0336)
     )
-
-
-def test_configuration_rejects_a_goal_outside_the_declared_feasible_radius():
-    with pytest.raises(ValueError, match="goal radius must lie inside"):
-        validate_task2_configuration(
-            goal_x=0.30,
-            goal_y=0.0,
-            min_radius=0.10,
-            max_radius=DEFAULT_MAX_FEASIBLE_RADIUS_M,
-        )
 
 
 def test_legacy_group_29_radius_boundaries_select_inner_middle_and_outer():
@@ -69,30 +51,18 @@ def test_legacy_group_29_radius_boundaries_select_inner_middle_and_outer():
     assert classify_radial_route(0.200001) == OUTER_ROUTE
 
 
-def test_cube_centre_is_checked_against_radius_and_half_plane():
+def test_cube_centre_is_classified_by_radius_and_checked_by_shoulder_range():
     radius, angle = validate_cube_center(
         0.250,
         0.060,
-        min_radius=0.10,
-        max_radius=DEFAULT_MAX_FEASIBLE_RADIUS_M,
     )
     assert radius == pytest.approx(math.hypot(0.250, 0.060))
     assert angle == pytest.approx(math.atan2(0.060, 0.250))
 
-    with pytest.raises(ValueError, match="outside the declared feasible region"):
-        validate_cube_center(
-            0.26,
-            0.0,
-            min_radius=0.10,
-            max_radius=DEFAULT_MAX_FEASIBLE_RADIUS_M,
-        )
+    radius, _ = validate_cube_center(0.30, 0.0)
+    assert radius == pytest.approx(0.30)
     with pytest.raises(ValueError, match="outside the allowed shoulder range"):
-        validate_cube_center(
-            -0.16,
-            0.0,
-            min_radius=0.10,
-            max_radius=DEFAULT_MAX_FEASIBLE_RADIUS_M,
-        )
+        validate_cube_center(-0.16, 0.0)
 
 
 def test_middle_route_uses_direct_vertical_pick_and_place_transfer():
@@ -221,7 +191,6 @@ def test_submission_installs_wp3_tsk2_and_provides_the_required_launch_file():
     assert 'self.declare_parameter("gripper_settle_duration_s", 1.0)' in node_source
     assert 'default_value="0.1812"' in launch_source
     assert 'default_value="-0.0336"' in launch_source
-    assert 'default_value="0.2570992026436488"' in launch_source
     assert 'default_value="0.17"' in launch_source
     assert 'default_value="0.20"' in launch_source
     assert 'default_value="0.1517"' in launch_source

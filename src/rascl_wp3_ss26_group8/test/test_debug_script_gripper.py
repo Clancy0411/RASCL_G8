@@ -138,4 +138,5 @@ def test_task2_group_29_starts_the_required_online_ros_node():
     assert "/goal_poses geometry_msgs/msg/Point" in group_29
     assert "-p execute:=true" in group_29
     assert "-p require_torque_service:=true" in group_29
+    assert '-p output_directory:="$TASK2_OUTPUT_DIR"' in group_29
     assert 'read -r -p "Task 2 start x [m]: " x' not in group_29
