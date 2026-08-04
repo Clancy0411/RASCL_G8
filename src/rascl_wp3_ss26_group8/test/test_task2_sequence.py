@@ -189,6 +189,8 @@ def test_submission_installs_wp3_tsk2_and_provides_the_required_launch_file():
     assert "classify_radial_route" in node_source
     assert "duration = float(step.duration_s)" in node_source
     assert 'self.declare_parameter("gripper_settle_duration_s", 1.0)' in node_source
+    assert "verify_endpoint=False" in node_source
+    assert "gripper_final_tolerance_counts" not in node_source
     assert 'default_value="0.1812"' in launch_source
     assert 'default_value="-0.0336"' in launch_source
     assert 'default_value="0.17"' in launch_source

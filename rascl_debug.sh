@@ -53,7 +53,6 @@ TARGET_Z="${RASCL_TARGET_Z:-0.2913}"
 TRAJECTORY_DURATION="${RASCL_DURATION:-12.0}"
 # Task deliverables stay inside the required ROS package instead of /tmp.
 TRAJECTORY_DIR="${RASCL_TRAJECTORY_DIR:-$WORKSPACE/src/rascl_wp3_ss26_group8/trajectories}"
-TASK1_INPUT_CSV="$TRAJECTORY_DIR/task1_input.csv"
 TASK1_OUTPUT_CSV="${RASCL_TASK1_OUTPUT_CSV:-$TRAJECTORY_DIR/task1_output.csv}"
 TASK2_OUTPUT_DIR="${RASCL_TASK2_OUTPUT_DIR:-$TRAJECTORY_DIR}"
 # These files bind a target and its plan to one live CSP process.
@@ -1012,8 +1011,6 @@ group_task1_stage_4() {
 }
 
 group_task1_all_stages() {
-  [[ -s "$TASK1_INPUT_CSV" ]] ||
-    die "Task 1 input file is missing: $TASK1_INPUT_CSV"
   echo "Task 1 full sequence: stages 1 -> 2 -> 3 -> 4, with no delay between actions."
   group_task1_stage_1
   group_task1_stage_2

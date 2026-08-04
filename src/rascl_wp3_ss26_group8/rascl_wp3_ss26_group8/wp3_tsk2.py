@@ -110,7 +110,6 @@ class WP3Task2Online(Node):
         self.declare_parameter("spur_gear_speed_counts_per_s", 20000.0)
         self.declare_parameter("gripper_min_motion_duration_s", 0.5)
         self.declare_parameter("gripper_settle_duration_s", 1.0)
-        self.declare_parameter("gripper_final_tolerance_counts", 5000.0)
         self.declare_parameter(
             "torque_service", "/rascl_faulhaber_bridge/restore_spur_torque"
         )
@@ -233,7 +232,6 @@ class WP3Task2Online(Node):
             "spur_gear_speed_counts_per_s",
             "gripper_min_motion_duration_s",
             "gripper_settle_duration_s",
-            "gripper_final_tolerance_counts",
             "torque_service_timeout_s",
         )
         for name in positive_parameters:
@@ -502,22 +500,14 @@ class WP3Task2Online(Node):
             f"delta={delta_counts} counts, duration={duration:.3f} s."
         )
 
-        count_tolerance = float(
-            self.get_parameter("gripper_final_tolerance_counts").value
-        )
-        gripper_tolerance = count_tolerance * 2.0 * math.pi / counts_per_revolution
-        joint_tolerance = min(
-            float(self.get_parameter("final_joint_tolerance_rad").value),
-            gripper_tolerance,
-        )
         self._execute_trajectory(
             step.label,
             trajectory,
             expected_tcp=None,
-            joint_tolerance_override=joint_tolerance,
             final_hold_s_override=float(
                 self.get_parameter("gripper_settle_duration_s").value
             ),
+            verify_endpoint=False,
         )
 
     def _restore_spur_torque(self) -> None:
@@ -559,6 +549,7 @@ class WP3Task2Online(Node):
         expected_tcp: Optional[Tuple[float, float, float]],
         joint_tolerance_override: Optional[float] = None,
         final_hold_s_override: Optional[float] = None,
+        verify_endpoint: bool = True,
     ) -> None:
         if not trajectory:
             raise RuntimeError(f"{label} generated an empty trajectory")
@@ -596,7 +587,28 @@ class WP3Task2Online(Node):
         hold_deadline = time.monotonic() + final_hold_s
         while time.monotonic() < hold_deadline:
             self._publish_joint_command(goal)
+            if not verify_endpoint:
+                with self._feedback_condition:
+                    feedback_time = self._latest_feedback_time
+                if (
+                    feedback_time is None
+                    or time.monotonic() - feedback_time > stale_s
+                ):
+                    raise RuntimeError(
+                        f"/joint_states stopped while {label} was settling"
+                    )
             time.sleep(period_s)
+
+        # The validated group-29 gripper behavior treats completion of the
+        # fixed-distance command and settle period as success. A grasped cube
+        # can prevent Drive 3 from matching the unloaded target exactly, so the
+        # gripper steps intentionally do not add an endpoint-error rejection.
+        if not verify_endpoint:
+            self.get_logger().info(
+                f"MOTION_RESULT reached=true label={label} "
+                "verification=fixed_gripper_command_completed"
+            )
+            return
 
         joint_tolerance = (
             float(joint_tolerance_override)
